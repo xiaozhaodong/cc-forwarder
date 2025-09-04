@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.21-alpine AS builder
 
 # Install git and ca-certificates (needed for fetching dependencies)
 RUN apk add --no-cache git ca-certificates
@@ -25,8 +25,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates tzdata
+# Install ca-certificates and curl for HTTPS requests and health checks
+RUN apk --no-cache add ca-certificates tzdata curl
 
 # Create non-root user
 RUN addgroup -g 1000 -S appgroup && \
@@ -41,18 +41,22 @@ COPY --from=builder /build/endpoint_forwarder /app/endpoint_forwarder
 # Copy configuration files
 COPY --from=builder /build/config/example.yaml /app/config/example.yaml
 
-# Create config directory and set permissions
-RUN chown -R appuser:appgroup /app
+# Copy web static files
+COPY --from=builder /build/internal/web/static /app/internal/web/static
+
+# Create necessary directories and set permissions
+RUN mkdir -p /app/logs /app/config && \
+    chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
-EXPOSE 8080
+# Expose ports - 8087 for proxy, 8088 for web interface
+EXPOSE 8087 8088
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+# Health check - use proxy port for health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8087/health || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/endpoint_forwarder"]

@@ -3,7 +3,7 @@
 
 # 服务器配置
 server:
-  host: "127.0.0.1"      # 监听地址，默认: localhost
+  host: "0.0.0.0"      # Docker环境中监听所有接口，默认: localhost
   port: 8087             # 监听端口，默认: 8080
 
 # 路由策略配置(适用于组内)
@@ -48,7 +48,14 @@ streaming:
 
 # 组管理配置
 group:
-  cooldown: "600s"           # 组失败后的冷却时间，默认: 600s
+  cooldown: "600s"                      # 组失败后的冷却时间，默认: 600s
+  auto_switch_between_groups: true      # 组间自动切换：true=自动切换到其他组，false=需要手动切换，默认: true
+
+# 请求挂起配置
+request_suspend:
+  enabled: false              # 是否启用请求挂起功能，默认: false
+  timeout: "300s"             # 挂起请求的超时时间，默认: 300s (5分钟)
+  max_suspended_requests: 100 # 最大挂起请求数量，默认: 100
 
 # 全局超时配置
 global_timeout: "300s"       # 非流式请求的全局默认超时时间，默认: 300s (5分钟)
@@ -60,9 +67,15 @@ auth:
 
 # TUI界面配置,如果部署在服务器上建议设置为 false
 tui:
-  enabled: true               # 是否启用TUI界面，默认: true
+  enabled: false               # Docker环境中禁用TUI界面，默认: true
   update_interval: "1s"       # TUI刷新间隔，默认: 1s
   save_priority_edits: false  # 是否在TUI中保存优先级编辑到配置文件，默认: false（当前情况下保存配置文件可能会自动格式化配置文件）
+
+# Web界面配置
+web:
+  enabled: true              # Docker环境中启用Web界面，默认: false
+  host: "0.0.0.0"          # Web界面监听所有接口，默认: localhost
+  port: 8088                 # Web界面端口，默认: 8088
 
 # 代理配置 (可选)
 proxy:

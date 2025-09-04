@@ -13,10 +13,10 @@ import (
 	"net/url"
 	"strings"
 
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/endpoint"
-	"endpoint_forwarder/internal/monitor"
-	"endpoint_forwarder/internal/transport"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/transport"
 	"github.com/andybalholm/brotli"
 )
 
@@ -49,6 +49,11 @@ func (h *Handler) SetMonitoringMiddleware(mm interface{
 	RecordRetry(connID string, endpoint string)
 }) {
 	h.retryHandler.SetMonitoringMiddleware(mm)
+}
+
+// GetRetryHandler returns the retry handler for accessing suspended request counts
+func (h *Handler) GetRetryHandler() *RetryHandler {
+	return h.retryHandler
 }
 
 // ServeHTTP implements the http.Handler interface
@@ -339,7 +344,7 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 
 // parseSSETokens parses SSE format response for token usage
 func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName, connID string) {
-	tokenParser := NewTokenParser()
+	tokenParser := NewTokenParserWithRequestID(connID)
 	lines := strings.Split(responseBody, "\n")
 	
 	for _, line := range lines {
@@ -360,7 +365,7 @@ func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName
 // parseJSONTokens parses single JSON response for token usage
 func (h *Handler) parseJSONTokens(ctx context.Context, responseBody, endpointName, connID string) {
 	// Simulate SSE parsing for a single JSON response
-	tokenParser := NewTokenParser()
+	tokenParser := NewTokenParserWithRequestID(connID)
 	
 	slog.InfoContext(ctx, "🔍 [JSON解析] 尝试解析JSON响应")
 	

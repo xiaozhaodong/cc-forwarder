@@ -1,509 +1,271 @@
-# Claude Code Request Forwarder
+# Claude API 智能转发器 (Claude API Smart Forwarder)
 
-A high-performance Go application that transparently forwards Claude Code API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
+一个基于 Go 语言开发的高性能 Claude API 请求智能转发器，具有智能路由、健康检查、自动重试/故障转移、实时监控等功能。
 
-[中文文档](README_CN.md) | English
+## 🎯 项目说明
 
-## Features
+本项目基于 [xinhai-ai/endpoint_forwarde](https://github.com/xinhai-ai/endpoint_forwarde) 进行二次开发和功能增强。
 
-- **Transparent Proxying**: Forward all HTTP requests transparently to backend endpoints
-- **SSE Streaming Support**: Full support for Server-Sent Events streaming
-- **Token Management**: Override or add Authorization Bearer tokens per endpoint  
-- **Routing Strategies**: Priority-based or fastest-response routing
-- **Health Checking**: Automatic endpoint health monitoring
-- **Retry & Fallback**: Exponential backoff with automatic endpoint fallback
-- **Group Management**: Intelligent endpoint grouping with automatic failover and cooldown periods
-- **Monitoring**: Built-in health checks and Prometheus-style metrics
-- **Structured Logging**: Configurable JSON or text logging with multiple levels
-- **TUI Interface**: Built-in Terminal User Interface for real-time monitoring with interactive priority editing (enabled by default)
-- **Dynamic Priority Override**: Runtime endpoint priority adjustment via `-p` parameter for testing and failover scenarios
+### 原项目说明
 
-## Quick Start
+- **原项目地址**: https://github.com/xinhai-ai/endpoint_forwarde
+- **原项目许可**: "This project is provided as-is for educational and development purposes"
+- **感谢原作者**: 感谢原项目作者提供的基础框架和核心功能
 
-1. **Build the application**:
+### 增强功能
+
+在原项目基础上，本项目新增了以下重要功能：
+
+- ✨ **Web管理界面**: 现代化的Web界面，支持实时监控和组管理
+- 🎯 **请求ID追踪**: 完整的请求生命周期追踪系统
+- 🤖 **Token解析器**: Claude API SSE流中的模型信息和Token使用量提取
+- ⏸️ **请求挂起系统**: 智能请求挂起和恢复机制
+- 🔄 **手动组切换**: 支持手动暂停/恢复/激活组操作
+- 📊 **实时数据流**: Server-Sent Events (SSE) 实时更新
+- 🗃️ **使用情况追踪设计**: SQLite数据库使用统计和成本分析设计方案
+
+## 🚀 核心功能
+
+### 基础转发功能
+
+- **透明代理**: 透明转发所有HTTP请求到后端端点
+- **SSE流式支持**: 完整支持Server-Sent Events流式传输
+- **Token管理**: 每个端点可配置独立的Bearer Token
+- **路由策略**: 支持优先级路由和最快响应路由
+- **健康检查**: 自动端点健康监控
+- **重试与故障转移**: 指数退避重试和自动端点故障转移
+
+### 高级功能
+
+- [ ] **组管理**: 智能端点分组，支持自动故障转移和冷却期
+- [ ] **监控**: 内置健康检查和Prometheus风格的指标
+- [ ] **结构化日志**: 可配置的JSON或文本日志，多级别支持
+- [ ] **TUI界面**: 内置终端用户界面，支持实时监控和交互式优先级编辑
+- [ ] **动态优先级覆盖**: 通过 `-p`参数进行运行时端点优先级调整
+
+### 增强功能 (本项目新增)
+
+#### 🌐 Web管理界面
+
+- **实时仪表板**: 使用SSE进行实时更新的现代化Web界面
+- **组管理**: 交互式组控制，支持激活/暂停/恢复操作
+- **端点监控**: 可视化健康状态和性能指标
+- **图表分析**: 使用Chart.js进行性能可视化
+- **响应式设计**: 移动设备友好的现代CSS样式
+- **API集成**: 完整的RESTful API支持所有管理操作
+
+#### 🎯 请求ID追踪系统
+
+- **短UUID格式**: `req-xxxxxxxx` 格式，便于跟踪和搜索
+- **完整生命周期**: 从请求开始到完成/挂起的全程追踪
+- **日志集成**: 所有关键日志都包含请求ID
+- **调试友好**: 大幅提升问题排查和日志分析效率
+
+#### 🤖 智能Token解析器
+
+- **模型检测**: 从Claude API SSE流中提取模型信息
+- **Token统计**: 精确统计输入/输出/缓存Token使用量
+- **实时监控**: 集成到日志系统中，方便成本分析
+- **多事件解析**: 同时处理 `message_start`和 `message_delta`事件
+
+#### ⏸️ 请求挂起与恢复系统
+
+- **智能挂起**: 在端点不可用时自动挂起请求
+- **自动恢复**: 端点恢复后自动处理挂起的请求
+- **超时保护**: 配置超时时间防止请求无限挂起
+- **容量控制**: 限制最大挂起请求数量
+
+#### 🔄 手动组管理
+
+- **灵活控制**: 支持自动和手动两种组切换模式
+- **Web界面操作**: 通过Web界面进行组的暂停/恢复/激活
+- **实时状态**: SSE实时更新组状态变化
+- **冷却管理**: 智能冷却期管理和状态显示
+
+## 📋 快速开始
+
+1. **构建应用程序**:
+
    ```bash
-   go build -o endpoint_forwarder
+   go build -o cc-forwarder
    ```
+2. **复制并配置示例配置**:
 
-2. **Copy and configure the example config**:
    ```bash
    cp config/example.yaml config/config.yaml
-   # Edit config.yaml with your endpoints and tokens
+   # 编辑 config.yaml 配置你的端点和tokens
    ```
+3. **运行转发器**:
 
-3. **Run the forwarder**:
    ```bash
-   # Default mode with TUI interface
-   ./endpoint_forwarder -config config/config.yaml
-   
-   # Run without TUI (traditional console mode)
-   ./endpoint_forwarder -config config/config.yaml --no-tui
-   
-   # Explicitly enable TUI (default behavior)
-   ./endpoint_forwarder -config config/config.yaml --tui
-   
-   # Override endpoint priority at runtime (useful for testing or failover)
-   ./endpoint_forwarder -config config/config.yaml -p "endpoint-name"
-   ```
+   # 默认模式，带TUI界面
+   ./cc-forwarder -config config/config.yaml
 
-4. **Configure Claude Code**:
-   Set in Claude Code's `settings.json`:
+   # 不带TUI的传统控制台模式
+   ./cc-forwarder -config config/config.yaml --no-tui
+
+   # 显式启用TUI（默认行为）
+   ./cc-forwarder -config config/config.yaml --tui
+
+   # 运行时覆盖端点优先级（用于测试或故障转移）
+   ./cc-forwarder -config config/config.yaml -p "endpoint-name"
+   ```
+4. **配置Claude Code**:
+   在Claude Code的 `settings.json`中设置：
+
    ```json
    {
-     "ANTHROPIC_BASE_URL": "http://localhost:8080"
+     "ANTHROPIC_BASE_URL": "http://localhost:8088"
    }
    ```
+5. **访问Web界面**（推荐）:
 
-## Configuration
+   ```
+   http://localhost:8010
+   ```
 
-### Server Configuration
+## 🔧 配置说明
+
+### Web界面配置（推荐用于生产环境）
+
 ```yaml
-server:
-  host: "0.0.0.0"  # Server bind address
-  port: 8080        # Server port
+web:
+  enabled: true              # 启用Web界面
+  host: "0.0.0.0"           # Web界面主机（默认: localhost）
+  port: 8010                 # Web界面端口（默认: 8088）
 ```
 
-### Routing Strategy
-```yaml
-strategy:
-  type: "priority"  # "priority" or "fastest"
-```
+### TUI界面配置（开发/调试用）
 
-- **priority**: Use endpoints in priority order (lower number = higher priority)
-- **fastest**: Use endpoint with lowest response time
-
-### Retry Configuration
-```yaml
-retry:
-  max_attempts: 3      # Maximum retry attempts per endpoint
-  base_delay: "1s"     # Initial delay between retries
-  max_delay: "30s"     # Maximum delay cap
-  multiplier: 2.0      # Exponential backoff multiplier
-```
-
-### Health Check Configuration
-```yaml
-health:
-  check_interval: "30s"     # How often to check endpoint health
-  timeout: "5s"             # Health check timeout
-  health_path: "/v1/models" # Health check endpoint path
-```
-
-### Group Management Configuration
-```yaml
-group:
-  cooldown: "600s"           # Group cooldown duration when all endpoints fail (default: 10 minutes)
-```
-
-The system supports intelligent endpoint grouping with automatic failover and cooldown mechanisms, plus dynamic key resolution:
-
-**Group Configuration Features:**
-- **Priority-based Groups**: Groups have priorities (lower number = higher priority)
-- **Automatic Failover**: When all endpoints in a group fail, system switches to next priority group
-- **Cooldown Periods**: Failed groups enter cooldown mode before being reconsidered
-- **Inheritance**: Endpoints inherit group settings from previous endpoints
-- **Single Active Group**: Only one group is active at a time for deterministic routing
-- **Dynamic Key Resolution**: Keys are resolved dynamically at runtime for group-level key sharing
-
-**Group Behavior:**
-- **Active Group Selection**: Highest priority group not in cooldown becomes active
-- **Cooldown Trigger**: When all endpoints in a group fail, the group enters cooldown
-- **Automatic Recovery**: Groups automatically reactivate after cooldown period expires
-- **Priority-based Routing**: Requests only go to endpoints in the active group
-
-**Dynamic Key Resolution Mechanism:**
-- **Runtime Resolution**: Keys are not inherited during config parsing but resolved dynamically at request time
-- **Group-level Sharing**: All endpoints in a group share the token/api-key from the first endpoint that defines it
-- **Override Support**: Individual endpoints can override group keys by explicitly specifying their own `token` or `api-key`
-- **Failover-friendly**: When groups switch during failover, the new active group's keys are automatically used
-
-**Group Configuration Example:**
-```yaml
-endpoints:
-  # Primary group (highest priority) - defines group keys
-  - name: "primary"
-    url: "https://api.openai.com"
-    group: "main"           # Group name
-    group-priority: 1       # Group priority (1 = highest)
-    priority: 1             # Priority within group
-    token: "sk-main-group-token"      # 🔑 Main group key, shared by other endpoints in group
-    api-key: "main-api-key"           # 🔑 Main group API key, shared by other endpoints in group
-    
-  # Backup endpoint in primary group - uses main group keys
-  - name: "primary_backup"
-    url: "https://api.anthropic.com"
-    priority: 2
-    # 🔄 Inherits group: "main" and group-priority: 1
-    # 🔑 Dynamically uses main group keys: token and api-key resolved at runtime from primary endpoint
-    
-  # Secondary group (lower priority) - defines different group keys
-  - name: "secondary"
-    url: "https://api.example.com"
-    group: "backup"         # Different group
-    group-priority: 2       # Lower priority
-    priority: 1
-    token: "sk-backup-group-token"    # 🔑 Backup group key, shared by other endpoints in group
-    api-key: "backup-api-key"         # 🔑 Backup group API key
-    
-  # Custom override within backup group
-  - name: "secondary_special"
-    url: "https://api.special.com"
-    priority: 2
-    token: "sk-custom-override"       # 🔑 Overrides backup group key, only this endpoint uses this
-    # 🔄 Still belongs to backup group
-    # 🔑 api-key still uses group default
-    
-  # Tertiary group (lowest priority)
-  - name: "local"
-    url: "http://localhost:11434"
-    group: "local"
-    group-priority: 3       # Lowest priority
-    priority: 1
-    # 🔓 No token needed for local service
-```
-
-**Group Inheritance Rules:**
-- **Group Settings**: Endpoints inherit `group` and `group-priority` from previous endpoints if not specified
-- **Static Inheritance**: `timeout` and `headers` are inherited during configuration parsing
-- **Dynamic Resolution**: `token` and `api-key` are not inherited during config parsing but resolved at runtime
-- **Group Priority**: Group-level key sharing works independently of configuration inheritance
-
-**Key Configuration Best Practices:**
-- First endpoint in each group should define the token and api-key for that group
-- Other endpoints in the group don't need to repeat key configuration, they'll automatically share group keys
-- If an endpoint needs a special key, explicitly specify token/api-key to override group defaults
-- Local services typically don't require key configuration
-
-**Use Cases:**
-- **High Availability**: Primary/backup group setup for critical services
-- **Cost Optimization**: Use different providers based on priority (e.g., GPT-4 → Claude → Local)
-- **Geographic Routing**: Group endpoints by region with automatic failover
-- **Load Balancing**: Distribute load across multiple groups with different priorities
-
-### Global Timeout Configuration
-```yaml
-global_timeout: "300s"      # Default timeout for all non-streaming requests (5 minutes)
-```
-
-**Usage:**
-- Sets the default timeout for all endpoints that don't specify their own `timeout`
-- Only applies to non-streaming requests
-- Can be overridden by individual endpoint `timeout` settings
-
-### Authentication Configuration
-```yaml
-auth:
-  enabled: false                    # Enable Bearer token authentication (default: false)
-  token: "your-bearer-token"        # Bearer token for authentication (required when enabled)
-```
-
-### TUI Interface Configuration
 ```yaml
 tui:
-  enabled: true                     # Enable TUI interface (default: true)
-  update_interval: "1s"             # TUI refresh interval (default: 1s)
+  enabled: false             # 生产/Docker环境中禁用
+  update_interval: "1s"      # TUI刷新间隔
+  save_priority_edits: false # 保存优先级变更到配置文件
 ```
 
-**TUI Features:**
-- **Real-time Monitoring**: Live request metrics, response times, and success rates
-- **Multi-tab Interface**: Overview, Endpoints, Connections, Logs, and Configuration tabs
-- **Interactive Navigation**: Tab/Shift+Tab to switch tabs, 1-5 for direct access
-- **Color-coded Status**: Green=Healthy, Yellow=Warning, Red=Error
-- **Live Connection Tracking**: Monitor active connections and traffic
-- **Real-time Logs**: Real-time System logs
-
-**TUI Controls:**
-- `Tab/Shift+Tab`: Navigate between tabs
-- `1-5`: Jump directly to tab (1=Overview, 2=Endpoints, etc.)
-- `Ctrl+C`: Quit application
-- `Arrow Keys`: Navigate within views
-
-**Priority Editing (Endpoints Tab):**
-- `Enter`: Enter priority edit mode for real-time priority adjustment
-- `ESC`: Exit edit mode without saving changes
-- `Ctrl+S`: Save priority changes to configuration
-- `1-9`: Set priority for selected endpoint (in edit mode)
-- Visual indicators show current edit state and unsaved changes
-
-**Usage:**
-- When `enabled: false` (default): No authentication is required, requests pass through directly
-- When `enabled: true`: All requests must include `Authorization: Bearer <token>` header
-- The token in the header must exactly match the configured token
-- Returns HTTP 401 Unauthorized for missing, malformed, or invalid tokens
-- Only applies to the main proxy endpoints (health check endpoints remain open)
-
-**Health Check Behavior:**
-- **Endpoint**: Tests the `/v1/models` endpoint (suitable for Claude API)
-- **Success Criteria**: Accepts both 2xx (success) and 4xx (client error) status codes
-  - 2xx responses indicate the endpoint is working correctly
-  - 4xx responses (401, 403, etc.) indicate the endpoint is reachable but may need proper authentication
-- **Failure Criteria**: 5xx server errors indicate endpoint problems
-- **Strategy Logging**: For "fastest" strategy, logs endpoint latencies before each selection
-
-### Endpoint Configuration
-```yaml
-endpoints:
-  - name: "primary"
-    url: "https://api.anthropic.com"
-    priority: 1
-    timeout: "30s"
-    token: "sk-ant-your-token-here"  # Optional: Override/add auth token
-    headers:                         # Optional: Additional headers
-      X-Custom-Header: "value"
-```
-
-#### Parameter Inheritance & Dynamic Key Resolution
-For convenience, the system supports two mechanisms:
-
-**Static Inheritance (Configuration Stage):**
-Subsequent endpoints can inherit the following parameters from the first endpoint:
-- `timeout`: Request timeout duration (defaults to `global_timeout` if not specified)
-- `headers`: HTTP headers (with smart merging)
-
-**Dynamic Resolution (Runtime):**
-Key-related parameters are resolved dynamically at runtime:
-- `token`: Retrieved from the first endpoint in the same group that defines a token
-- `api-key`: Retrieved from the first endpoint in the same group that defines an api-key
+### 组管理配置
 
 ```yaml
-endpoints:
-  # Main group - defines group keys and inheritable parameters
-  - name: "primary"
-    url: "https://api.anthropic.com"
-    group: "main"
-    group-priority: 1
-    priority: 1
-    timeout: "45s"                    # ⏱️ Will be statically inherited
-    token: "sk-main-group-token"      # 🔑 Dynamic resolution: shared within group
-    api-key: "main-api-key"           # 🔑 Dynamic resolution: shared within group
-    headers:                          # 📋 Will be statically inherited & merged
-      Authorization-Fallback: "Bearer fallback"
-      X-API-Version: "v1"
-      User-Agent: "Claude-Forwarder/1.0"
-    
-  # Main group backup endpoint - inheritance + dynamic resolution
-  - name: "secondary"
-    url: "https://backup.anthropic.com" 
-    priority: 2
-    # 🔄 Group settings inherited: group="main", group-priority=1
-    # ⏱️ Static inheritance: timeout=45s
-    # 📋 Static inheritance: all headers
-    # 🔑 Dynamic resolution: token and api-key resolved at runtime from primary
-    headers:
-      X-Custom-Header: "secondary"    # 🔄 Merged with inherited headers
-    
-  # Backup group - new group key definition
-  - name: "backup"
-    url: "https://api.backup.com"
-    group: "backup"                   # New group
-    group-priority: 2
-    priority: 1
-    timeout: "30s"                    # 🚫 Overrides static inheritance
-    token: "sk-backup-group-token"    # 🔑 New group key definition
-    # ✅ Still inherits headers from primary (static)
-    
-  # Backup group custom endpoint
-  - name: "backup_custom"
-    url: "https://api.custom.com"
-    priority: 2
-    token: "sk-custom-override"       # 🔑 Overrides group default key
-    # 🔄 Group settings inherited: group="backup", group-priority=2
-    # ⏱️ Static inheritance: timeout=45s (from primary)
-    # 📋 Static inheritance: headers (from primary)
-    # 🔑 Dynamic resolution: api-key still from backup endpoint
-    
-  # Minimal configuration endpoint
-  - name: "minimal"
-    url: "https://minimal.anthropic.com"
-    priority: 3
-    # ✅ Static inheritance from primary: timeout, headers
-    # 🔑 Dynamic resolution: keys from backup group
+group:
+  cooldown: "600s"                      # 组故障冷却时间（默认: 10分钟）
+  auto_switch_between_groups: true      # 启用组间自动切换（默认: true）
+  # false = 需要通过Web界面手动干预
+  # true = 自动故障转移到备用组
 ```
 
-**Header Merging Rules:**
-- If no headers specified → inherit all headers from first endpoint
-- If headers specified → merge with first endpoint's headers (your headers override)
-- Headers with same key → your value takes precedence
-
-**Key Resolution Rules:**
-- Endpoint's own key takes priority: If endpoint defines token/api-key, use it directly
-- Group sharing: If endpoint doesn't define it, get from first endpoint in same group that has the key
-- No key: If no endpoint in group has the key, don't set it (suitable for local services)
-
-### Proxy Configuration
-```yaml
-proxy:
-  enabled: true
-  type: "http"  # "http", "https", or "socks5"
-  
-  # Option 1: Complete proxy URL
-  url: "http://proxy.example.com:8080"
-  # url: "socks5://proxy.example.com:1080"
-  
-  # Option 2: Host and port (alternative to URL)
-  host: "proxy.example.com"
-  port: 8080
-  
-  # Optional authentication
-  username: "proxy_user"
-  password: "proxy_pass"
-```
-
-**Proxy Support:**
-- **HTTP/HTTPS Proxy**: Standard HTTP proxy with optional authentication
-- **SOCKS5 Proxy**: Full SOCKS5 support with optional authentication  
-- **Flexible Configuration**: Use complete URL or separate host:port
-- **Security**: Proxy credentials are handled securely
-- **Performance**: Optimized transport layer for all proxy types
-
-**Usage Notes:**
-- All outbound requests (health checks, fast tests, and API calls) use the configured proxy
-- Proxy settings apply globally to all endpoints
-- For corporate environments, ensure proxy allows HTTPS CONNECT method
-- SOCKS5 proxies provide better performance for high-throughput scenarios
-
-## Monitoring Endpoints
-
-The forwarder provides several monitoring endpoints:
-
-- **GET /health**: Basic health check
-- **GET /health/detailed**: Detailed health information for all endpoints  
-- **GET /metrics**: Prometheus-style metrics
-
-### Example Health Check Response
-```json
-{
-  "status": "healthy",
-  "healthy_endpoints": 2,
-  "total_endpoints": 3
-}
-```
-
-## Usage Examples
-
-### Basic Request Forwarding
-```bash
-# Regular API request - will be forwarded to the best available endpoint
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{"model": "claude-3-sonnet-20240229", "max_tokens": 100, "messages": [{"role": "user", "content": "Hello"}]}'
-```
-
-### SSE Streaming
-```bash
-# Streaming request - automatically detected and handled
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{"model": "claude-3-sonnet-20240229", "max_tokens": 100, "messages": [{"role": "user", "content": "Count to 10"}], "stream": true}'
-```
-
-### Health Monitoring
-```bash
-# Check overall health
-curl http://localhost:8080/health
-
-# Get detailed endpoint status
-curl http://localhost:8080/health/detailed
-
-# Get Prometheus metrics
-curl http://localhost:8080/metrics
-```
-
-## How It Works
-
-1. **Request Reception**: The forwarder receives HTTP requests on the configured port
-2. **Group Selection**: Based on group priorities and cooldown status, selects the active group
-3. **Endpoint Selection**: Within the active group, selects the best available endpoint based on the configured strategy (priority/fastest)
-4. **Request Forwarding**: Transparently forwards the request with proper header handling:
-   - **Host Header**: Automatically set to match the target endpoint's hostname
-   - **Authorization**: Override/inject tokens as configured, remove client tokens
-   - **Security**: Automatically strips sensitive client headers (`X-API-Key`, `Authorization`)
-   - **Custom Headers**: Add endpoint-specific headers as configured
-   - **Original Headers**: Preserve all other headers from the original request
-5. **Response Handling**: 
-   - Regular requests: Buffers and forwards the complete response
-   - SSE requests: Streams response in real-time with proper event handling
-6. **Error Handling**: On failure, automatically retries with exponential backoff, then falls back to the next available endpoint within the active group
-7. **Group Management**: If all endpoints in the active group fail, the group enters cooldown and system switches to the next priority group
-8. **Health Monitoring**: Continuously monitors endpoint health and adjusts routing accordingly
-
-## Command Line Options
-
-```bash
-./endpoint_forwarder [OPTIONS]
-```
-
-Options:
-- `-config path/to/config.yaml`: Path to configuration file (default: "config/example.yaml")
-- `-version`: Show version information
-- `-tui`: Enable TUI interface (default: true)
-- `-no-tui`: Disable TUI interface (run in traditional console mode)
-- `-p "endpoint-name"`: Override endpoint priority (set specified endpoint as primary with priority 1)
-
-Examples:
-```bash
-# Default mode with TUI
-./endpoint_forwarder -config my-config.yaml
-
-# Run without TUI (traditional console logging)
-./endpoint_forwarder -config my-config.yaml -no-tui
-
-# Show version information
-./endpoint_forwarder -version
-
-# Override endpoint priority (useful for testing specific endpoints)
-./endpoint_forwarder -config my-config.yaml -p "backup-endpoint"
-
-# Combine options: run without TUI and override priority
-./endpoint_forwarder -config my-config.yaml -no-tui -p "test-endpoint"
-```
-
-## Logging
-
-The application uses structured logging with enhanced formatting for better human readability:
+### 请求挂起配置
 
 ```yaml
-logging:
-  level: "info"    # debug, info, warn, error
-  format: "text"   # text (human-readable) or json (machine-readable)
+request_suspend:
+  enabled: true                # 启用挂起功能
+  timeout: "300s"             # 挂起超时时间（5分钟）
+  max_suspended_requests: 100  # 最大挂起请求数
 ```
 
-### Log Features
+## 🌟 使用场景
 
-**Enhanced Readability:**
-- 🎯 Emoji indicators for different log types and statuses
-- 📊 Formatted response times (μs/ms/s) and data sizes (B/KB/MB)  
-- 🚀 Request lifecycle tracking with endpoint information
-- ⏱️  Precise timestamp formatting (HH:MM:SS.mmm)
+1. **高可用性**: 主备组配置，确保关键服务不中断
+2. **成本优化**: 根据优先级使用不同供应商（如 GPT-4 → Claude → 本地模型）
+3. **地理路由**: 按区域对端点分组，自动故障转移
+4. **负载均衡**: 跨多个组分配负载，不同优先级
+5. **开发测试**: 通过Web界面轻松切换和测试不同端点
 
-**Request Logging:**
-- Request start with selected endpoint name
-- Response completion with status indicators
-- Error tracking with appropriate severity levels
-- Performance monitoring (slow request detection)
+## 📊 监控端点
 
-**Log Examples:**
+转发器提供多个监控端点：
+
+- **GET /health**: 基本健康检查
+- **GET /health/detailed**: 所有端点的详细健康信息
+- **GET /metrics**: Prometheus风格的指标
+
+### Web API参考
+
+#### 组管理API
+
+```bash
+# 获取所有组状态
+GET /api/v1/groups
+
+# 手动激活一个组
+POST /api/v1/groups/{name}/activate
+
+# 暂停一个组（手动干预）
+POST /api/v1/groups/{name}/pause
+
+# 恢复一个暂停的组
+POST /api/v1/groups/{name}/resume
 ```
-15:04:05.123 level=INFO msg="🚀 Request started" method=POST path=/v1/messages client_ip=192.168.1.100 user_agent="Claude-Client/1.0" content_length=245
-15:04:05.456 level=INFO msg="🎯 Selected endpoint" endpoint=primary url=https://api.anthropic.com priority=1 attempt=1 total_endpoints=3  
-15:04:06.789 level=INFO msg="✅ Request completed" method=POST path=/v1/messages endpoint=primary status_code=200 bytes_written=1.2KB duration=633.2ms client_ip=192.168.1.100
+
+#### 监控API
+
+```bash
+# 获取系统状态
+GET /api/v1/status
+
+# 获取端点状态
+GET /api/v1/endpoints
+
+# 获取连接统计
+GET /api/v1/connections
+
+# 通过Server-Sent Events进行实时更新
+GET /api/v1/stream?client_id={id}&events=status,endpoint,group,connection,log,chart
 ```
 
-**Security Features:**
-- Automatically removes sensitive client headers (`X-API-Key`, `Authorization`) 
-- Replaces with endpoint-configured tokens
-- Prevents credential leakage between client and backend
+## 🛠️ 开发与构建
 
-## Production Considerations
+```bash
+# 构建应用程序
+go build -o cc-forwarder
 
-- Configure appropriate timeouts for your use case
-- Monitor the `/health` and `/metrics` endpoints
-- Use a reverse proxy (nginx/Apache) for SSL termination
-- Configure log rotation for production deployments
-- Set up alerts based on endpoint health metrics
-- Consider rate limiting at the reverse proxy level
+# 运行测试
+go test ./...
 
-## License
+# 测试特定包
+go test ./internal/endpoint
+go test ./internal/proxy
+go test ./internal/middleware
 
-This project is provided as-is for educational and development purposes.
+# 检查版本
+./cc-forwarder -version
+```
+
+## 📝 更新日志
+
+### v2.0.0 (2025-09-04)
+
+- ✨ 新增Web管理界面，支持实时监控和组管理
+- 🎯 实现请求ID追踪系统，完整生命周期监控
+- 🤖 新增Token解析器，支持Claude API模型信息提取
+- ⏸️ 实现请求挂起与恢复系统
+- 🔄 支持手动组切换和管理
+- 📊 Server-Sent Events实时数据流
+- 🗃️ 设计使用情况追踪系统（SQLite数据库）
+
+### v1.x.x (原版本)
+
+- 基础转发功能
+- TUI界面
+- 健康检查
+- 重试机制
+- 组管理基础功能
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request！
+
+## 📄 许可证
+
+本项目基于原项目进行二次开发，遵循原项目的许可声明："This project is provided as-is for educational and development purposes."
+
+## 🙏 致谢
+
+- 感谢 [xinhai-ai/endpoint_forwarde](https://github.com/xinhai-ai/endpoint_forwarde) 项目提供的基础框架
+- 感谢开源社区提供的各种优秀库和工具
+
+---
+
+**开发者**: xiaozhaodong
+**项目地址**: https://github.com/xiaozhaodong/cc-forwarder
+**原项目**: https://github.com/xinhai-ai/endpoint_forwarde

@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"testing"
-	"endpoint_forwarder/internal/monitor"
+	"cc-forwarder/internal/monitor"
 )
 
 func TestTokenParser(t *testing.T) {

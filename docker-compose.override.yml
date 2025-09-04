@@ -1,0 +1,37 @@
+# Docker Compose Override for Development
+# 这个文件会自动与docker-compose.yml合并
+# 用于开发环境的特殊配置
+
+version: '3.8'
+
+services:
+  endpoint-forwarder:
+    # 开发环境配置
+    environment:
+      - LOG_LEVEL=debug        # 开发环境使用debug级别
+      - TUI_ENABLED=false      # 开发环境也禁用TUI
+      - WEB_ENABLED=true       # 启用Web界面用于调试
+    
+    # 开发环境下移除只读限制
+    read_only: false
+    
+    # 开发环境下的卷映射 (添加源码映射用于热重载)
+    volumes:
+      - ./config:/app/config:rw          # 配置文件可读写
+      - ./logs:/app/logs                 # 日志目录
+      - ./internal/web/static:/app/internal/web/static:ro  # Web静态文件热重载
+    
+    # 开发环境资源限制更宽松
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    
+    # 开发环境端口映射 (可以映射到不同端口避免冲突)
+    # ports:
+    #   - "8087:8087"  # 代理端口
+    #   - "8088:8088"  # Web界面端口

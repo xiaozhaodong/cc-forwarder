@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"endpoint_forwarder/config"
+	"cc-forwarder/config"
 )
 
 func TestHealthCheckWithAPIEndpoint(t *testing.T) {

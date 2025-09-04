@@ -9,16 +9,17 @@ import (
 	"sync"
 	"time"
 
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/transport"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/transport"
 )
 
 // EndpointStatus represents the health status of an endpoint
 type EndpointStatus struct {
-	Healthy       bool
-	LastCheck     time.Time
-	ResponseTime  time.Duration
+	Healthy         bool
+	LastCheck       time.Time
+	ResponseTime    time.Duration
 	ConsecutiveFails int
+	NeverChecked    bool  // 表示从未被检测过
 }
 
 // Endpoint represents an endpoint with its configuration and status
@@ -38,6 +39,13 @@ type Manager struct {
 	wg           sync.WaitGroup
 	fastTester   *FastTester
 	groupManager *GroupManager
+	// Web interface callback for real-time notifications
+	webNotifier  WebNotifier
+}
+
+// WebNotifier interface for Web interface notifications
+type WebNotifier interface {
+	BroadcastEndpointUpdate(data map[string]interface{})
 }
 
 // NewManager creates a new endpoint manager
@@ -70,8 +78,9 @@ func NewManager(cfg *config.Config) *Manager {
 		endpoint := &Endpoint{
 			Config: endpointCfg,
 			Status: EndpointStatus{
-				Healthy:   true, // Start optimistic
-				LastCheck: time.Now(),
+				Healthy:      false, // Start pessimistic, let health checks determine actual status
+				LastCheck:    time.Now(),
+				NeverChecked: true,  // 标记为未检测
 			},
 		}
 		manager.endpoints = append(manager.endpoints, endpoint)
@@ -108,8 +117,9 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 		endpoints[i] = &Endpoint{
 			Config: epCfg,
 			Status: EndpointStatus{
-				Healthy:   true,
-				LastCheck: time.Now(),
+				Healthy:      false, // Start pessimistic, let health checks determine actual status
+				LastCheck:    time.Now(),
+				NeverChecked: true,  // 标记为未检测
 			},
 		}
 	}
@@ -412,6 +422,97 @@ func (m *Manager) GetGroupManager() *GroupManager {
 	return m.groupManager
 }
 
+// SetWebNotifier sets the web notifier for real-time updates
+func (m *Manager) SetWebNotifier(notifier WebNotifier) {
+	m.webNotifier = notifier
+}
+
+// notifyWebInterface notifies the web interface about endpoint status changes
+func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
+	if m.webNotifier == nil {
+		return
+	}
+	
+	status := endpoint.Status // Already holding lock in caller
+	data := map[string]interface{}{
+		"event":           "endpoint_status_changed",
+		"endpoint":        endpoint.Config.Name,
+		"healthy":         status.Healthy,
+		"response_time":   status.ResponseTime.String(),
+		"last_check":      status.LastCheck.Format("2006-01-02 15:04:05"),
+		"consecutive_fails": status.ConsecutiveFails,
+		"timestamp":       time.Now().Format("2006-01-02 15:04:05"),
+	}
+	
+	m.webNotifier.BroadcastEndpointUpdate(data)
+}
+
+// ManualActivateGroup manually activates a specific group via web interface
+func (m *Manager) ManualActivateGroup(groupName string) error {
+	err := m.groupManager.ManualActivateGroup(groupName)
+	if err != nil {
+		return err
+	}
+	
+	// Notify web interface about group change
+	if m.webNotifier != nil {
+		go m.notifyWebGroupChange("group_manually_activated", groupName)
+	}
+	
+	return nil
+}
+
+// ManualPauseGroup manually pauses a group via web interface
+func (m *Manager) ManualPauseGroup(groupName string, duration time.Duration) error {
+	err := m.groupManager.ManualPauseGroup(groupName, duration)
+	if err != nil {
+		return err
+	}
+	
+	// Notify web interface about group change
+	if m.webNotifier != nil {
+		go m.notifyWebGroupChange("group_manually_paused", groupName)
+	}
+	
+	return nil
+}
+
+// ManualResumeGroup manually resumes a paused group via web interface
+func (m *Manager) ManualResumeGroup(groupName string) error {
+	err := m.groupManager.ManualResumeGroup(groupName)
+	if err != nil {
+		return err
+	}
+	
+	// Notify web interface about group change
+	if m.webNotifier != nil {
+		go m.notifyWebGroupChange("group_manually_resumed", groupName)
+	}
+	
+	return nil
+}
+
+// GetGroupDetails returns detailed information about all groups for web interface
+func (m *Manager) GetGroupDetails() map[string]interface{} {
+	return m.groupManager.GetGroupDetails()
+}
+
+// notifyWebGroupChange notifies the web interface about group management changes
+func (m *Manager) notifyWebGroupChange(eventType, groupName string) {
+	if m.webNotifier == nil {
+		return
+	}
+	
+	data := map[string]interface{}{
+		"event":     eventType,
+		"group":     groupName,
+		"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+		"details":   m.GetGroupDetails(),
+	}
+	
+	m.webNotifier.BroadcastEndpointUpdate(data)
+}
+
 // healthCheckLoop runs the health check routine
 func (m *Manager) healthCheckLoop() {
 	defer m.wg.Done()
@@ -434,21 +535,38 @@ func (m *Manager) healthCheckLoop() {
 
 // performHealthChecks performs health checks on all endpoints
 func (m *Manager) performHealthChecks() {
-	// Get endpoints from active groups only
-	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(m.endpoints)
+	// In auto mode: only check active group endpoints
+	// In manual mode: check all endpoints so we can know their health for manual activation
+	var endpointsToCheck []*Endpoint
 	
-	if len(activeEndpoints) == 0 {
-		slog.Debug("🩺 [健康检查] 没有活跃组中的端点，跳过健康检查")
-		return
+	if m.config.Group.AutoSwitchBetweenGroups {
+		// Auto mode: only check active group endpoints
+		endpointsToCheck = m.groupManager.FilterEndpointsByActiveGroups(m.endpoints)
+		
+		if len(endpointsToCheck) == 0 {
+			slog.Debug("🩺 [健康检查] 自动模式下没有活跃组中的端点，跳过健康检查")
+			return
+		}
+		
+		slog.Debug(fmt.Sprintf("🩺 [健康检查] 自动模式：开始检查 %d 个活跃组端点 (总共 %d 个端点)", 
+			len(endpointsToCheck), len(m.endpoints)))
+	} else {
+		// Manual mode: check all endpoints to determine their health status
+		endpointsToCheck = m.endpoints
+		
+		if len(endpointsToCheck) == 0 {
+			slog.Debug("🩺 [健康检查] 没有配置的端点，跳过健康检查")
+			return
+		}
+		
+		slog.Debug(fmt.Sprintf("🩺 [健康检查] 手动模式：检查所有 %d 个端点的健康状态", 
+			len(endpointsToCheck)))
 	}
-	
-	slog.Debug(fmt.Sprintf("🩺 [健康检查] 开始检查 %d 个活跃组端点 (总共 %d 个端点)", 
-		len(activeEndpoints), len(m.endpoints)))
 	
 	var wg sync.WaitGroup
 	
-	// Only check endpoints in active groups
-	for _, endpoint := range activeEndpoints {
+	// Check the determined endpoints based on mode
+	for _, endpoint := range endpointsToCheck {
 		wg.Add(1)
 		go func(ep *Endpoint) {
 			defer wg.Done()
@@ -458,15 +576,19 @@ func (m *Manager) performHealthChecks() {
 	
 	wg.Wait()
 	
-	// Count healthy endpoints after checks (from active groups only)
+	// Count healthy endpoints after checks
 	healthyCount := 0
-	for _, ep := range activeEndpoints {
+	for _, ep := range endpointsToCheck {
 		if ep.IsHealthy() {
 			healthyCount++
 		}
 	}
 	
-	slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 活跃组健康: %d/%d", healthyCount, len(activeEndpoints)))
+	if m.config.Group.AutoSwitchBetweenGroups {
+		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 活跃组健康: %d/%d", healthyCount, len(endpointsToCheck)))
+	} else {
+		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 总体健康: %d/%d", healthyCount, len(endpointsToCheck)))
+	}
 }
 
 // checkEndpointHealth checks the health of a single endpoint
@@ -499,11 +621,10 @@ func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 	
 	resp.Body.Close()
 	
-	// Consider 2xx and 40x as healthy for API endpoints
-	// 2xx: Success responses
-	// 40x: Client errors (like 401 Unauthorized, 403 Forbidden) indicate the endpoint is reachable
-	healthy := (resp.StatusCode >= 200 && resp.StatusCode < 300) || 
-			   (resp.StatusCode >= 400 && resp.StatusCode < 500)
+	// Only consider 2xx as healthy for API endpoints
+	// 2xx: Success responses only
+	// All other status codes (including 4xx, 5xx) are considered unhealthy
+	healthy := (resp.StatusCode >= 200 && resp.StatusCode < 300)
 	
 	// Log health check results
 	if healthy {
@@ -528,6 +649,7 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 	
 	endpoint.Status.LastCheck = time.Now()
 	endpoint.Status.ResponseTime = responseTime
+	endpoint.Status.NeverChecked = false // 标记为已检测
 	
 	if healthy {
 		// Endpoint is healthy
@@ -557,6 +679,11 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		}
 	}
+	
+	// Notify web interface after every health check to update response time and last check time
+	if m.webNotifier != nil {
+		go m.notifyWebInterface(endpoint)
+	}
 }
 
 // IsHealthy returns the health status of an endpoint
@@ -578,4 +705,94 @@ func (e *Endpoint) GetStatus() EndpointStatus {
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
 	return e.Status
+}
+
+// GetEndpoints returns all endpoints for Web interface
+func (m *Manager) GetEndpoints() []*Endpoint {
+	return m.endpoints
+}
+
+// GetEndpointStatus returns the status of an endpoint by name
+func (m *Manager) GetEndpointStatus(name string) EndpointStatus {
+	for _, ep := range m.endpoints {
+		if ep.Config.Name == name {
+			ep.mutex.RLock()
+			status := ep.Status
+			ep.mutex.RUnlock()
+			return status
+		}
+	}
+	return EndpointStatus{}
+}
+
+// UpdateEndpointPriority updates the priority of an endpoint by name
+func (m *Manager) UpdateEndpointPriority(name string, newPriority int) error {
+	if newPriority < 1 {
+		return fmt.Errorf("优先级必须大于等于1")
+	}
+
+	// Find the endpoint
+	var targetEndpoint *Endpoint
+	for _, ep := range m.endpoints {
+		if ep.Config.Name == name {
+			targetEndpoint = ep
+			break
+		}
+	}
+
+	if targetEndpoint == nil {
+		return fmt.Errorf("端点 '%s' 未找到", name)
+	}
+
+	// Update the priority
+	targetEndpoint.Config.Priority = newPriority
+
+	// Update the config as well
+	for i, epConfig := range m.config.Endpoints {
+		if epConfig.Name == name {
+			m.config.Endpoints[i].Priority = newPriority
+			break
+		}
+	}
+
+	slog.Info(fmt.Sprintf("🔄 端点优先级已更新: %s -> %d", name, newPriority))
+	
+	return nil
+}
+
+// ManualHealthCheck performs a manual health check on a specific endpoint by name
+func (m *Manager) ManualHealthCheck(endpointName string) error {
+	var targetEndpoint *Endpoint
+	
+	// Find the endpoint by name
+	for _, endpoint := range m.endpoints {
+		if endpoint.Config.Name == endpointName {
+			targetEndpoint = endpoint
+			break
+		}
+	}
+	
+	if targetEndpoint == nil {
+		return fmt.Errorf("端点 '%s' 未找到", endpointName)
+	}
+	
+	// Perform health check on the endpoint
+	slog.Info(fmt.Sprintf("🔍 [手动检查] 开始检查端点: %s", endpointName))
+	m.checkEndpointHealth(targetEndpoint)
+	
+	// Get status and log completion with response time
+	status := targetEndpoint.Status
+	healthStatus := "健康"
+	if !status.Healthy {
+		if status.NeverChecked {
+			healthStatus = "未检测"
+		} else {
+			healthStatus = "不健康"
+		}
+	}
+	
+	slog.Info(fmt.Sprintf("🔍 [手动检查] 检查完成: %s - 状态: %s, 响应时间: %s", 
+		endpointName, healthStatus, status.ResponseTime.String()))
+	
+	return nil
 }

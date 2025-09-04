@@ -8,16 +8,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/endpoint"
-	"endpoint_forwarder/internal/logging"
-	"endpoint_forwarder/internal/middleware"
-	"endpoint_forwarder/internal/proxy"
-	"endpoint_forwarder/internal/tui"
-	"endpoint_forwarder/internal/transport"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/logging"
+	"cc-forwarder/internal/middleware"
+	"cc-forwarder/internal/proxy"
+	"cc-forwarder/internal/tui"
+	"cc-forwarder/internal/transport"
+	"cc-forwarder/internal/web"
 )
 
 var (
@@ -25,6 +29,8 @@ var (
 	showVersion = flag.Bool("version", false, "Show version information")
 	enableTUI = flag.Bool("tui", true, "Enable TUI interface (default: true)")
 	disableTUI = flag.Bool("no-tui", false, "Disable TUI interface")
+	enableWeb = flag.Bool("web", false, "Enable Web interface")
+	webPort = flag.Int("web-port", 8088, "Web interface port (default: 8088)")
 	primaryEndpoint = flag.String("p", "", "Set primary endpoint with highest priority (endpoint name)")
 	
 	// Build-time variables (set via ldflags)
@@ -74,6 +80,14 @@ func main() {
 			logger.Error(fmt.Sprintf("❌ 主端点配置失败: %v", err))
 			os.Exit(1)
 		}
+	}
+
+	// Apply Web configuration from command line
+	if *enableWeb {
+		cfg.Web.Enabled = true
+	}
+	if *webPort != 8088 { // 只有当用户显式指定了端口时才覆盖
+		cfg.Web.Port = *webPort
 	}
 
 	// Apply TUI configuration from config file and command line
@@ -142,8 +156,9 @@ func main() {
 	loggingMiddleware.SetMonitoringMiddleware(monitoringMiddleware)
 	proxyHandler.SetMonitoringMiddleware(monitoringMiddleware)
 
-	// Store tuiApp reference for configuration reloads
+	// Store tuiApp and webServer references for configuration reloads
 	var tuiApp *tui.TUIApp
+	var webServer *web.WebServer
 
 	// Setup configuration reload callback to update components
 	configWatcher.AddReloadCallback(func(newCfg *config.Config) {
@@ -166,6 +181,11 @@ func main() {
 		// Update TUI if enabled
 		if tuiApp != nil {
 			tuiApp.UpdateConfig(newCfg)
+		}
+		
+		// Update Web server if enabled
+		if webServer != nil {
+			webServer.UpdateConfig(newCfg)
 		}
 		
 		if !tuiEnabled {
@@ -239,6 +259,16 @@ func main() {
 		}
 	}
 
+	// Start Web server if enabled
+	if cfg.Web.Enabled {
+		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, logger, startTime, *configPath)
+		// Register web server as endpoint notifier for real-time updates
+		endpointManager.SetWebNotifier(webServer)
+		if err := webServer.Start(); err != nil {
+			logger.Error(fmt.Sprintf("❌ Web服务器启动失败: %v", err))
+		}
+	}
+
 	// Start TUI if enabled
 	if tuiEnabled {
 		tuiApp = tui.NewTUIApp(cfg, endpointManager, monitoringMiddleware, startTime, *configPath)
@@ -297,6 +327,11 @@ func main() {
 	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Close Web server if running
+	if webServer != nil {
+		webServer.Stop(ctx)
+	}
 
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error(fmt.Sprintf("❌ 服务器关闭失败: %v", err))
@@ -373,8 +408,10 @@ func (h *SimpleHandler) Enabled(_ context.Context, level slog.Level) bool {
 func (h *SimpleHandler) Handle(_ context.Context, r slog.Record) error {
 	message := r.Message
 	
-	// Format log message with timestamp for file output
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	// Format log message with enhanced timestamp and process info
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+	pid := os.Getpid()
+	gid := getGoroutineID()
 	level := "INFO"
 	switch r.Level {
 	case slog.LevelDebug:
@@ -393,7 +430,7 @@ func (h *SimpleHandler) Handle(_ context.Context, r slog.Record) error {
 			fileMessage = message[:500] + "... (文件日志截断)"
 		}
 		// When disableFileResponseLimit is true, fileMessage = message (no truncation)
-		formattedMessage := fmt.Sprintf("[%s] [%s] %s\n", timestamp, level, fileMessage)
+		formattedMessage := fmt.Sprintf("[%s] [PID:%d] [GID:%d] [%s] %s\n", timestamp, pid, gid, level, fileMessage)
 		h.fileRotator.Write([]byte(formattedMessage))
 	}
 	
@@ -407,8 +444,9 @@ func (h *SimpleHandler) Handle(_ context.Context, r slog.Record) error {
 	if h.tuiApp != nil {
 		h.tuiApp.AddLog(level, displayMessage, "system")
 	} else {
-		// Only output to console when TUI is not available
-		fmt.Println(displayMessage)
+		// Only output to console when TUI is not available - with enhanced format
+		consoleMessage := fmt.Sprintf("[%s] [PID:%d] [GID:%d] [%s] %s", timestamp, pid, gid, level, displayMessage)
+		fmt.Println(consoleMessage)
 	}
 	
 	return nil
@@ -431,4 +469,16 @@ func (h *SimpleHandler) Close() error {
 		return h.fileRotator.Close()
 	}
 	return nil
+}
+
+// getGoroutineID extracts the goroutine ID from runtime stack trace
+func getGoroutineID() int {
+	buf := make([]byte, 64)
+	buf = buf[:runtime.Stack(buf, false)]
+	idField := strings.Fields(string(buf))[1]
+	id, err := strconv.Atoi(idField)
+	if err != nil {
+		return 0
+	}
+	return id
 }

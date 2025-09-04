@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  endpoint-forwarder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: endpoint-forwarder:latest
+    container_name: endpoint-forwarder
+    restart: unless-stopped
+    
+    # 端口映射
+    ports:
+      - "8087:8087"  # 代理端口
+      - "8088:8088"  # Web界面端口
+    
+    # 卷映射 - 支持配置文件热重载和日志持久化
+    volumes:
+      - ./config:/app/config:ro  # 配置文件目录 (只读)
+      - ./logs:/app/logs         # 日志目录 (读写)
+    
+    # 环境变量
+    environment:
+      - TZ=Asia/Shanghai
+      # 可以通过环境变量覆盖配置
+      - CONFIG_PATH=/app/config/config.yaml
+      - LOG_LEVEL=info
+      - WEB_ENABLED=true
+      - TUI_ENABLED=false        # Docker环境下禁用TUI
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    
+    # 安全配置
+    user: "1000:1000"           # 使用非root用户
+    read_only: true             # 只读文件系统
+    tmpfs:
+      - /tmp:size=100M,noexec,nosuid,nodev
+    
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    
+    # 网络配置
+    networks:
+      - endpoint-forwarder-net
+    
+    # 标签
+    labels:
+      - "com.endpoint-forwarder.description=Claude Request Forwarder Service"
+      - "com.endpoint-forwarder.version=1.0"
+
+# 网络配置
+networks:
+  endpoint-forwarder-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# 卷配置
+volumes:
+  logs:
+    driver: local

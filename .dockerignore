@@ -41,8 +41,24 @@ Thumbs.db
 tmp/
 temp/
 
-# Logs
+# Logs (will be generated at runtime)
 *.log
+logs/
 
 # Dependencies (will be downloaded during build)
 vendor/
+
+# Docker files (not needed in build context except main ones)
+docker-compose.yml
+docker-compose.override.yml
+docker-compose.*.yml
+Dockerfile.dev
+.dockerignore
+
+# Development scripts
+*.sh
+!deploy.sh
+
+# Runtime directories
+data/
+cache/

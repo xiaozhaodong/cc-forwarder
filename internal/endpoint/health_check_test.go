@@ -1,7 +1,7 @@
 package endpoint
 
 import (
-	"endpoint_forwarder/config"
+	"cc-forwarder/config"
 	"testing"
 	"time"
 )

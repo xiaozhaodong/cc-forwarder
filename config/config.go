@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,9 +21,11 @@ type Config struct {
 	Logging      LoggingConfig    `yaml:"logging"`
 	Streaming    StreamingConfig  `yaml:"streaming"`
 	Group        GroupConfig      `yaml:"group"`        // Group configuration
+	RequestSuspend RequestSuspendConfig `yaml:"request_suspend"` // Request suspension configuration
 	Proxy        ProxyConfig      `yaml:"proxy"`
 	Auth         AuthConfig       `yaml:"auth"`
 	TUI          TUIConfig        `yaml:"tui"`           // TUI configuration
+	Web          WebConfig        `yaml:"web"`           // Web interface configuration
 	GlobalTimeout time.Duration   `yaml:"global_timeout"` // Global timeout for non-streaming requests
 	Endpoints    []EndpointConfig `yaml:"endpoints"`
 	
@@ -74,7 +77,14 @@ type StreamingConfig struct {
 }
 
 type GroupConfig struct {
-	Cooldown time.Duration `yaml:"cooldown"` // Cooldown duration for groups when all endpoints fail
+	Cooldown               time.Duration `yaml:"cooldown"`                 // Cooldown duration for groups when all endpoints fail
+	AutoSwitchBetweenGroups bool          `yaml:"auto_switch_between_groups"` // Whether to automatically switch between groups, default: true
+}
+
+type RequestSuspendConfig struct {
+	Enabled            bool          `yaml:"enabled"`               // Enable request suspension feature, default: false
+	Timeout            time.Duration `yaml:"timeout"`               // Timeout for suspended requests, default: 300s
+	MaxSuspendedRequests int          `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
 }
 
 type ProxyConfig struct {
@@ -98,6 +108,12 @@ type TUIConfig struct {
 	SavePriorityEdits bool         `yaml:"save_priority_edits"` // Save priority edits to config file, default: false
 }
 
+type WebConfig struct {
+	Enabled bool   `yaml:"enabled"`  // Enable Web interface, default: false
+	Host    string `yaml:"host"`     // Web interface host, default: localhost
+	Port    int    `yaml:"port"`     // Web interface port, default: 8088
+}
+
 type EndpointConfig struct {
 	Name          string            `yaml:"name"`
 	URL           string            `yaml:"url"`
@@ -117,6 +133,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	// Check if auto_switch_between_groups is explicitly set in YAML
+	hasAutoSwitchConfig := strings.Contains(string(data), "auto_switch_between_groups")
+
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
@@ -124,6 +143,11 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Set defaults
 	config.setDefaults()
+
+	// Handle auto_switch_between_groups default for backward compatibility
+	if !hasAutoSwitchConfig {
+		config.Group.AutoSwitchBetweenGroups = true // Default to auto mode for backward compatibility
+	}
 
 	// Validate configuration
 	if err := config.validate(); err != nil {
@@ -211,6 +235,15 @@ func (c *Config) setDefaults() {
 		c.Group.Cooldown = 600 * time.Second // Default 1 minute cooldown for groups
 	}
 
+	// Set request suspension defaults
+	if c.RequestSuspend.Timeout == 0 {
+		c.RequestSuspend.Timeout = 300 * time.Second // Default 5 minutes timeout for suspended requests
+	}
+	if c.RequestSuspend.MaxSuspendedRequests == 0 {
+		c.RequestSuspend.MaxSuspendedRequests = 100 // Default maximum 100 suspended requests
+	}
+	// RequestSuspend.Enabled defaults to false (zero value) for backward compatibility
+
 	// Set TUI defaults
 	if c.TUI.UpdateInterval == 0 {
 		c.TUI.UpdateInterval = 2 * time.Second // Default 2 second refresh (reduced from 1s)
@@ -218,6 +251,16 @@ func (c *Config) setDefaults() {
 	// TUI enabled defaults to true if not explicitly set in YAML
 	// This will be handled by the application logic
 	// Save priority edits defaults to false for safety
+	// Note: We don't set a default here since the zero value (false) is what we want
+
+	// Set Web defaults
+	if c.Web.Host == "" {
+		c.Web.Host = "localhost"
+	}
+	if c.Web.Port == 0 {
+		c.Web.Port = 8088
+	}
+	// Web enabled defaults to false if not explicitly set in YAML
 	// Note: We don't set a default here since the zero value (false) is what we want
 
 	// Set default timeouts for endpoints and handle parameter inheritance (except tokens)
@@ -371,6 +414,19 @@ func (c *Config) validate() error {
 		}
 		if c.Proxy.URL == "" && (c.Proxy.Host == "" || c.Proxy.Port == 0) {
 			return fmt.Errorf("proxy URL or host:port must be specified when proxy is enabled")
+		}
+	}
+
+	// Validate request suspension configuration
+	if c.RequestSuspend.Enabled {
+		if c.RequestSuspend.Timeout <= 0 {
+			return fmt.Errorf("request suspend timeout must be greater than 0 when enabled")
+		}
+		if c.RequestSuspend.MaxSuspendedRequests <= 0 {
+			return fmt.Errorf("max suspended requests must be greater than 0 when request suspension is enabled")
+		}
+		if c.RequestSuspend.MaxSuspendedRequests > 10000 {
+			return fmt.Errorf("max suspended requests cannot exceed 10000 for performance reasons")
 		}
 	}
 
@@ -572,6 +628,36 @@ func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
 		cw.logger.Info("🔐 鉴权状态变更",
 			"old_enabled", oldConfig.Auth.Enabled,
 			"new_enabled", newConfig.Auth.Enabled)
+	}
+
+	if oldConfig.Web.Enabled != newConfig.Web.Enabled {
+		cw.logger.Info("🌐 Web界面状态变更",
+			"old_enabled", oldConfig.Web.Enabled,
+			"new_enabled", newConfig.Web.Enabled)
+	}
+
+	if oldConfig.Web.Port != newConfig.Web.Port {
+		cw.logger.Info("🌐 Web界面端口变更",
+			"old_port", oldConfig.Web.Port,
+			"new_port", newConfig.Web.Port)
+	}
+
+	if oldConfig.RequestSuspend.Enabled != newConfig.RequestSuspend.Enabled {
+		cw.logger.Info("⏸️ 请求挂起状态变更",
+			"old_enabled", oldConfig.RequestSuspend.Enabled,
+			"new_enabled", newConfig.RequestSuspend.Enabled)
+	}
+
+	if oldConfig.RequestSuspend.MaxSuspendedRequests != newConfig.RequestSuspend.MaxSuspendedRequests {
+		cw.logger.Info("⏸️ 最大挂起请求数变更",
+			"old_max", oldConfig.RequestSuspend.MaxSuspendedRequests,
+			"new_max", newConfig.RequestSuspend.MaxSuspendedRequests)
+	}
+
+	if oldConfig.RequestSuspend.Timeout != newConfig.RequestSuspend.Timeout {
+		cw.logger.Info("⏸️ 请求挂起超时时间变更",
+			"old_timeout", oldConfig.RequestSuspend.Timeout,
+			"new_timeout", newConfig.RequestSuspend.Timeout)
 	}
 }
 

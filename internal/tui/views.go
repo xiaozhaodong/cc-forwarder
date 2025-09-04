@@ -11,10 +11,10 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/endpoint"
-	"endpoint_forwarder/internal/middleware"
-	"endpoint_forwarder/internal/monitor"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/middleware"
+	"cc-forwarder/internal/monitor"
 )
 
 // OverviewView represents the overview tab

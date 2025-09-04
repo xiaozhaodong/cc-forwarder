@@ -74,7 +74,7 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 		}
 
 		// Log initial request (without endpoint info yet)
-		lm.logger.Info("🚀 Request started",
+		lm.logger.Info(fmt.Sprintf("🚀 Request started [%s]", connID),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"client_ip", clientIP,
@@ -102,7 +102,7 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 
 		// Log response
 		statusEmoji := getStatusEmoji(rw.statusCode)
-		lm.logger.Info(fmt.Sprintf("%s Request completed", statusEmoji),
+		lm.logger.Info(fmt.Sprintf("%s Request completed [%s]", statusEmoji, connID),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"endpoint", selectedEndpoint,
@@ -115,7 +115,7 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 
 		// Log slow requests as warnings
 		if duration > 10*time.Second {
-			lm.logger.Warn("🐌 Slow request detected",
+			lm.logger.Warn(fmt.Sprintf("🐌 Slow request detected [%s]", connID),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"endpoint", selectedEndpoint,
@@ -134,7 +134,7 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 				emoji = "❌"
 			}
 			
-			lm.logger.Log(r.Context(), level, fmt.Sprintf("%s Request error", emoji),
+			lm.logger.Log(r.Context(), level, fmt.Sprintf("%s Request error [%s]", emoji, connID),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"endpoint", selectedEndpoint,

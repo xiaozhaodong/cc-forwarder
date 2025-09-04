@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"endpoint_forwarder/internal/endpoint"
-	"endpoint_forwarder/internal/monitor"
-	"endpoint_forwarder/internal/transport"
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/transport"
 )
 
 // handleSSERequest handles Server-Sent Events streaming requests
@@ -319,7 +319,7 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 	lineBuffer := make([]byte, 0, 1024)
 
 	// Initialize token parser for extracting usage statistics
-	tokenParser := NewTokenParser()
+	tokenParser := NewTokenParserWithRequestID(connID)
 	slog.InfoContext(ctx, "🔧 [Token Parser] 初始化完成，准备解析Claude API的令牌使用统计", "endpoint", endpointName, "connID", connID)
 	
 	// Initialize debug accumulator for SSE events
@@ -500,7 +500,7 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 	flusher.Flush()
 
 	// Initialize token parser for background parsing
-	tokenParser := NewTokenParser()
+	tokenParser := NewTokenParserWithRequestID(connID)
 	lineBuffer := make([]byte, 0, 4096)
 	
 	// Simple copy with line-by-line token parsing

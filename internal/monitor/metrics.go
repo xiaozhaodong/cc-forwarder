@@ -1,6 +1,8 @@
 package monitor
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -23,6 +25,15 @@ type Metrics struct {
 	SuccessfulRequests int64
 	FailedRequests    int64
 	
+	// Suspended request metrics
+	SuspendedRequests          int64  // Current number of suspended requests
+	TotalSuspendedRequests     int64  // Total historical suspended requests
+	SuccessfulSuspendedRequests int64  // Successfully resumed suspended requests
+	TimeoutSuspendedRequests   int64  // Timed out suspended requests
+	TotalSuspendedTime         time.Duration // Total time spent in suspension
+	MinSuspendedTime           time.Duration // Minimum suspension time
+	MaxSuspendedTime           time.Duration // Maximum suspension time
+	
 	// Token usage metrics
 	TotalTokenUsage   TokenUsage
 	
@@ -43,10 +54,11 @@ type Metrics struct {
 	StartTime time.Time
 	
 	// Historical data (circular buffer)
-	RequestHistory    []RequestDataPoint
-	ResponseHistory   []ResponseTimePoint
-	TokenHistory      []TokenHistoryPoint
-	MaxHistoryPoints  int
+	RequestHistory              []RequestDataPoint
+	ResponseHistory             []ResponseTimePoint
+	TokenHistory                []TokenHistoryPoint
+	SuspendedRequestHistory     []SuspendedRequestHistoryPoint
+	MaxHistoryPoints            int
 }
 
 // EndpointMetrics tracks metrics for a specific endpoint
@@ -78,11 +90,17 @@ type ConnectionInfo struct {
 	Endpoint       string
 	Port           string
 	RetryCount     int
-	Status         string // "active", "completed", "failed", "timeout"
+	Status         string // "active", "completed", "failed", "timeout", "suspended", "resumed"
 	BytesReceived  int64
 	BytesSent      int64
 	IsStreaming    bool
 	TokenUsage     TokenUsage  // Token usage for this connection
+	
+	// Suspended request related fields
+	IsSuspended    bool      // Whether the connection is currently suspended
+	SuspendedAt    time.Time // When the request was suspended
+	ResumedAt      time.Time // When the request was resumed
+	SuspendedTime  time.Duration // Total time spent suspended
 }
 
 // RequestDataPoint represents a point in time for request metrics
@@ -111,19 +129,32 @@ type TokenHistoryPoint struct {
 	TotalTokens         int64
 }
 
+// SuspendedRequestHistoryPoint represents suspended request metrics at a point in time
+type SuspendedRequestHistoryPoint struct {
+	Timestamp                   time.Time
+	SuspendedRequests          int64  // Current suspended requests at this point
+	TotalSuspendedRequests     int64  // Total historical suspended requests
+	SuccessfulSuspendedRequests int64  // Successfully resumed
+	TimeoutSuspendedRequests   int64  // Timed out
+	AverageSuspendedTime       time.Duration // Average suspension time
+}
+
 // NewMetrics creates a new metrics instance
 func NewMetrics() *Metrics {
 	return &Metrics{
-		EndpointStats:     make(map[string]*EndpointMetrics),
-		ActiveConnections: make(map[string]*ConnectionInfo),
-		ConnectionHistory: make([]*ConnectionInfo, 0),
-		StartTime:         time.Now(),
-		RequestHistory:    make([]RequestDataPoint, 0),
-		ResponseHistory:   make([]ResponseTimePoint, 0),
-		TokenHistory:      make([]TokenHistoryPoint, 0),
-		MaxHistoryPoints:  300, // 5 minutes of data at 1-second intervals
-		MinResponseTime:   time.Duration(0),
-		MaxResponseTime:   time.Duration(0),
+		EndpointStats:               make(map[string]*EndpointMetrics),
+		ActiveConnections:           make(map[string]*ConnectionInfo),
+		ConnectionHistory:           make([]*ConnectionInfo, 0),
+		StartTime:                   time.Now(),
+		RequestHistory:              make([]RequestDataPoint, 0),
+		ResponseHistory:             make([]ResponseTimePoint, 0),
+		TokenHistory:                make([]TokenHistoryPoint, 0),
+		SuspendedRequestHistory:     make([]SuspendedRequestHistoryPoint, 0),
+		MaxHistoryPoints:            300, // 5 minutes of data at 1-second intervals
+		MinResponseTime:             time.Duration(0),
+		MaxResponseTime:             time.Duration(0),
+		MinSuspendedTime:            time.Duration(0),
+		MaxSuspendedTime:            time.Duration(0),
 	}
 }
 
@@ -325,17 +356,24 @@ func (m *Metrics) GetMetrics() *Metrics {
 
 	// Create a copy of metrics
 	snapshot := &Metrics{
-		TotalRequests:      m.TotalRequests,
-		SuccessfulRequests: m.SuccessfulRequests,
-		FailedRequests:     m.FailedRequests,
-		TotalTokenUsage:    m.TotalTokenUsage,
-		TotalResponseTime:  m.TotalResponseTime,
-		MinResponseTime:    m.MinResponseTime,
-		MaxResponseTime:    m.MaxResponseTime,
-		StartTime:          m.StartTime,
-		EndpointStats:      make(map[string]*EndpointMetrics),
-		ActiveConnections:  make(map[string]*ConnectionInfo),
-		ConnectionHistory:  make([]*ConnectionInfo, len(m.ConnectionHistory)),
+		TotalRequests:                  m.TotalRequests,
+		SuccessfulRequests:             m.SuccessfulRequests,
+		FailedRequests:                 m.FailedRequests,
+		SuspendedRequests:              m.SuspendedRequests,
+		TotalSuspendedRequests:         m.TotalSuspendedRequests,
+		SuccessfulSuspendedRequests:    m.SuccessfulSuspendedRequests,
+		TimeoutSuspendedRequests:       m.TimeoutSuspendedRequests,
+		TotalSuspendedTime:             m.TotalSuspendedTime,
+		MinSuspendedTime:               m.MinSuspendedTime,
+		MaxSuspendedTime:               m.MaxSuspendedTime,
+		TotalTokenUsage:                m.TotalTokenUsage,
+		TotalResponseTime:              m.TotalResponseTime,
+		MinResponseTime:                m.MinResponseTime,
+		MaxResponseTime:                m.MaxResponseTime,
+		StartTime:                      m.StartTime,
+		EndpointStats:                  make(map[string]*EndpointMetrics),
+		ActiveConnections:              make(map[string]*ConnectionInfo),
+		ConnectionHistory:              make([]*ConnectionInfo, len(m.ConnectionHistory)),
 	}
 
 	// Copy endpoint stats
@@ -375,6 +413,10 @@ func (m *Metrics) GetMetrics() *Metrics {
 			BytesSent:     v.BytesSent,
 			IsStreaming:   v.IsStreaming,
 			TokenUsage:    v.TokenUsage,
+			IsSuspended:   v.IsSuspended,
+			SuspendedAt:   v.SuspendedAt,
+			ResumedAt:     v.ResumedAt,
+			SuspendedTime: v.SuspendedTime,
 		}
 	}
 
@@ -396,6 +438,10 @@ func (m *Metrics) GetMetrics() *Metrics {
 			BytesSent:     v.BytesSent,
 			IsStreaming:   v.IsStreaming,
 			TokenUsage:    v.TokenUsage,
+			IsSuspended:   v.IsSuspended,
+			SuspendedAt:   v.SuspendedAt,
+			ResumedAt:     v.ResumedAt,
+			SuspendedTime: v.SuspendedTime,
 		}
 	}
 
@@ -465,23 +511,6 @@ func (m *Metrics) RecordTokenUsage(connID string, endpoint string, tokens *Token
 	m.TotalTokenUsage.CacheCreationTokens += tokens.CacheCreationTokens
 	m.TotalTokenUsage.CacheReadTokens += tokens.CacheReadTokens
 
-	// Record token history point
-	historyPoint := TokenHistoryPoint{
-		Timestamp:           time.Now(),
-		InputTokens:         m.TotalTokenUsage.InputTokens,
-		OutputTokens:        m.TotalTokenUsage.OutputTokens,
-		CacheCreationTokens: m.TotalTokenUsage.CacheCreationTokens,
-		CacheReadTokens:     m.TotalTokenUsage.CacheReadTokens,
-		TotalTokens:         m.TotalTokenUsage.InputTokens + m.TotalTokenUsage.OutputTokens,
-	}
-	
-	m.TokenHistory = append(m.TokenHistory, historyPoint)
-	
-	// Limit token history size
-	if len(m.TokenHistory) > m.MaxHistoryPoints {
-		m.TokenHistory = m.TokenHistory[len(m.TokenHistory)-m.MaxHistoryPoints:]
-	}
-
 	// Update endpoint-specific token metrics
 	if endpoint != "unknown" && m.EndpointStats[endpoint] != nil {
 		m.EndpointStats[endpoint].TokenUsage.InputTokens += tokens.InputTokens
@@ -499,6 +528,9 @@ func (m *Metrics) RecordTokenUsage(connID string, endpoint string, tokens *Token
 		conn.TokenUsage.CacheReadTokens += tokens.CacheReadTokens
 		conn.LastActivity = time.Now()
 	}
+	
+	// Note: Token history points are now added by AddHistoryDataPoints() method
+	// This avoids duplicate history entries and provides better data sampling
 }
 
 // GetTotalTokenStats returns total token usage statistics
@@ -520,7 +552,454 @@ func (m *Metrics) GetTokenHistory() []TokenHistoryPoint {
 	return history
 }
 
-// generateConnectionID generates a unique connection ID
+// AddHistoryDataPoints 定期收集历史数据点
+func (m *Metrics) AddHistoryDataPoints() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+
+	// 添加请求历史数据点
+	requestPoint := RequestDataPoint{
+		Timestamp:  now,
+		Total:      m.TotalRequests,
+		Successful: m.SuccessfulRequests,
+		Failed:     m.FailedRequests,
+	}
+	m.RequestHistory = append(m.RequestHistory, requestPoint)
+
+	// 添加响应时间历史数据点
+	responsePoint := ResponseTimePoint{
+		Timestamp:   now,
+		AverageTime: m.GetAverageResponseTimeUnlocked(),
+		MinTime:     m.MinResponseTime,
+		MaxTime:     m.MaxResponseTime,
+	}
+	m.ResponseHistory = append(m.ResponseHistory, responsePoint)
+
+	// 添加Token使用历史数据点 (定期快照，而不是在每次Token使用时添加)
+	tokenPoint := TokenHistoryPoint{
+		Timestamp:           now,
+		InputTokens:         m.TotalTokenUsage.InputTokens,
+		OutputTokens:        m.TotalTokenUsage.OutputTokens,
+		CacheCreationTokens: m.TotalTokenUsage.CacheCreationTokens,
+		CacheReadTokens:     m.TotalTokenUsage.CacheReadTokens,
+		TotalTokens:         m.TotalTokenUsage.InputTokens + m.TotalTokenUsage.OutputTokens + m.TotalTokenUsage.CacheCreationTokens + m.TotalTokenUsage.CacheReadTokens,
+	}
+	
+	// 只有当Token数据有变化时才添加新点，避免重复数据
+	if len(m.TokenHistory) == 0 || 
+		m.TokenHistory[len(m.TokenHistory)-1].InputTokens != tokenPoint.InputTokens ||
+		m.TokenHistory[len(m.TokenHistory)-1].OutputTokens != tokenPoint.OutputTokens ||
+		m.TokenHistory[len(m.TokenHistory)-1].CacheCreationTokens != tokenPoint.CacheCreationTokens ||
+		m.TokenHistory[len(m.TokenHistory)-1].CacheReadTokens != tokenPoint.CacheReadTokens {
+		m.TokenHistory = append(m.TokenHistory, tokenPoint)
+	}
+
+	// 添加挂起请求历史数据点
+	suspendedPoint := SuspendedRequestHistoryPoint{
+		Timestamp:                   now,
+		SuspendedRequests:          m.SuspendedRequests,
+		TotalSuspendedRequests:     m.TotalSuspendedRequests,
+		SuccessfulSuspendedRequests: m.SuccessfulSuspendedRequests,
+		TimeoutSuspendedRequests:   m.TimeoutSuspendedRequests,
+		AverageSuspendedTime:       m.GetAverageSuspendedTimeUnlocked(),
+	}
+	
+	// 只有当挂起请求数据有变化时才添加新点
+	if len(m.SuspendedRequestHistory) == 0 ||
+		m.SuspendedRequestHistory[len(m.SuspendedRequestHistory)-1].SuspendedRequests != suspendedPoint.SuspendedRequests ||
+		m.SuspendedRequestHistory[len(m.SuspendedRequestHistory)-1].TotalSuspendedRequests != suspendedPoint.TotalSuspendedRequests ||
+		m.SuspendedRequestHistory[len(m.SuspendedRequestHistory)-1].SuccessfulSuspendedRequests != suspendedPoint.SuccessfulSuspendedRequests ||
+		m.SuspendedRequestHistory[len(m.SuspendedRequestHistory)-1].TimeoutSuspendedRequests != suspendedPoint.TimeoutSuspendedRequests {
+		m.SuspendedRequestHistory = append(m.SuspendedRequestHistory, suspendedPoint)
+	}
+
+	// 限制历史数据大小
+	if len(m.RequestHistory) > m.MaxHistoryPoints {
+		m.RequestHistory = m.RequestHistory[len(m.RequestHistory)-m.MaxHistoryPoints:]
+	}
+
+	if len(m.ResponseHistory) > m.MaxHistoryPoints {
+		m.ResponseHistory = m.ResponseHistory[len(m.ResponseHistory)-m.MaxHistoryPoints:]
+	}
+
+	if len(m.TokenHistory) > m.MaxHistoryPoints {
+		m.TokenHistory = m.TokenHistory[len(m.TokenHistory)-m.MaxHistoryPoints:]
+	}
+
+	if len(m.SuspendedRequestHistory) > m.MaxHistoryPoints {
+		m.SuspendedRequestHistory = m.SuspendedRequestHistory[len(m.SuspendedRequestHistory)-m.MaxHistoryPoints:]
+	}
+}
+
+// GetAverageResponseTimeUnlocked 计算平均响应时间（无锁版本）
+func (m *Metrics) GetAverageResponseTimeUnlocked() time.Duration {
+	if m.TotalRequests == 0 {
+		return 0
+	}
+	return m.TotalResponseTime / time.Duration(m.TotalRequests)
+}
+
+// GetChartDataForRequestHistory 获取请求历史图表数据
+func (m *Metrics) GetChartDataForRequestHistory(minutes int) []RequestDataPoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(minutes) * time.Minute)
+
+	var result []RequestDataPoint
+	for _, point := range m.RequestHistory {
+		if point.Timestamp.After(cutoff) {
+			result = append(result, point)
+		}
+	}
+
+	return result
+}
+
+// GetChartDataForResponseTime 获取响应时间图表数据
+func (m *Metrics) GetChartDataForResponseTime(minutes int) []ResponseTimePoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(minutes) * time.Minute)
+
+	var result []ResponseTimePoint
+	for _, point := range m.ResponseHistory {
+		if point.Timestamp.After(cutoff) {
+			result = append(result, point)
+		}
+	}
+
+	return result
+}
+
+// GetChartDataForTokenHistory 获取Token历史图表数据
+func (m *Metrics) GetChartDataForTokenHistory(minutes int) []TokenHistoryPoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(minutes) * time.Minute)
+
+	var result []TokenHistoryPoint
+	for _, point := range m.TokenHistory {
+		if point.Timestamp.After(cutoff) {
+			result = append(result, point)
+		}
+	}
+
+	return result
+}
+
+// GetEndpointPerformanceData 获取端点性能统计数据
+func (m *Metrics) GetEndpointPerformanceData() []map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []map[string]interface{}
+	for _, endpoint := range m.EndpointStats {
+		avgResponseTime := time.Duration(0)
+		if endpoint.TotalRequests > 0 {
+			avgResponseTime = endpoint.TotalResponseTime / time.Duration(endpoint.TotalRequests)
+		}
+
+		result = append(result, map[string]interface{}{
+			"name":                 endpoint.Name,
+			"url":                  endpoint.URL,
+			"healthy":              endpoint.Healthy,
+			"total_requests":       endpoint.TotalRequests,
+			"successful_requests": endpoint.SuccessfulRequests,
+			"failed_requests":     endpoint.FailedRequests,
+			"success_rate":         m.calculateEndpointSuccessRate(endpoint),
+			"avg_response_time":    avgResponseTime.Milliseconds(),
+			"min_response_time":    endpoint.MinResponseTime.Milliseconds(),
+			"max_response_time":    endpoint.MaxResponseTime.Milliseconds(),
+			"priority":             endpoint.Priority,
+			"retry_count":          endpoint.RetryCount,
+			"last_used":            endpoint.LastUsed,
+			"token_usage":          endpoint.TokenUsage,
+		})
+	}
+
+	return result
+}
+
+// calculateEndpointSuccessRate 计算端点成功率
+func (m *Metrics) calculateEndpointSuccessRate(endpoint *EndpointMetrics) float64 {
+	if endpoint.TotalRequests == 0 {
+		return 0
+	}
+	return float64(endpoint.SuccessfulRequests) / float64(endpoint.TotalRequests) * 100
+}
+
+// GetConnectionActivityData 获取连接活动数据
+func (m *Metrics) GetConnectionActivityData(minutes int) []map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(minutes) * time.Minute)
+
+	// 创建时间间隔计数器
+	intervals := make(map[string]int)
+	intervalSize := time.Minute // 1分钟间隔
+
+	// 从所有连接历史中收集数据
+	for _, conn := range m.ConnectionHistory {
+		if conn.StartTime.After(cutoff) {
+			// 计算所属时间间隔
+			interval := conn.StartTime.Truncate(intervalSize).Format("15:04")
+			intervals[interval]++
+		}
+	}
+
+	// 当前活跃连接
+	for _, conn := range m.ActiveConnections {
+		if conn.StartTime.After(cutoff) {
+			interval := conn.StartTime.Truncate(intervalSize).Format("15:04")
+			intervals[interval]++
+		}
+	}
+
+	// 转换为图表数据格式
+	var result []map[string]interface{}
+	for interval, count := range intervals {
+		result = append(result, map[string]interface{}{
+			"time":  interval,
+			"count": count,
+		})
+	}
+
+	return result
+}
+
+// GetEndpointHealthDistribution 获取端点健康状态分布
+func (m *Metrics) GetEndpointHealthDistribution() map[string]int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	distribution := map[string]int{
+		"healthy":   0,
+		"unhealthy": 0,
+	}
+
+	for _, endpoint := range m.EndpointStats {
+		if endpoint.Healthy {
+			distribution["healthy"]++
+		} else {
+			distribution["unhealthy"]++
+		}
+	}
+
+	return distribution
+}
+
+// generateConnectionID generates a unique connection ID in format req-xxxxxxxx
 func generateConnectionID() string {
-	return time.Now().Format("20060102150405.000000")
+	// Generate 4 random bytes for 8 hex characters
+	bytes := make([]byte, 4)
+	rand.Read(bytes)
+	return "req-" + hex.EncodeToString(bytes)
+}
+
+// RecordRequestSuspended records a request being suspended
+func (m *Metrics) RecordRequestSuspended(connID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.SuspendedRequests++
+	m.TotalSuspendedRequests++
+
+	// Update connection status
+	if conn, exists := m.ActiveConnections[connID]; exists {
+		conn.IsSuspended = true
+		conn.SuspendedAt = time.Now()
+		conn.Status = "suspended"
+		conn.LastActivity = time.Now()
+	}
+}
+
+// RecordRequestResumed records a suspended request being resumed
+func (m *Metrics) RecordRequestResumed(connID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.SuspendedRequests--
+	m.SuccessfulSuspendedRequests++
+
+	// Update connection status and calculate suspended time
+	if conn, exists := m.ActiveConnections[connID]; exists && conn.IsSuspended {
+		conn.IsSuspended = false
+		conn.ResumedAt = time.Now()
+		conn.Status = "active" // Back to active status
+		conn.LastActivity = time.Now()
+
+		// Calculate suspended duration
+		if !conn.SuspendedAt.IsZero() {
+			suspendedDuration := conn.ResumedAt.Sub(conn.SuspendedAt)
+			conn.SuspendedTime = suspendedDuration
+
+			// Update overall suspended time metrics
+			m.TotalSuspendedTime += suspendedDuration
+			if m.MinSuspendedTime == 0 || suspendedDuration < m.MinSuspendedTime {
+				m.MinSuspendedTime = suspendedDuration
+			}
+			if suspendedDuration > m.MaxSuspendedTime {
+				m.MaxSuspendedTime = suspendedDuration
+			}
+		}
+	}
+}
+
+// RecordRequestSuspendTimeout records a suspended request timing out
+func (m *Metrics) RecordRequestSuspendTimeout(connID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.SuspendedRequests--
+	m.TimeoutSuspendedRequests++
+
+	// Update connection status and calculate suspended time
+	if conn, exists := m.ActiveConnections[connID]; exists && conn.IsSuspended {
+		conn.IsSuspended = false
+		conn.Status = "timeout"
+		conn.LastActivity = time.Now()
+
+		// Calculate suspended duration
+		if !conn.SuspendedAt.IsZero() {
+			suspendedDuration := time.Since(conn.SuspendedAt)
+			conn.SuspendedTime = suspendedDuration
+
+			// Update overall suspended time metrics
+			m.TotalSuspendedTime += suspendedDuration
+			if m.MinSuspendedTime == 0 || suspendedDuration < m.MinSuspendedTime {
+				m.MinSuspendedTime = suspendedDuration
+			}
+			if suspendedDuration > m.MaxSuspendedTime {
+				m.MaxSuspendedTime = suspendedDuration
+			}
+		}
+
+		// Move to history since the request failed due to timeout
+		m.ConnectionHistory = append(m.ConnectionHistory, conn)
+		delete(m.ActiveConnections, connID)
+
+		// Limit history size
+		if len(m.ConnectionHistory) > 1000 {
+			m.ConnectionHistory = m.ConnectionHistory[len(m.ConnectionHistory)-1000:]
+		}
+	}
+}
+
+// GetAverageSuspendedTime calculates average suspended time
+func (m *Metrics) GetAverageSuspendedTime() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	totalProcessed := m.SuccessfulSuspendedRequests + m.TimeoutSuspendedRequests
+	if totalProcessed == 0 {
+		return 0
+	}
+	return m.TotalSuspendedTime / time.Duration(totalProcessed)
+}
+
+// GetSuspendedRequestStats returns suspended request statistics
+func (m *Metrics) GetSuspendedRequestStats() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	totalProcessed := m.SuccessfulSuspendedRequests + m.TimeoutSuspendedRequests
+	successRate := 0.0
+	if totalProcessed > 0 {
+		successRate = float64(m.SuccessfulSuspendedRequests) / float64(totalProcessed) * 100
+	}
+
+	return map[string]interface{}{
+		"suspended_requests":            m.SuspendedRequests,
+		"total_suspended_requests":      m.TotalSuspendedRequests,
+		"successful_suspended_requests": m.SuccessfulSuspendedRequests,
+		"timeout_suspended_requests":    m.TimeoutSuspendedRequests,
+		"success_rate":                  successRate,
+		"total_suspended_time":          m.TotalSuspendedTime.String(),
+		"average_suspended_time":        m.GetAverageSuspendedTimeUnlocked().String(),
+		"min_suspended_time":            m.MinSuspendedTime.String(),
+		"max_suspended_time":            m.MaxSuspendedTime.String(),
+	}
+}
+
+// GetAverageSuspendedTimeUnlocked calculates average suspended time (unlocked version)
+func (m *Metrics) GetAverageSuspendedTimeUnlocked() time.Duration {
+	totalProcessed := m.SuccessfulSuspendedRequests + m.TimeoutSuspendedRequests
+	if totalProcessed == 0 {
+		return 0
+	}
+	return m.TotalSuspendedTime / time.Duration(totalProcessed)
+}
+
+// GetSuspendedRequestHistory returns the suspended request history
+func (m *Metrics) GetSuspendedRequestHistory() []SuspendedRequestHistoryPoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Return a copy of the suspended request history
+	history := make([]SuspendedRequestHistoryPoint, len(m.SuspendedRequestHistory))
+	copy(history, m.SuspendedRequestHistory)
+	return history
+}
+
+// GetChartDataForSuspendedRequests gets suspended request chart data
+func (m *Metrics) GetChartDataForSuspendedRequests(minutes int) []SuspendedRequestHistoryPoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(minutes) * time.Minute)
+
+	var result []SuspendedRequestHistoryPoint
+	for _, point := range m.SuspendedRequestHistory {
+		if point.Timestamp.After(cutoff) {
+			result = append(result, point)
+		}
+	}
+
+	return result
+}
+
+// GetActiveSuspendedConnections returns currently suspended connections
+func (m *Metrics) GetActiveSuspendedConnections() []*ConnectionInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var suspendedConnections []*ConnectionInfo
+	for _, conn := range m.ActiveConnections {
+		if conn.IsSuspended {
+			suspendedConnections = append(suspendedConnections, &ConnectionInfo{
+				ID:            conn.ID,
+				ClientIP:      conn.ClientIP,
+				UserAgent:     conn.UserAgent,
+				StartTime:     conn.StartTime,
+				LastActivity:  conn.LastActivity,
+				Method:        conn.Method,
+				Path:          conn.Path,
+				Endpoint:      conn.Endpoint,
+				Port:          conn.Port,
+				RetryCount:    conn.RetryCount,
+				Status:        conn.Status,
+				BytesReceived: conn.BytesReceived,
+				BytesSent:     conn.BytesSent,
+				IsStreaming:   conn.IsStreaming,
+				TokenUsage:    conn.TokenUsage,
+				IsSuspended:   conn.IsSuspended,
+				SuspendedAt:   conn.SuspendedAt,
+				ResumedAt:     conn.ResumedAt,
+				SuspendedTime: conn.SuspendedTime,
+			})
+		}
+	}
+
+	return suspendedConnections
 }

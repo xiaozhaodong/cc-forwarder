@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/transport"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/transport"
 )
 
 // FastTestResult represents the result of a fast endpoint test

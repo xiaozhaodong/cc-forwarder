@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/endpoint"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
 )
 
 func TestSensitiveHeaderRemoval(t *testing.T) {

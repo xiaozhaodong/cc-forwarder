@@ -9,9 +9,9 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	
-	"endpoint_forwarder/config"
-	"endpoint_forwarder/internal/endpoint"
-	"endpoint_forwarder/internal/middleware"
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/middleware"
 )
 
 // TUIApp represents the main TUI application

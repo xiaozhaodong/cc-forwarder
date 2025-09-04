@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"endpoint_forwarder/config"
+	"cc-forwarder/config"
 	"net/http"
 	"strings"
 )
