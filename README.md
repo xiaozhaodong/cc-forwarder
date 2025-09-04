@@ -4,11 +4,11 @@
 
 ## 🎯 项目说明
 
-本项目基于 [xinhai-ai/endpoint_forwarde](https://github.com/xinhai-ai/endpoint_forwarde) 进行二次开发和功能增强。
+本项目基于 [xinhai-ai/endpoint_forwarde](https://github.com/xinhai-ai/endpoint_forwarder) 进行二次开发和功能增强。
 
 ### 原项目说明
 
-- **原项目地址**: https://github.com/xinhai-ai/endpoint_forwarde
+- **原项目地址**: https://github.com/xinhai-ai/endpoint_forwarder
 - **原项目许可**: "This project is provided as-is for educational and development purposes"
 - **感谢原作者**: 感谢原项目作者提供的基础框架和核心功能
 
