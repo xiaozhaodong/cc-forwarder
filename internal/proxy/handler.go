@@ -16,6 +16,7 @@ import (
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 	"github.com/andybalholm/brotli"
 )
@@ -30,6 +31,7 @@ type Handler struct {
 	endpointManager *endpoint.Manager
 	config          *config.Config
 	retryHandler    *RetryHandler
+	usageTracker    *tracking.UsageTracker
 }
 
 // NewHandler creates a new proxy handler
@@ -49,6 +51,11 @@ func (h *Handler) SetMonitoringMiddleware(mm interface{
 	RecordRetry(connID string, endpoint string)
 }) {
 	h.retryHandler.SetMonitoringMiddleware(mm)
+}
+
+// SetUsageTracker sets the usage tracker for request tracking
+func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
+	h.usageTracker = ut
 }
 
 // GetRetryHandler returns the retry handler for accessing suspended request counts
@@ -344,7 +351,7 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 
 // parseSSETokens parses SSE format response for token usage
 func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName, connID string) {
-	tokenParser := NewTokenParserWithRequestID(connID)
+	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	lines := strings.Split(responseBody, "\n")
 	
 	for _, line := range lines {
@@ -365,7 +372,7 @@ func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName
 // parseJSONTokens parses single JSON response for token usage
 func (h *Handler) parseJSONTokens(ctx context.Context, responseBody, endpointName, connID string) {
 	// Simulate SSE parsing for a single JSON response
-	tokenParser := NewTokenParserWithRequestID(connID)
+	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	
 	slog.InfoContext(ctx, "🔍 [JSON解析] 尝试解析JSON响应")
 	

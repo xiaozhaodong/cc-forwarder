@@ -13,6 +13,7 @@ import (
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/middleware"
+	"cc-forwarder/internal/tracking"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,13 +29,15 @@ type WebServer struct {
 	config              *config.Config
 	endpointManager     *endpoint.Manager
 	monitoringMiddleware *middleware.MonitoringMiddleware
+	usageTracker        *tracking.UsageTracker
+	usageAPI           *UsageAPI
 	eventManager        *EventManager
 	startTime           time.Time
 	configPath          string
 }
 
 // NewWebServer creates a new Web UI server
-func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitoringMiddleware *middleware.MonitoringMiddleware, logger *slog.Logger, startTime time.Time, configPath string) *WebServer {
+func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitoringMiddleware *middleware.MonitoringMiddleware, usageTracker *tracking.UsageTracker, logger *slog.Logger, startTime time.Time, configPath string) *WebServer {
 	// 设置gin为release模式以减少日志输出
 	gin.SetMode(gin.ReleaseMode)
 	
@@ -50,6 +53,8 @@ func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitor
 		config:              cfg,
 		endpointManager:     endpointManager,
 		monitoringMiddleware: monitoringMiddleware,
+		usageTracker:        usageTracker,
+		usageAPI:           NewUsageAPI(usageTracker),
 		eventManager:        NewEventManager(logger),
 		startTime:           startTime,
 		configPath:          configPath,
@@ -179,6 +184,16 @@ func (ws *WebServer) setupRoutes() {
 		// 挂起请求相关 API 端点
 		api.GET("/suspended/requests", ws.handleSuspendedRequests)
 		api.GET("/chart/suspended-trends", ws.handleSuspendedChart)
+		
+		// 使用跟踪 API 端点
+		api.GET("/usage/summary", ws.handleUsageSummary)
+		api.GET("/usage/requests", ws.handleUsageRequests)
+		api.GET("/usage/stats", ws.handleUsageStats)
+		api.GET("/usage/export", ws.handleUsageExport)
+		api.GET("/usage/models", ws.handleUsageModelStats)
+		api.GET("/usage/endpoints", ws.handleUsageEndpointStats)
+		api.GET("/chart/usage-trends", ws.handleUsageChart)
+		api.GET("/chart/cost-analysis", ws.handleCostChart)
 	}
 	
 	// WebSocket用于实时更新（暂时注释掉，使用SSE代替）

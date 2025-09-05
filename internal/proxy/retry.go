@@ -12,6 +12,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/tracking"
 )
 
 // RetryHandler handles retry logic with exponential backoff
@@ -21,6 +22,7 @@ type RetryHandler struct {
 	monitoringMiddleware interface{
 		RecordRetry(connID string, endpoint string)
 	}
+	usageTracker    *tracking.UsageTracker
 	
 	// Request suspension related fields
 	suspendedRequestsMutex sync.RWMutex
@@ -44,6 +46,11 @@ func (rh *RetryHandler) SetMonitoringMiddleware(mm interface{
 	RecordRetry(connID string, endpoint string)
 }) {
 	rh.monitoringMiddleware = mm
+}
+
+// SetUsageTracker sets the usage tracker
+func (rh *RetryHandler) SetUsageTracker(ut *tracking.UsageTracker) {
+	rh.usageTracker = ut
 }
 
 // Operation represents a function that can be retried, returns response and error
@@ -137,6 +144,16 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 			slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s (组: %s, 总尝试 %d)", 
 				connID, ep.Config.Name, groupName, totalEndpointsAttempted))
 			
+			// Record endpoint selection in usage tracking
+			if rh.usageTracker != nil && connID != "" {
+				// 对于第一次尝试，记录为"start"状态，后续记录为"retry"
+				status := "forwarding"
+				if totalEndpointsAttempted > 1 {
+					status = "retry"
+				}
+				rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, totalEndpointsAttempted-1, 0)
+			}
+			
 			// Retry logic for current endpoint
 			for attempt := 1; attempt <= rh.config.Retry.MaxAttempts; attempt++ {
 				select {
@@ -158,6 +175,16 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 						// Success or non-retryable error - return the response
 						slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: %d (总尝试 %d 个端点)", 
 							connID, ep.Config.Name, groupName, resp.StatusCode, totalEndpointsAttempted))
+						
+						// Record success in usage tracking
+						if rh.usageTracker != nil && connID != "" {
+							status := "success"
+							if resp.StatusCode >= 400 {
+								status = "error"
+							}
+							rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, attempt-1, resp.StatusCode)
+						}
+						
 						return resp, nil
 					}
 					
@@ -178,6 +205,11 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					if err != nil {
 						slog.WarnContext(ctxWithEndpoint, fmt.Sprintf("❌ [网络错误] [%s] 端点: %s (组: %s, 尝试 %d/%d) - 错误: %s", 
 							connID, ep.Config.Name, groupName, attempt, rh.config.Retry.MaxAttempts, err.Error()))
+						
+						// Record error in usage tracking
+						if rh.usageTracker != nil && connID != "" {
+							rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, "error", attempt-1, 0)
+						}
 					}
 				}
 

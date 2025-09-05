@@ -1,8 +1,8 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
-# Install git and ca-certificates (needed for fetching dependencies)
-RUN apk add --no-cache git ca-certificates
+# Install git, ca-certificates and build-base for CGO (needed for SQLite)
+RUN apk add --no-cache git ca-certificates build-base
 
 # Set working directory
 WORKDIR /build
@@ -16,17 +16,17 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X main.version=docker -X main.commit=$(git rev-parse HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+# Build the binary (enable CGO for SQLite)
+RUN CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-s -w -X main.version=docker -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -a -installsuffix cgo \
     -o endpoint_forwarder .
 
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates and curl for HTTPS requests and health checks
-RUN apk --no-cache add ca-certificates tzdata curl
+# Install ca-certificates, curl and sqlite for runtime
+RUN apk --no-cache add ca-certificates tzdata curl sqlite
 
 # Create non-root user
 RUN addgroup -g 1000 -S appgroup && \
@@ -45,18 +45,18 @@ COPY --from=builder /build/config/example.yaml /app/config/example.yaml
 COPY --from=builder /build/internal/web/static /app/internal/web/static
 
 # Create necessary directories and set permissions
-RUN mkdir -p /app/logs /app/config && \
+RUN mkdir -p /app/logs /app/config /app/data && \
     chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
 
-# Expose ports - 8087 for proxy, 8088 for web interface
-EXPOSE 8087 8088
+# Expose ports - 8088 for API/proxy, 8010 for web interface
+EXPOSE 8088 8010
 
-# Health check - use proxy port for health check
+# Health check - check application health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8087/health || exit 1
+    CMD curl -f http://localhost:8088/health || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/endpoint_forwarder"]

@@ -51,3 +51,4 @@ config/config.yaml
 # Test files
 *_test_example.go
 /docs
+/data

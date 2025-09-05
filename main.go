@@ -20,6 +20,7 @@ import (
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/tui"
+	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 	"cc-forwarder/internal/web"
 )
@@ -144,6 +145,33 @@ func main() {
 	endpointManager.Start()
 	defer endpointManager.Stop()
 
+	// Initialize usage tracker
+	trackingConfig := &tracking.Config{
+		Enabled:         cfg.UsageTracking.Enabled,
+		DatabasePath:    cfg.UsageTracking.DatabasePath,
+		BufferSize:      cfg.UsageTracking.BufferSize,
+		BatchSize:       cfg.UsageTracking.BatchSize,
+		FlushInterval:   cfg.UsageTracking.FlushInterval,
+		MaxRetry:        cfg.UsageTracking.MaxRetry,
+		RetentionDays:   cfg.UsageTracking.RetentionDays,
+		CleanupInterval: cfg.UsageTracking.CleanupInterval,
+		ModelPricing:    convertModelPricing(cfg.UsageTracking.ModelPricing),
+		DefaultPricing:  convertModelPricingSingle(cfg.UsageTracking.DefaultPricing),
+	}
+	
+	usageTracker, err := tracking.NewUsageTracker(trackingConfig)
+	if err != nil {
+		logger.Error(fmt.Sprintf("❌ 使用跟踪器初始化失败: %v", err))
+		os.Exit(1)
+	}
+	defer func() {
+		if usageTracker != nil {
+			if err := usageTracker.Close(); err != nil {
+				logger.Error(fmt.Sprintf("❌ 使用跟踪器关闭失败: %v", err))
+			}
+		}
+	}()
+
 	// Create proxy handler
 	proxyHandler := proxy.NewHandler(endpointManager, cfg)
 
@@ -151,6 +179,18 @@ func main() {
 	loggingMiddleware := middleware.NewLoggingMiddleware(logger)
 	monitoringMiddleware := middleware.NewMonitoringMiddleware(endpointManager)
 	authMiddleware := middleware.NewAuthMiddleware(cfg.Auth)
+	
+	// Set usage tracker for middleware components
+	loggingMiddleware.SetUsageTracker(usageTracker)
+	
+	// Set usage tracker for proxy handler and retry handler
+	if proxyHandler != nil {
+		proxyHandler.SetUsageTracker(usageTracker)
+	}
+	retryHandler := proxyHandler.GetRetryHandler()
+	if retryHandler != nil {
+		retryHandler.SetUsageTracker(usageTracker)
+	}
 	
 	// Connect logging and monitoring middlewares
 	loggingMiddleware.SetMonitoringMiddleware(monitoringMiddleware)
@@ -188,6 +228,11 @@ func main() {
 			webServer.UpdateConfig(newCfg)
 		}
 		
+		// Update usage tracker pricing if enabled
+		if usageTracker != nil && newCfg.UsageTracking.Enabled {
+			usageTracker.UpdatePricing(convertModelPricing(newCfg.UsageTracking.ModelPricing))
+		}
+		
 		if !tuiEnabled {
 			newLogger.Info("🔄 所有组件已更新为新配置")
 		}
@@ -202,6 +247,23 @@ func main() {
 
 	// Register monitoring endpoints
 	monitoringMiddleware.RegisterHealthEndpoint(mux)
+	
+	// Add usage tracker health check endpoint
+	if usageTracker != nil {
+		mux.HandleFunc("/health/usage-tracker", func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			
+			if err := usageTracker.HealthCheck(ctx); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(fmt.Sprintf("Usage Tracker unhealthy: %v", err)))
+				return
+			}
+			
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Usage Tracker healthy"))
+		})
+	}
 
 	// Register proxy handler for all other requests with middleware chain
 	mux.Handle("/", loggingMiddleware.Wrap(authMiddleware.Wrap(proxyHandler)))
@@ -261,7 +323,7 @@ func main() {
 
 	// Start Web server if enabled
 	if cfg.Web.Enabled {
-		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, logger, startTime, *configPath)
+		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, usageTracker, logger, startTime, *configPath)
 		// Register web server as endpoint notifier for real-time updates
 		endpointManager.SetWebNotifier(webServer)
 		if err := webServer.Start(); err != nil {
@@ -481,4 +543,48 @@ func getGoroutineID() int {
 		return 0
 	}
 	return id
+}
+
+// 添加类型转换函数
+func convertModelPricing(configPricing map[string]config.ModelPricing) map[string]tracking.ModelPricing {
+	if configPricing == nil {
+		return nil
+	}
+	
+	result := make(map[string]tracking.ModelPricing)
+	for model, pricing := range configPricing {
+		result[model] = tracking.ModelPricing{
+			Input:         pricing.Input,
+			Output:        pricing.Output,
+			CacheCreation: pricing.CacheCreation,
+			CacheRead:     pricing.CacheRead,
+		}
+	}
+	return result
+}
+
+func convertModelPricingSingle(configPricing config.ModelPricing) tracking.ModelPricing {
+	return tracking.ModelPricing{
+		Input:         configPricing.Input,
+		Output:        configPricing.Output,
+		CacheCreation: configPricing.CacheCreation,
+		CacheRead:     configPricing.CacheRead,
+	}
+}
+
+func convertTrackingToConfigPricing(trackingPricing map[string]tracking.ModelPricing) map[string]config.ModelPricing {
+	if trackingPricing == nil {
+		return nil
+	}
+	
+	result := make(map[string]config.ModelPricing)
+	for model, pricing := range trackingPricing {
+		result[model] = config.ModelPricing{
+			Input:         pricing.Input,
+			Output:        pricing.Output,
+			CacheCreation: pricing.CacheCreation,
+			CacheRead:     pricing.CacheRead,
+		}
+	}
+	return result
 }

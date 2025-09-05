@@ -22,6 +22,7 @@ type Config struct {
 	Streaming    StreamingConfig  `yaml:"streaming"`
 	Group        GroupConfig      `yaml:"group"`        // Group configuration
 	RequestSuspend RequestSuspendConfig `yaml:"request_suspend"` // Request suspension configuration
+	UsageTracking UsageTrackingConfig `yaml:"usage_tracking"` // Usage tracking configuration
 	Proxy        ProxyConfig      `yaml:"proxy"`
 	Auth         AuthConfig       `yaml:"auth"`
 	TUI          TUIConfig        `yaml:"tui"`           // TUI configuration
@@ -85,6 +86,27 @@ type RequestSuspendConfig struct {
 	Enabled            bool          `yaml:"enabled"`               // Enable request suspension feature, default: false
 	Timeout            time.Duration `yaml:"timeout"`               // Timeout for suspended requests, default: 300s
 	MaxSuspendedRequests int          `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
+}
+
+// ModelPricing 模型定价配置
+type ModelPricing struct {
+	Input         float64 `yaml:"input"`          // per 1M tokens
+	Output        float64 `yaml:"output"`         // per 1M tokens
+	CacheCreation float64 `yaml:"cache_creation"` // per 1M tokens (缓存创建)
+	CacheRead     float64 `yaml:"cache_read"`     // per 1M tokens (缓存读取)
+}
+
+type UsageTrackingConfig struct {
+	Enabled         bool                     `yaml:"enabled"`          // Enable usage tracking, default: false
+	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/usage.db
+	BufferSize      int                      `yaml:"buffer_size"`      // Event buffer size, default: 1000
+	BatchSize       int                      `yaml:"batch_size"`       // Batch write size, default: 100
+	FlushInterval   time.Duration            `yaml:"flush_interval"`   // Force flush interval, default: 30s
+	MaxRetry        int                      `yaml:"max_retry"`        // Max retry count for write failures, default: 3
+	RetentionDays   int                      `yaml:"retention_days"`   // Data retention days (0=permanent), default: 90
+	CleanupInterval time.Duration            `yaml:"cleanup_interval"` // Cleanup task execution interval, default: 24h
+	ModelPricing    map[string]ModelPricing  `yaml:"model_pricing"`    // Model pricing configuration
+	DefaultPricing  ModelPricing             `yaml:"default_pricing"`  // Default pricing for unknown models
 }
 
 type ProxyConfig struct {
@@ -243,6 +265,42 @@ func (c *Config) setDefaults() {
 		c.RequestSuspend.MaxSuspendedRequests = 100 // Default maximum 100 suspended requests
 	}
 	// RequestSuspend.Enabled defaults to false (zero value) for backward compatibility
+
+	// Set usage tracking defaults
+	if c.UsageTracking.DatabasePath == "" {
+		c.UsageTracking.DatabasePath = "data/usage.db" // Default database path
+	}
+	if c.UsageTracking.BufferSize == 0 {
+		c.UsageTracking.BufferSize = 1000 // Default buffer size
+	}
+	if c.UsageTracking.BatchSize == 0 {
+		c.UsageTracking.BatchSize = 100 // Default batch size
+	}
+	if c.UsageTracking.FlushInterval == 0 {
+		c.UsageTracking.FlushInterval = 30 * time.Second // Default flush interval
+	}
+	if c.UsageTracking.MaxRetry == 0 {
+		c.UsageTracking.MaxRetry = 3 // Default max retry count
+	}
+	if c.UsageTracking.RetentionDays == 0 {
+		c.UsageTracking.RetentionDays = 90 // Default retention 90 days
+	}
+	if c.UsageTracking.CleanupInterval == 0 {
+		c.UsageTracking.CleanupInterval = 24 * time.Hour // Default cleanup interval
+	}
+	// Set default model pricing if not configured
+	if c.UsageTracking.ModelPricing == nil {
+		c.UsageTracking.ModelPricing = make(map[string]ModelPricing)
+	}
+	if c.UsageTracking.DefaultPricing.Input == 0 && c.UsageTracking.DefaultPricing.Output == 0 {
+		c.UsageTracking.DefaultPricing = ModelPricing{
+			Input:         3.00,
+			Output:        15.00,
+			CacheCreation: 3.75,
+			CacheRead:     0.30,
+		}
+	}
+	// UsageTracking.Enabled defaults to false (zero value) for backward compatibility
 
 	// Set TUI defaults
 	if c.TUI.UpdateInterval == 0 {
@@ -427,6 +485,34 @@ func (c *Config) validate() error {
 		}
 		if c.RequestSuspend.MaxSuspendedRequests > 10000 {
 			return fmt.Errorf("max suspended requests cannot exceed 10000 for performance reasons")
+		}
+	}
+
+	// Validate usage tracking configuration
+	if c.UsageTracking.Enabled {
+		if c.UsageTracking.DatabasePath == "" {
+			return fmt.Errorf("database path is required when usage tracking is enabled")
+		}
+		if c.UsageTracking.BufferSize <= 0 {
+			return fmt.Errorf("buffer size must be greater than 0 when usage tracking is enabled")
+		}
+		if c.UsageTracking.BatchSize <= 0 {
+			return fmt.Errorf("batch size must be greater than 0 when usage tracking is enabled")
+		}
+		if c.UsageTracking.BatchSize > c.UsageTracking.BufferSize {
+			return fmt.Errorf("batch size cannot be larger than buffer size")
+		}
+		if c.UsageTracking.FlushInterval <= 0 {
+			return fmt.Errorf("flush interval must be greater than 0 when usage tracking is enabled")
+		}
+		if c.UsageTracking.MaxRetry <= 0 {
+			return fmt.Errorf("max retry count must be greater than 0 when usage tracking is enabled")
+		}
+		if c.UsageTracking.RetentionDays < 0 {
+			return fmt.Errorf("retention days cannot be negative")
+		}
+		if c.UsageTracking.CleanupInterval <= 0 && c.UsageTracking.RetentionDays > 0 {
+			return fmt.Errorf("cleanup interval must be greater than 0 when retention is enabled")
 		}
 	}
 
@@ -658,6 +744,18 @@ func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
 		cw.logger.Info("⏸️ 请求挂起超时时间变更",
 			"old_timeout", oldConfig.RequestSuspend.Timeout,
 			"new_timeout", newConfig.RequestSuspend.Timeout)
+	}
+
+	if oldConfig.UsageTracking.Enabled != newConfig.UsageTracking.Enabled {
+		cw.logger.Info("📊 使用跟踪状态变更",
+			"old_enabled", oldConfig.UsageTracking.Enabled,
+			"new_enabled", newConfig.UsageTracking.Enabled)
+	}
+
+	if oldConfig.UsageTracking.RetentionDays != newConfig.UsageTracking.RetentionDays {
+		cw.logger.Info("📊 使用跟踪数据保留天数变更",
+			"old_retention", oldConfig.UsageTracking.RetentionDays,
+			"new_retention", newConfig.UsageTracking.RetentionDays)
 	}
 }
 

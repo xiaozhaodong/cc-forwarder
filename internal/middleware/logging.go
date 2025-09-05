@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"cc-forwarder/internal/tracking"
 )
 
 // LoggingMiddleware provides request/response logging
 type LoggingMiddleware struct {
 	logger            *slog.Logger
 	monitoringMiddleware *MonitoringMiddleware
+	usageTracker      *tracking.UsageTracker
 }
 
 // NewLoggingMiddleware creates a new logging middleware
@@ -25,6 +28,11 @@ func NewLoggingMiddleware(logger *slog.Logger) *LoggingMiddleware {
 // SetMonitoringMiddleware sets the monitoring middleware reference
 func (lm *LoggingMiddleware) SetMonitoringMiddleware(mm *MonitoringMiddleware) {
 	lm.monitoringMiddleware = mm
+}
+
+// SetUsageTracker sets the usage tracker reference
+func (lm *LoggingMiddleware) SetUsageTracker(ut *tracking.UsageTracker) {
+	lm.usageTracker = ut
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written
@@ -61,6 +69,11 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 		var connID string
 		if lm.monitoringMiddleware != nil {
 			connID = lm.monitoringMiddleware.RecordRequest("unknown", clientIP, userAgent, r.Method, r.URL.Path)
+		}
+		
+		// Record request start in usage tracking
+		if lm.usageTracker != nil && connID != "" {
+			lm.usageTracker.RecordRequestStart(connID, clientIP, userAgent)
 		}
 		
 		// Store connection ID in request context for use by proxy handler

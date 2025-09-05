@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 	
 	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/tracking"
 )
 
 // UsageData represents the usage field in Claude API SSE events
@@ -50,17 +52,33 @@ type TokenParser struct {
 	requestID       string
 	// Model name extracted from message_start event
 	modelName       string
+	// Usage tracker for recording token usage and costs
+	usageTracker    *tracking.UsageTracker
+	// Start time for duration calculation
+	startTime       time.Time
 }
 
 // NewTokenParser creates a new token parser instance
 func NewTokenParser() *TokenParser {
-	return &TokenParser{}
+	return &TokenParser{
+		startTime: time.Now(),
+	}
 }
 
 // NewTokenParserWithRequestID creates a new token parser instance with request ID
 func NewTokenParserWithRequestID(requestID string) *TokenParser {
 	return &TokenParser{
 		requestID: requestID,
+		startTime: time.Now(),
+	}
+}
+
+// NewTokenParserWithUsageTracker creates a new token parser instance with usage tracker
+func NewTokenParserWithUsageTracker(requestID string, usageTracker *tracking.UsageTracker) *TokenParser {
+	return &TokenParser{
+		requestID:    requestID,
+		usageTracker: usageTracker,
+		startTime:    time.Now(),
 	}
 }
 
@@ -169,6 +187,23 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 	} else {
 		slog.Info(fmt.Sprintf("🪙 [Token Parser] 从SSE流中提取令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
 			modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
+	}
+
+	// Record request completion in usage tracking
+	if tp.usageTracker != nil && tp.requestID != "" {
+		// Calculate duration since parser creation
+		duration := time.Since(tp.startTime)
+		
+		// Convert monitor.TokenUsage to tracking.TokenUsage
+		trackingTokens := &tracking.TokenUsage{
+			InputTokens:         tokenUsage.InputTokens,
+			OutputTokens:        tokenUsage.OutputTokens,
+			CacheCreationTokens: tokenUsage.CacheCreationTokens,
+			CacheReadTokens:     tokenUsage.CacheReadTokens,
+		}
+		
+		// Record the completion with token usage and cost information
+		tp.usageTracker.RecordRequestComplete(tp.requestID, tp.modelName, trackingTokens, duration)
 	}
 
 	return tokenUsage
