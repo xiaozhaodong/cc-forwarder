@@ -666,7 +666,7 @@ tr:hover {
 
 .group-name {
     font-size: 1.4em;
-    font-weight: 600;
+    font-weight: normal;
     margin: 0;
     color: var(--text-color);
 }
@@ -844,5 +844,241 @@ tr:hover {
     .groups-summary {
         flex-direction: column;
         gap: 15px;
+    }
+}
+
+/* 表格列宽优化 */
+.requests-table th:nth-child(1) { width: 120px; } /* 请求ID */
+.requests-table th:nth-child(2) { width: 140px; } /* 时间 */
+.requests-table th:nth-child(3) { width: 60px; }  /* 状态 */
+.requests-table th:nth-child(4) { width: 180px; } /* 模型 */
+.requests-table th:nth-child(5) { width: 120px; } /* 端点 */
+.requests-table th:nth-child(6) { width: 60px; }  /* 组 */
+.requests-table th:nth-child(7) { width: 70px; }  /* 耗时 */
+.requests-table th:nth-child(8) { width: 60px; }  /* 输入 */
+.requests-table th:nth-child(9) { width: 60px; }  /* 输出 */
+.requests-table th:nth-child(10) { width: 80px; } /* 缓存创建 */
+.requests-table th:nth-child(11) { width: 80px; } /* 缓存读取 */
+.requests-table th:nth-child(12) { width: 80px; } /* 成本 */
+.requests-table th:nth-child(13) { width: 80px; } /* 操作 */
+
+/* Token列样式 */
+.input-tokens, .output-tokens, .cache-creation-tokens, .cache-read-tokens {
+    text-align: right;
+    font-family: monospace;
+}
+
+/* 表格中的组名使用正常字体大小 */
+.requests-table .group-name {
+    font-size: 1em;
+    font-weight: normal;
+}
+
+/* 模态框样式 */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    padding: 20px;
+    backdrop-filter: blur(2px);
+}
+
+.modal-content {
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    width: 100%;
+    max-width: 800px;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    border-radius: 12px 12px 0 0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--primary-color);
+    font-size: 1.4em;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: var(--text-color);
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px 20px;
+    border-top: 1px solid var(--border-color);
+    background: #fafbfc;
+    border-radius: 0 0 12px 12px;
+}
+
+/* 详情区域样式 */
+.detail-section {
+    margin-bottom: 24px;
+}
+
+.detail-section:last-child {
+    margin-bottom: 0;
+}
+
+.detail-section-title {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--primary-color);
+    display: inline-block;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail-item label {
+    font-size: 0.9em;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.detail-value {
+    font-size: 1em;
+    color: var(--text-color);
+    word-break: break-all;
+}
+
+.detail-value code {
+    background: rgba(37, 99, 235, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: 'Fira Code', 'Monaco', 'Consolas', monospace;
+    font-size: 0.9em;
+    color: var(--primary-color);
+    border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+.user-agent {
+    font-family: monospace;
+    font-size: 0.85em;
+    background: #f8fafc;
+    padding: 6px 8px;
+    border-radius: 4px;
+    border-left: 3px solid var(--secondary-color);
+}
+
+.modal-content .model-name {
+    font-weight: 600;
+    color: var(--primary-color);
+    background: rgba(37, 99, 235, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+}
+
+.token-count {
+    font-family: monospace;
+    font-weight: 600;
+    color: #059669;
+}
+
+.cost-value {
+    font-family: monospace;
+    font-weight: 600;
+    color: #dc2626;
+    font-size: 1.1em;
+}
+
+.error-section {
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.error-message {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+    padding: 12px;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 0.9em;
+    line-height: 1.4;
+    border-left: 4px solid #dc2626;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .modal-overlay {
+        padding: 10px;
+    }
+    
+    .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .modal-content {
+        max-height: 95vh;
+    }
+    
+    .modal-body {
+        padding: 16px;
     }
 }

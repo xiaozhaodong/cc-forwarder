@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -47,6 +48,7 @@ type EventManager struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	broadcast chan Event
+	closed    int64 // 原子标志，用于标记是否已关闭
 }
 
 // NewEventManager 创建新的事件管理器
@@ -126,11 +128,25 @@ func (em *EventManager) RemoveClient(clientID string) {
 
 // BroadcastEvent 广播事件到所有符合条件的客户端
 func (em *EventManager) BroadcastEvent(eventType EventType, data interface{}) {
+	// 检查EventManager是否已关闭
+	if atomic.LoadInt64(&em.closed) != 0 {
+		// EventManager已关闭，直接返回，不记录日志避免干扰
+		return
+	}
+	
 	event := Event{
 		Type:      eventType,
 		Data:      data,
 		Timestamp: time.Now(),
 	}
+	
+	// 使用defer+recover防止panic
+	defer func() {
+		if r := recover(); r != nil {
+			// 通道已关闭，忽略此事件
+			em.logger.Debug("广播事件时检测到通道已关闭", "event_type", eventType, "recover", r)
+		}
+	}()
 	
 	select {
 	case em.broadcast <- event:
@@ -243,19 +259,38 @@ func (em *EventManager) cleanupInactiveClients() {
 
 // Stop 停止事件管理器
 func (em *EventManager) Stop() {
+	// 原子性标记为已关闭
+	if !atomic.CompareAndSwapInt64(&em.closed, 0, 1) {
+		// 已经关闭过了，直接返回
+		return
+	}
+	
+	em.logger.Info("⏹️ 正在停止SSE事件管理器...")
+	
+	// 1. 取消上下文，停止所有goroutines
 	em.cancel()
+	
+	// 2. 短暂等待，让正在处理的事件完成
+	time.Sleep(100 * time.Millisecond)
 	
 	em.mu.Lock()
 	defer em.mu.Unlock()
 	
-	// 关闭所有客户端连接
+	// 3. 关闭所有客户端连接
 	for clientID, client := range em.clients {
 		close(client.Channel)
 		delete(em.clients, clientID)
 	}
 	
+	// 4. 安全关闭广播通道
+	defer func() {
+		if r := recover(); r != nil {
+			em.logger.Debug("关闭广播通道时检测到已关闭", "recover", r)
+		}
+	}()
 	close(em.broadcast)
-	em.logger.Info("SSE事件管理器已停止")
+	
+	em.logger.Info("✅ SSE事件管理器已停止")
 }
 
 // formatEventData 格式化事件数据为SSE格式

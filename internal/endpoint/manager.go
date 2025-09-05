@@ -46,6 +46,7 @@ type Manager struct {
 // WebNotifier interface for Web interface notifications
 type WebNotifier interface {
 	BroadcastEndpointUpdate(data map[string]interface{})
+	IsEventManagerActive() bool
 }
 
 // NewManager creates a new endpoint manager
@@ -433,6 +434,12 @@ func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
 		return
 	}
 	
+	// 检查EventManager是否仍在活跃状态
+	if !m.webNotifier.IsEventManagerActive() {
+		// EventManager已关闭，不发送通知
+		return
+	}
+	
 	status := endpoint.Status // Already holding lock in caller
 	data := map[string]interface{}{
 		"event":           "endpoint_status_changed",
@@ -500,6 +507,12 @@ func (m *Manager) GetGroupDetails() map[string]interface{} {
 // notifyWebGroupChange notifies the web interface about group management changes
 func (m *Manager) notifyWebGroupChange(eventType, groupName string) {
 	if m.webNotifier == nil {
+		return
+	}
+	
+	// 检查EventManager是否仍在活跃状态
+	if !m.webNotifier.IsEventManagerActive() {
+		// EventManager已关闭，不发送通知
 		return
 	}
 	

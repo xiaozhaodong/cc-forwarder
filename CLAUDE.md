@@ -282,9 +282,12 @@ The request suspension system works seamlessly with manual group management:
 
 **Web Interface**: Modern web-based monitoring and management interface with the following features:
 - **Real-time Dashboard**: Live monitoring with Server-Sent Events (SSE) for instant updates
+- **Request Tracking**: Complete request lifecycle monitoring with detailed tracking page
 - **Group Management**: Interactive group control with activate/pause/resume operations
 - **Endpoint Monitoring**: Visual health status and performance metrics
 - **Charts & Analytics**: Performance visualization with Chart.js integration
+- **Data Export**: CSV/JSON export functionality for request data
+- **Modular Architecture**: Modern JavaScript architecture with separated modules for maintainability
 - **Responsive Design**: Mobile-friendly interface with modern CSS styling
 - **API Integration**: RESTful API for all management operations
 
@@ -366,14 +369,29 @@ curl -H "Authorization: Bearer your-token-here" http://localhost:8010/api/v1/gro
 internal/
 ├── web/
 │   ├── server.go          # Web server setup and routing
-│   ├── handlers.go        # HTTP handlers and HTML templates
-│   ├── events.go          # Server-Sent Events implementation
-│   ├── usage_api.go       # Usage tracking API endpoints
+│   ├── handlers.go        # Main handler documentation (16 lines)
+│   ├── basic_handlers.go  # Basic API handlers (233 lines)
+│   ├── sse_handlers.go    # Server-Sent Events handlers (249 lines)
+│   ├── broadcast_handlers.go # Event broadcasting (62 lines)
+│   ├── metrics_handlers.go   # Performance metrics (79 lines)
+│   ├── chart_handlers.go     # Data visualization charts (173 lines)
+│   ├── group_handlers.go     # Group management (140 lines)
+│   ├── suspended_handlers.go # Request suspension handling (86 lines)
+│   ├── usage_handlers.go     # Usage tracking API (183 lines)
+│   ├── utils.go             # Utility functions (50 lines)
+│   ├── templates.go         # HTML templates (1272 lines)
+│   ├── events.go            # Server-Sent Events implementation
+│   ├── usage_api.go         # Usage tracking API endpoints
 │   └── static/
-│       ├── css/style.css  # Web interface styling
-│       └── js/
-│           ├── app.js     # Main JavaScript functionality
-│           └── charts.js  # Chart.js integration
+│       ├── css/style.css    # Web interface styling
+│       └── js/              # Modularized JavaScript architecture
+│           ├── utils.js           # Utility functions and formatters
+│           ├── sseManager.js      # SSE connection management
+│           ├── requestsManager.js # Request tracking functionality
+│           ├── groupsManager.js   # Group management operations
+│           ├── endpointsManager.js # Endpoint management
+│           ├── webInterface.js    # Core Web interface class
+│           └── charts.js          # Chart.js integration
 ├── endpoint/
 │   ├── manager.go         # Endpoint and group management
 │   └── group_manager.go   # Advanced group operations
@@ -388,16 +406,77 @@ internal/
     └── token_parser.go    # SSE token parsing and model detection
 ```
 
+### Code Architecture Refactoring (2025-09-05)
+
+**Major Web Handler Refactoring**: The monolithic `handlers.go` file (2475 lines) has been successfully refactored into a modular architecture with 11 specialized files, each following the single responsibility principle:
+
+1. **Modular Design**: Each handler file focuses on specific functionality (basic API, SSE, metrics, charts, groups, etc.)
+2. **Maintainability**: Individual files are 16-250 lines, making them easier to understand and modify
+3. **Team Collaboration**: Different developers can work on separate modules simultaneously without conflicts
+4. **Code Quality**: Clear separation of concerns with utilities, templates, and specific handlers
+5. **Scalability**: New features can be added to appropriate modules without affecting others
+
+**Refactoring Benefits**:
+- **Before**: Single 2475-line file with mixed responsibilities
+- **After**: 11 focused files totaling ~4105 lines with clear module boundaries
+- **Quality**: 100% functionality preservation with improved code organization
+- **Performance**: Better compilation times and reduced cognitive load
+
 ### Important Implementation Notes
 
-1. **HTML Templates**: Web interface HTML is embedded in Go code (`handlers.go`), requiring recompilation for changes
+1. **HTML Templates**: Web interface HTML is now in dedicated `templates.go` file, requiring recompilation for changes
 2. **Static Assets**: CSS and JS files are served from the filesystem and can be modified without recompilation
-3. **SSE Integration**: Real-time updates use Server-Sent Events for efficient push notifications
-4. **Group State Management**: Thread-safe group operations with proper locking mechanisms
+3. **SSE Integration**: Real-time updates use Server-Sent Events for efficient push notifications, handled by `sse_handlers.go`
+4. **Group State Management**: Thread-safe group operations with proper locking mechanisms in `group_handlers.go`
 5. **Configuration Hot-Reload**: File system monitoring with debounced updates (500ms delay)
-6. **Usage Tracking**: Fully asynchronous database operations with proper timezone handling (CST +08:00)
+6. **Usage Tracking**: Fully asynchronous database operations with proper timezone handling (CST +08:00) in `usage_handlers.go`
+7. **Modular Architecture**: Both Go backend and JavaScript frontend use modular design for better maintainability and team collaboration
+
+### JavaScript Module Architecture
+
+**Modern Frontend Design** (2025-09-05 Update):
+The Web interface now uses a modular JavaScript architecture for enhanced maintainability:
+
+- **utils.js** (302 lines): Formatting functions, notifications, DOM utilities
+- **sseManager.js** (430 lines): SSE connections, reconnection logic, event handling
+- **requestsManager.js** (512 lines): Request tracking, filtering, pagination, export
+- **groupsManager.js** (357 lines): Group operations, status management
+- **endpointsManager.js** (428 lines): Endpoint monitoring, priority management
+- **webInterface.js** (494 lines): Core class, tab management, initialization
+
+**Benefits**:
+- **Maintainability**: Each module has focused responsibilities (~200-500 lines each)
+- **Team Collaboration**: Multiple developers can work on different modules simultaneously  
+- **Code Reuse**: Utility functions shared across modules
+- **Debugging**: Issues can be isolated to specific modules
+- **Performance**: Modules loaded in optimized order with intelligent caching
 
 ## Usage Tracking System
+
+### Complete Request Lifecycle Tracking
+
+**Request Tracking Interface** (2025-09-05 Update):
+The Web interface now includes a comprehensive request tracking page that replaces the simple logs view:
+
+**Features**:
+- **Multi-dimensional Filtering**: Filter by date range, status, model, endpoint, group
+- **Real-time Updates**: Live request monitoring via SSE integration  
+- **Detailed View**: Complete request lifecycle with timing, tokens, and cost information
+- **Export Capabilities**: CSV/JSON export with flexible filtering options
+- **Performance Analytics**: Statistical summaries and trends
+- **Pagination Support**: Efficient browsing of large request datasets
+
+**Usage Tracking APIs**:
+```bash
+# Get detailed request logs with filtering and pagination
+GET /api/v1/usage/requests?limit=100&offset=0&status=success&model=claude-sonnet-4
+
+# Get usage statistics and summaries
+GET /api/v1/usage/stats?period=7d&start_date=2025-09-01&end_date=2025-09-05
+
+# Export request data in multiple formats
+GET /api/v1/usage/export?format=csv&model=claude-3-5-haiku&start_date=2025-09-01
+```
 
 ### Database Schema and Timezone Handling
 

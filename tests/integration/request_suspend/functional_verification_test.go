@@ -17,6 +17,7 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/proxy"
+	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/web"
 )
 
@@ -205,7 +206,9 @@ func (suite *FunctionalTestSuite) SetupComponents() error {
 
 	// 创建Web服务器
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	suite.webServer = web.NewWebServer(suite.config, suite.endpointManager, suite.monitoring, logger, time.Now(), "functional-test.yaml")
+	// 创建空的UsageTracker用于测试
+	usageTracker, _ := tracking.NewUsageTracker(&tracking.Config{Enabled: false})
+	suite.webServer = web.NewWebServer(suite.config, suite.endpointManager, suite.monitoring, usageTracker, logger, time.Now(), "functional-test.yaml")
 	suite.endpointManager.SetWebNotifier(suite.webServer)
 
 	err := suite.webServer.Start()

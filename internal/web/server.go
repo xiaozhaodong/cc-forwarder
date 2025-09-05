@@ -161,7 +161,7 @@ func (ws *WebServer) setupRoutes() {
 		api.GET("/endpoints", ws.handleEndpoints)
 		api.GET("/connections", ws.handleConnections)
 		api.GET("/config", ws.handleConfig)
-		api.GET("/logs", ws.handleLogs)
+		api.GET("/requests", ws.handleRequests)
 		api.GET("/stream", ws.handleSSE)
 		api.POST("/endpoints/:name/priority", ws.handleUpdatePriority)
 		api.POST("/endpoints/:name/health-check", ws.handleManualHealthCheck)

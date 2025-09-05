@@ -101,7 +101,7 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		request_count, success_count, error_count,
 		total_input_tokens, total_output_tokens, 
 		total_cache_creation_tokens, total_cache_read_tokens,
-		total_cost_usd, avg_duration_ms, created_at, updated_at
+		total_cost_usd, COALESCE(avg_duration_ms, 0.0) as avg_duration_ms, created_at, updated_at
 		FROM usage_summary WHERE 1=1`
 	
 	var args []interface{}
