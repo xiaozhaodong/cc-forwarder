@@ -176,34 +176,70 @@ func (gm *GroupManager) updateActiveGroups() {
 			}
 		}
 		
-		// If no groups are active (e.g., at startup), activate priority 1 group if it has healthy endpoints
-		// BUT: Do not reactivate groups that just failed due to business logic failures
+		// If no groups are active, determine if this is startup or runtime failure
 		if currentActiveCount == 0 {
-			sortedGroups := gm.getSortedGroups()
-			for _, group := range sortedGroups {
-				// 关键修复：检查组是否被手动暂停（包括因失败而暂停的组）
-				if group.Priority == 1 && group.CooldownUntil.IsZero() && !group.ManuallyPaused {
-					// Check if this group has healthy endpoints
-					hasHealthyEndpoints := false
-					for _, ep := range group.Endpoints {
-						if ep.IsHealthy() {
-							hasHealthyEndpoints = true
-							break
+			// Check if this is truly startup (no groups have ever failed) or runtime failure
+			isActualStartup := true
+			for _, group := range gm.groups {
+				if !group.CooldownUntil.IsZero() || group.ManuallyPaused {
+					isActualStartup = false
+					break
+				}
+			}
+			
+			// Determine activation strategy based on startup vs runtime context
+			var shouldAutoActivate bool
+			if isActualStartup {
+				// Always auto-activate priority 1 group at startup for better UX
+				shouldAutoActivate = true
+				slog.Debug("🚀 [组管理] 检测到系统启动 - 尝试激活优先级1组")
+			} else {
+				// This is runtime failure - respect manual mode + suspend settings
+				if !gm.config.Group.AutoSwitchBetweenGroups && gm.config.RequestSuspend.Enabled {
+					shouldAutoActivate = false
+					slog.Debug("⏸️ [组管理] 运行时故障且启用挂起 - 不激活其他组，等待挂起处理")
+				} else {
+					// Manual mode without suspend, or auto mode - allow activation
+					shouldAutoActivate = true
+					slog.Debug("🔄 [组管理] 运行时故障但未启用挂起 - 尝试激活可用组")
+				}
+			}
+			
+			if shouldAutoActivate {
+				sortedGroups := gm.getSortedGroups()
+				for _, group := range sortedGroups {
+					// 关键修复：检查组是否被手动暂停（包括因失败而暂停的组）
+					if group.Priority == 1 && group.CooldownUntil.IsZero() && !group.ManuallyPaused {
+						// Check if this group has healthy endpoints
+						hasHealthyEndpoints := false
+						for _, ep := range group.Endpoints {
+							if ep.IsHealthy() {
+								hasHealthyEndpoints = true
+								break
+							}
 						}
-					}
-					if hasHealthyEndpoints {
-						wasActive := group.IsActive
-						group.IsActive = true
-						slog.Info(fmt.Sprintf("🚀 [手动模式] 启动时自动激活优先级1组: %s (有健康端点)", group.Name))
-						// Check if this group became newly active
-						if !wasActive && group.IsActive {
-							newlyActivatedGroup = group.Name
+						if hasHealthyEndpoints {
+							wasActive := group.IsActive
+							group.IsActive = true
+							if isActualStartup {
+								if gm.config.Group.AutoSwitchBetweenGroups {
+									slog.Info(fmt.Sprintf("🚀 [自动模式] 启动时激活优先级1组: %s (有健康端点)", group.Name))
+								} else {
+									slog.Info(fmt.Sprintf("🚀 [手动模式] 启动时激活优先级1组: %s (有健康端点) - 后续故障将启用挂起", group.Name))
+								}
+							} else {
+								slog.Info(fmt.Sprintf("🔄 [运行时] 激活可用组: %s (优先级: %d, 有健康端点)", group.Name, group.Priority))
+							}
+							// Check if this group became newly active
+							if !wasActive && group.IsActive {
+								newlyActivatedGroup = group.Name
+							}
+							break // Only activate one group
 						}
-						break // Only activate one group
+					} else if group.ManuallyPaused {
+						// 记录被暂停的组，说明为什么没有激活
+						slog.Debug(fmt.Sprintf("⏸️ [手动模式] 跳过已暂停组: %s (优先级: %d) - 等待手动恢复", group.Name, group.Priority))
 					}
-				} else if group.ManuallyPaused {
-					// 记录被暂停的组，说明为什么没有激活
-					slog.Debug(fmt.Sprintf("⏸️ [手动模式] 跳过已暂停组: %s (优先级: %d) - 等待手动恢复", group.Name, group.Priority))
 				}
 			}
 		}
