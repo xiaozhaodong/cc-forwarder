@@ -204,6 +204,9 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 		
 		// Record the completion with token usage and cost information
 		tp.usageTracker.RecordRequestComplete(tp.requestID, tp.modelName, trackingTokens, duration)
+		
+		// 🆕 更新请求状态为completed，不更新端点和组名（保留原有值）
+		tp.usageTracker.RecordRequestUpdate(tp.requestID, "", "", "completed", 0, 0)
 	}
 
 	return tokenUsage

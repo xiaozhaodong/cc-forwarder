@@ -154,8 +154,8 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 		}
 	}
 
-	// 打开数据库
-	db, err := sql.Open("sqlite3", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000")
+	// 打开数据库 - 使用更安全的配置防止数据丢失
+	db, err := sql.Open("sqlite3", config.DatabasePath+"?_journal_mode=WAL&_synchronous=FULL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -467,7 +467,7 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 
 	query := `SELECT 
 		COUNT(*) as total_requests,
-		SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_requests,
+		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_requests,
 		SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_requests,
 		SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
 		SUM(total_cost_usd) as total_cost

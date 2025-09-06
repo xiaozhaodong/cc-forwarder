@@ -41,9 +41,9 @@ CREATE TABLE IF NOT EXISTS request_logs (
     cache_read_cost_usd REAL DEFAULT 0,    -- 缓存读取成本
     total_cost_usd REAL DEFAULT 0,         -- 总成本
     
-    -- 审计字段
-    created_at DATETIME DEFAULT (datetime('now', 'localtime')),
-    updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
+    -- 审计字段（统一使用带时区格式）
+    created_at DATETIME DEFAULT (datetime('now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (datetime('now', 'localtime') || '+08:00')
 );
 
 -- 索引优化
@@ -74,8 +74,8 @@ CREATE TABLE IF NOT EXISTS usage_summary (
     
     avg_duration_ms REAL DEFAULT 0,        -- 平均响应时间
     
-    created_at DATETIME DEFAULT (datetime('now', 'localtime')),
-    updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
+    created_at DATETIME DEFAULT (datetime('now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (datetime('now', 'localtime') || '+08:00'),
     
     UNIQUE(date, model_name, endpoint_name, group_name)
 );
@@ -86,13 +86,13 @@ CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_endpoint ON usage_summary(endpoint_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_group ON usage_summary(group_name);
 
--- 触发器：自动更新 updated_at 时间戳
+-- 触发器：自动更新 updated_at 时间戳（统一使用带时区格式）
 CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
     AFTER UPDATE ON request_logs
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE request_logs SET updated_at = datetime('now', 'localtime') WHERE id = NEW.id;
+    UPDATE request_logs SET updated_at = datetime('now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS update_usage_summary_timestamp
@@ -100,5 +100,5 @@ CREATE TRIGGER IF NOT EXISTS update_usage_summary_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE usage_summary SET updated_at = datetime('now', 'localtime') WHERE id = NEW.id;
+    UPDATE usage_summary SET updated_at = datetime('now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;

@@ -28,6 +28,10 @@ FROM alpine:latest
 # Install ca-certificates, curl and sqlite for runtime
 RUN apk --no-cache add ca-certificates tzdata curl sqlite
 
+# Set timezone to China Standard Time (CST +08:00)
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # Create non-root user
 RUN addgroup -g 1000 -S appgroup && \
     adduser -u 1000 -S appuser -G appgroup

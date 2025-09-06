@@ -137,6 +137,123 @@ const indexHTML = `<!DOCTYPE html>
             }
         }
         
+        /* 可折叠区域样式 */
+        .collapsible-section {
+            background: white;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 15px 20px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e5e7eb;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+        
+        .section-header:hover {
+            background: #f1f5f9;
+        }
+        
+        .section-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        
+        .section-header h4 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        
+        .collapse-indicator {
+            font-size: 12px;
+            color: #6b7280;
+            transition: transform 0.3s ease;
+            font-weight: bold;
+        }
+        
+        .section-content {
+            padding: 20px;
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .section-content.collapsed {
+            max-height: 0;
+            padding: 0 20px;
+            opacity: 0;
+        }
+        
+        .section-content.expanded {
+            max-height: none;
+            opacity: 1;
+        }
+        
+        /* 折叠区域内的卡片样式调整 */
+        .collapsible-section .cards {
+            margin-bottom: 20px;
+        }
+        
+        .collapsible-section .card h5 {
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #374151;
+        }
+        
+        .collapsible-section .card h4 {
+            font-size: 16px;
+            margin: 15px 0 10px 0;
+            color: #1f2937;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 8px;
+        }
+        
+        /* 智能展开提示 */
+        .section-header.has-alerts {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            border-bottom-color: #f59e0b;
+        }
+        
+        .section-header.has-alerts h3,
+        .section-header.has-alerts h4 {
+            color: #92400e;
+        }
+        
+        .section-header.has-alerts .collapse-indicator {
+            color: #f59e0b;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .section-header {
+                padding: 12px 15px;
+            }
+            
+            .section-header h3 {
+                font-size: 14px;
+            }
+            
+            .section-content {
+                padding: 15px;
+            }
+            
+            .section-content.collapsed {
+                padding: 0 15px;
+            }
+        }
+        
         /* 挂起请求相关样式 */
         .alert-banner {
             background: linear-gradient(135deg, #fef3c7, #fbbf24);
@@ -576,6 +693,56 @@ const indexHTML = `<!DOCTYPE html>
             color: #5b21b6;
         }
         
+        /* 状态徽章样式 - 用于请求追踪页面 */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+        }
+        
+        .status-badge.status-forwarding {
+            background: linear-gradient(135deg, #60a5fa, #3b82f6);
+            color: white;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-badge.status-processing {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            color: #92400e;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-badge.status-completed {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+        
+        .status-badge.status-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+        
+        .status-badge.status-error {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }
+        
+        .status-badge.status-timeout {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            color: white;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
         /* 分页样式 */
         .pagination-container {
             background: white;
@@ -727,7 +894,6 @@ const indexHTML = `<!DOCTYPE html>
             <button class="nav-tab" onclick="showTab('charts')">📈 图表</button>
             <button class="nav-tab" onclick="showTab('endpoints')">📡 端点</button>
             <button class="nav-tab" onclick="showTab('groups')">📦 组管理</button>
-            <button class="nav-tab" onclick="showTab('connections')">🔗 连接</button>
             <button class="nav-tab" onclick="showTab('requests')">📊 请求追踪</button>
             <button class="nav-tab" onclick="showTab('config')">⚙️ 配置</button>
         </nav>
@@ -761,6 +927,65 @@ const indexHTML = `<!DOCTYPE html>
                         <h3>🔄 当前活动组</h3>
                         <p id="active-group">加载中...</p>
                         <small id="group-suspended-info" class="text-warning"></small>
+                    </div>
+                </div>
+                
+                <!-- 连接统计详情区域（可折叠） -->
+                <div class="collapsible-section" id="connection-details-section">
+                    <div class="section-header" onclick="toggleCollapsible('connection-details')">
+                        <h3>🔗 连接统计详情</h3>
+                        <span class="collapse-indicator" id="connection-details-indicator">▼</span>
+                    </div>
+                    <div class="section-content collapsed" id="connection-details-content">
+                        <div id="connections-stats">
+                            <p>加载中...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 挂起请求监控区域（可折叠） -->
+                <div class="collapsible-section" id="suspended-monitoring-section">
+                    <div class="section-header" onclick="toggleCollapsible('suspended-monitoring')">
+                        <h3>⏸️ 挂起请求监控</h3>
+                        <span class="collapse-indicator" id="suspended-monitoring-indicator">▼</span>
+                    </div>
+                    <div class="section-content collapsed" id="suspended-monitoring-content">
+                        <!-- 挂起请求统计 -->
+                        <h4>⏸️ 挂起请求状态</h4>
+                        <div id="suspended-stats" class="cards">
+                            <div class="card">
+                                <h5>当前挂起</h5>
+                                <p id="current-suspended">0</p>
+                            </div>
+                            <div class="card">
+                                <h5>历史总数</h5>
+                                <p id="total-suspended">0</p>
+                            </div>
+                            <div class="card">
+                                <h5>成功恢复</h5>
+                                <p id="successful-suspended">0</p>
+                            </div>
+                            <div class="card">
+                                <h5>超时失败</h5>
+                                <p id="timeout-suspended">0</p>
+                            </div>
+                            <div class="card">
+                                <h5>成功率</h5>
+                                <p id="suspended-success-rate-detail">0%</p>
+                            </div>
+                            <div class="card">
+                                <h5>平均挂起时间</h5>
+                                <p id="avg-suspended-time">0ms</p>
+                            </div>
+                        </div>
+                        
+                        <!-- 当前挂起的连接列表 -->
+                        <div id="suspended-connections-section">
+                            <h4>当前挂起的连接</h4>
+                            <div id="suspended-connections-table">
+                                <p>无挂起连接</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -929,52 +1154,6 @@ const indexHTML = `<!DOCTYPE html>
                 </div>
             </div>
 
-            <!-- 连接标签页 -->
-            <div id="connections" class="tab-content">
-                <div class="section">
-                    <h2>🔗 连接统计</h2>
-                    <div id="connections-stats">
-                        <p>加载中...</p>
-                    </div>
-                    
-                    <!-- 挂起请求统计 -->
-                    <h3>⏸️ 挂起请求状态</h3>
-                    <div id="suspended-stats" class="cards">
-                        <div class="card">
-                            <h4>当前挂起</h4>
-                            <p id="current-suspended">0</p>
-                        </div>
-                        <div class="card">
-                            <h4>历史总数</h4>
-                            <p id="total-suspended">0</p>
-                        </div>
-                        <div class="card">
-                            <h4>成功恢复</h4>
-                            <p id="successful-suspended">0</p>
-                        </div>
-                        <div class="card">
-                            <h4>超时失败</h4>
-                            <p id="timeout-suspended">0</p>
-                        </div>
-                        <div class="card">
-                            <h4>成功率</h4>
-                            <p id="suspended-success-rate-detail">0%</p>
-                        </div>
-                        <div class="card">
-                            <h4>平均挂起时间</h4>
-                            <p id="avg-suspended-time">0ms</p>
-                        </div>
-                    </div>
-                    
-                    <!-- 当前挂起的连接列表 -->
-                    <div id="suspended-connections-section">
-                        <h3>当前挂起的连接</h3>
-                        <div id="suspended-connections-table">
-                            <p>无挂起连接</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- 请求追踪标签页 -->
             <div id="requests" class="tab-content">
@@ -987,9 +1166,10 @@ const indexHTML = `<!DOCTYPE html>
                             <div class="filter-group">
                                 <label>时间范围:</label>
                                 <select id="time-range-filter">
+                                    <option value="" selected>全部时间</option>
                                     <option value="1h">最近1小时</option>
                                     <option value="6h">最近6小时</option>
-                                    <option value="24h" selected>最近24小时</option>
+                                    <option value="24h">最近24小时</option>
                                     <option value="7d">最近7天</option>
                                     <option value="30d">最近30天</option>
                                     <option value="custom">自定义</option>
@@ -1041,7 +1221,6 @@ const indexHTML = `<!DOCTYPE html>
                             <div class="filter-actions">
                                 <button class="btn btn-primary" onclick="applyFilters()">🔍 搜索</button>
                                 <button class="btn btn-secondary" onclick="resetFilters()">🔄 重置</button>
-                                <button class="btn btn-export" onclick="exportRequestData()">📤 导出</button>
                             </div>
                         </div>
                     </div>
@@ -1084,7 +1263,7 @@ const indexHTML = `<!DOCTYPE html>
                             <div class="stat-icon">🪙</div>
                             <div class="stat-content">
                                 <div class="stat-value" id="total-tokens">-</div>
-                                <div class="stat-label">总Token数</div>
+                                <div class="stat-label">总Token数 (M)</div>
                             </div>
                         </div>
                         
@@ -1268,6 +1447,15 @@ const indexHTML = `<!DOCTYPE html>
                 chartManager.destroy();
             }
         });
+        
+        // 全局折叠/展开函数
+        window.toggleCollapsible = function(sectionId) {
+            if (window.webInterface && typeof window.webInterface.toggleSection === 'function') {
+                window.webInterface.toggleSection(sectionId);
+            } else {
+                console.warn('WebInterface未初始化，无法切换折叠状态');
+            }
+        };
     </script>
 </body>
 </html>`

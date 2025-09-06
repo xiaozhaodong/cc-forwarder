@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -82,11 +83,13 @@ type RequestDetailResponse struct {
 
 // UsageStatsResponse represents the usage statistics API response
 type UsageStatsResponse struct {
-	Period       string             `json:"period"`
-	TotalRequests int               `json:"total_requests"`
-	SuccessRate   float64           `json:"success_rate"`
-	AvgDuration   float64           `json:"avg_duration_ms"`
-	TotalCost     float64           `json:"total_cost_usd"`
+	Period         string             `json:"period"`
+	TotalRequests  int               `json:"total_requests"`
+	SuccessRate    float64           `json:"success_rate"`
+	AvgDuration    float64           `json:"avg_duration_ms"`
+	TotalCost      float64           `json:"total_cost_usd"`
+	TotalTokens    int64             `json:"total_tokens"`
+	SuspendedCount int               `json:"suspended_requests"`
 	
 	TopModels     []ModelStats      `json:"top_models"`
 	TopEndpoints  []EndpointStats   `json:"top_endpoints"`
@@ -113,6 +116,27 @@ type DailyStats struct {
 	RequestCount int     `json:"request_count"`
 	SuccessRate  float64 `json:"success_rate"`
 	TotalCost    float64 `json:"total_cost_usd"`
+}
+
+// Internal types for calculation
+type ModelStat struct {
+	RequestCount int64
+	TotalCost    float64
+}
+
+type EndpointStat struct {
+	RequestCount  int
+	SuccessCount  int
+	GroupName     string
+	TotalDuration int64
+	DurationCount int
+}
+
+type DailyStat struct {
+	Date         string
+	RequestCount int
+	SuccessCount int
+	TotalCost    float64
 }
 
 // HandleUsageSummary handles GET /api/v1/usage/summary
@@ -237,15 +261,7 @@ func (ua *UsageAPI) HandleUsageRequests(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Set default date range if not specified (last 30 days)
-	if startDate == nil {
-		defaultStart := time.Now().AddDate(0, 0, -30)
-		startDate = &defaultStart
-	}
-	if endDate == nil {
-		defaultEnd := time.Now()
-		endDate = &defaultEnd
-	}
+	// 注意：如果没有指定日期范围，不设置默认范围，让查询返回所有历史数据
 
 	ctx := context.Background()
 
@@ -332,10 +348,11 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 	period := query.Get("period")
 	startDateStr := query.Get("start_date")
 	endDateStr := query.Get("end_date")
-	// TODO: These parameters can be used for more specific filtering in the future
-	_ = query.Get("model")    // modelName filter - not implemented yet
-	_ = query.Get("endpoint") // endpointName filter - not implemented yet
-	_ = query.Get("group")    // groupName filter - not implemented yet
+	// Parse filtering parameters
+	modelName := query.Get("model")
+	endpointName := query.Get("endpoint")
+	groupName := query.Get("group")
+	status := query.Get("status")
 
 	// Calculate date range based on period or custom dates
 	var startDate, endDate time.Time
@@ -361,6 +378,8 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 		}
 		endDate = time.Now()
 		switch period {
+		case "1h":
+			startDate = endDate.Add(-1 * time.Hour)
 		case "1d":
 			startDate = endDate.AddDate(0, 0, -1)
 		case "7d":
@@ -377,23 +396,118 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Get detailed usage stats
-	stats, err := ua.tracker.GetUsageStats(ctx, startDate, endDate)
+	// Create query options with filtering
+	opts := &tracking.QueryOptions{
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		ModelName:    modelName,
+		EndpointName: endpointName,
+		GroupName:    groupName,
+		Status:       status,
+		Limit:        10000, // Large limit to get all records for statistics
+		Offset:       0,
+	}
+	
+	// Get filtered request details
+	requests, err := ua.tracker.QueryRequestDetails(ctx, opts)
 	if err != nil {
-		slog.Error("Failed to query usage stats", "error", err)
+		slog.Error("Failed to query request details for stats", "error", err)
 		http.Error(w, "Failed to query usage stats", http.StatusInternalServerError)
 		return
+	}
+	
+	// Calculate statistics from filtered requests
+	var totalRequests, successRequests, errorRequests int
+	var totalTokens int64
+	var totalCost float64
+	var totalDuration int64
+	var durationCount int
+	
+	modelStats := make(map[string]ModelStat)
+	endpointStats := make(map[string]EndpointStat)
+	dailyStats := make(map[string]*DailyStat)
+	
+	for _, req := range requests {
+		totalRequests++
+		
+		// Count by status
+		switch req.Status {
+		case "completed", "processing":
+			successRequests++
+		case "error", "timeout":
+			errorRequests++
+		}
+		
+		// Sum tokens and cost
+		totalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
+		totalCost += req.TotalCostUSD
+		
+		// Calculate duration
+		if req.DurationMs != nil && *req.DurationMs > 0 {
+			totalDuration += *req.DurationMs
+			durationCount++
+		}
+		
+		// Model statistics
+		if req.ModelName != "" {
+			modelStat := modelStats[req.ModelName]
+			modelStat.RequestCount++
+			modelStat.TotalCost += req.TotalCostUSD
+			modelStats[req.ModelName] = modelStat
+		}
+		
+		// Endpoint statistics
+		if req.EndpointName != "" {
+			endpointStat := endpointStats[req.EndpointName]
+			endpointStat.RequestCount++
+			endpointStat.GroupName = req.GroupName
+			if req.Status == "completed" || req.Status == "processing" {
+				endpointStat.SuccessCount++
+			}
+			if req.DurationMs != nil && *req.DurationMs > 0 {
+				endpointStat.TotalDuration += *req.DurationMs
+				endpointStat.DurationCount++
+			}
+			endpointStats[req.EndpointName] = endpointStat
+		}
+		
+		// Daily statistics
+		dateStr := req.StartTime.Format("2006-01-02")
+		if dailyStat, exists := dailyStats[dateStr]; exists {
+			dailyStat.RequestCount++
+			dailyStat.TotalCost += req.TotalCostUSD
+			if req.Status == "completed" || req.Status == "processing" {
+				dailyStat.SuccessCount++
+			}
+		} else {
+			successCount := 0
+			if req.Status == "completed" || req.Status == "processing" {
+				successCount = 1
+			}
+			dailyStats[dateStr] = &DailyStat{
+				Date:         dateStr,
+				RequestCount: 1,
+				SuccessCount: successCount,
+				TotalCost:    req.TotalCostUSD,
+			}
+		}
+	}
+	
+	// Calculate averages
+	avgDuration := 0.0
+	if durationCount > 0 {
+		avgDuration = float64(totalDuration) / float64(durationCount)
 	}
 
 	// Calculate success rate
 	successRate := 0.0
-	if stats.TotalRequests > 0 {
-		successRate = float64(stats.SuccessRequests) / float64(stats.TotalRequests) * 100
+	if totalRequests > 0 {
+		successRate = float64(successRequests) / float64(totalRequests) * 100
 	}
 
 	// Build top models slice
-	topModels := make([]ModelStats, 0, len(stats.ModelStats))
-	for modelName, modelStat := range stats.ModelStats {
+	topModels := make([]ModelStats, 0, len(modelStats))
+	for modelName, modelStat := range modelStats {
 		avgCost := 0.0
 		if modelStat.RequestCount > 0 {
 			avgCost = modelStat.TotalCost / float64(modelStat.RequestCount)
@@ -415,31 +529,24 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build top endpoints slice
-	topEndpoints := make([]EndpointStats, 0, len(stats.EndpointStats))
-	for endpointName, endpointStat := range stats.EndpointStats {
-		// Get group name for this endpoint
-		groupName := ""
-		if len(stats.GroupStats) > 0 {
-			// This is simplified - in a real scenario we'd need to query endpoint-group mappings
-			for group := range stats.GroupStats {
-				groupName = group
-				break
-			}
+	topEndpoints := make([]EndpointStats, 0, len(endpointStats))
+	for endpointName, endpointStat := range endpointStats {
+		successRate := 0.0
+		if endpointStat.RequestCount > 0 {
+			successRate = float64(endpointStat.SuccessCount) / float64(endpointStat.RequestCount) * 100
 		}
 		
-		successRate := 100.0 // Default to 100% if no error data available
-		if endpointStat.RequestCount > 0 {
-			// We don't have error count per endpoint in the current stats
-			// This would need to be enhanced in the tracking system
-			successRate = 95.0 // Placeholder
+		avgDuration := 0.0
+		if endpointStat.DurationCount > 0 {
+			avgDuration = float64(endpointStat.TotalDuration) / float64(endpointStat.DurationCount)
 		}
 		
 		topEndpoints = append(topEndpoints, EndpointStats{
 			EndpointName: endpointName,
-			GroupName:    groupName,
-			RequestCount: int(endpointStat.RequestCount),
+			GroupName:    endpointStat.GroupName,
+			RequestCount: endpointStat.RequestCount,
 			SuccessRate:  successRate,
-			AvgDuration:  0.0, // Would need additional query to calculate
+			AvgDuration:  avgDuration,
 		})
 	}
 	// Sort by request count descending
@@ -451,31 +558,36 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 		topEndpoints = topEndpoints[:10]
 	}
 
-	// Get daily stats for the period
-	dailyStats, err := ua.getDailyStats(ctx, startDate, endDate)
-	if err != nil {
-		slog.Error("Failed to query daily stats", "error", err)
-		// Don't fail the entire request, just use empty daily stats
-		dailyStats = []DailyStats{}
+	// Build daily stats slice
+	dailyStatsList := make([]DailyStats, 0, len(dailyStats))
+	for _, dailyStat := range dailyStats {
+		successRate := 0.0
+		if dailyStat.RequestCount > 0 {
+			successRate = float64(dailyStat.SuccessCount) / float64(dailyStat.RequestCount) * 100
+		}
+		
+		dailyStatsList = append(dailyStatsList, DailyStats{
+			Date:         dailyStat.Date,
+			RequestCount: dailyStat.RequestCount,
+			SuccessRate:  successRate,
+			TotalCost:    dailyStat.TotalCost,
+		})
 	}
 
-	// Calculate average duration from total requests
-	avgDuration := 0.0
-	if stats.TotalRequests > 0 {
-		// This would need to be calculated from the database
-		// For now, we'll use a placeholder calculation
-		avgDuration = 1500.0 // 1.5 seconds average
-	}
+	// Calculate suspended requests count (for the whole period, not filtered by endpoint)
+	suspendedCount := 0 // Suspended requests don't need filtering as they haven't been processed yet
 
 	response := UsageStatsResponse{
-		Period:        period,
-		TotalRequests: int(stats.TotalRequests),
-		SuccessRate:   successRate,
-		AvgDuration:   avgDuration,
-		TotalCost:     stats.TotalCost,
-		TopModels:     topModels,
-		TopEndpoints:  topEndpoints,
-		DailyStats:    dailyStats,
+		Period:         period,
+		TotalRequests:  totalRequests,
+		SuccessRate:    successRate,
+		AvgDuration:    avgDuration,
+		TotalCost:      totalCost,
+		TotalTokens:    totalTokens,
+		SuspendedCount: suspendedCount,
+		TopModels:      topModels,
+		TopEndpoints:   topEndpoints,
+		DailyStats:     dailyStatsList,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -590,8 +702,11 @@ func parseTimeString(timeStr string) (time.Time, error) {
 		"01/02/2006 15:04:05",       // 01/02/2006 15:04:05
 	}
 	
+	// 获取本地时区
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	
 	for _, format := range timeFormats {
-		if parsed, err := time.Parse(format, timeStr); err == nil {
+		if parsed, err := time.ParseInLocation(format, timeStr, loc); err == nil {
 			return parsed, nil
 		}
 	}
@@ -609,7 +724,7 @@ func (ua *UsageAPI) getDailyStats(ctx context.Context, startDate, endDate time.T
 	query := `SELECT 
 		DATE(start_time) as date,
 		COUNT(*) as total_requests,
-		CAST(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as success_rate,
+		CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as success_rate,
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ?
@@ -638,4 +753,52 @@ func (ua *UsageAPI) getDailyStats(ctx context.Context, startDate, endDate time.T
 	}
 
 	return dailyStats, nil
+}
+
+// calculateAvgDuration 计算平均响应时间
+func (ua *UsageAPI) calculateAvgDuration(ctx context.Context, startDate, endDate time.Time) float64 {
+	if ua.tracker == nil {
+		return 0.0
+	}
+
+	db := ua.tracker.GetDB()
+	query := `SELECT AVG(CAST(duration_ms AS FLOAT)) as avg_duration
+		FROM request_logs 
+		WHERE start_time >= ? AND start_time <= ? 
+		AND duration_ms IS NOT NULL AND duration_ms > 0`
+	
+	var avgDuration sql.NullFloat64
+	err := db.QueryRowContext(ctx, query, startDate, endDate).Scan(&avgDuration)
+	if err != nil {
+		slog.Error("Failed to calculate average duration", "error", err)
+		return 0.0
+	}
+	
+	if !avgDuration.Valid {
+		return 0.0
+	}
+	
+	return avgDuration.Float64
+}
+
+// calculateSuspendedCount 计算挂起请求数
+func (ua *UsageAPI) calculateSuspendedCount(ctx context.Context, startDate, endDate time.Time) int {
+	if ua.tracker == nil {
+		return 0
+	}
+
+	db := ua.tracker.GetDB()
+	query := `SELECT COUNT(*) as suspended_count
+		FROM request_logs 
+		WHERE start_time >= ? AND start_time <= ? 
+		AND status = 'suspended'`
+	
+	var suspendedCount int
+	err := db.QueryRowContext(ctx, query, startDate, endDate).Scan(&suspendedCount)
+	if err != nil {
+		slog.Error("Failed to calculate suspended count", "error", err)
+		return 0
+	}
+	
+	return suspendedCount
 }

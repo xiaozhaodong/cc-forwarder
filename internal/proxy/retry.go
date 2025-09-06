@@ -178,7 +178,7 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 						
 						// Record success in usage tracking
 						if rh.usageTracker != nil && connID != "" {
-							status := "success"
+							status := "processing"  // 改为processing，表示HTTP响应成功但Token解析中
 							if resp.StatusCode >= 400 {
 								status = "error"
 							}

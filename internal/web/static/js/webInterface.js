@@ -31,6 +31,10 @@ window.WebInterface = class {
         // 立即加载初始数据，不等待SSE连接
         this.loadAllTabsData();
         Utils.createConnectionIndicator();
+        
+        // 初始化折叠区域状态
+        this.initializeCollapsibleSections();
+        
         // SSE连接放在最后建立
         this.sseManager.init();
     }
@@ -106,18 +110,6 @@ window.WebInterface = class {
                     this.groupsManager.loadGroups();
                 }
                 break;
-            case 'connections':
-                if (this.cachedData.connections) {
-                    console.log('[Cache] 使用缓存数据显示connections');
-                    const container = document.getElementById('connections-stats');
-                    if (container) {
-                        container.innerHTML = Utils.generateConnectionsStats(this.cachedData.connections);
-                    }
-                } else {
-                    console.log('[Cache] 无缓存数据，请求connections API');
-                    this.loadConnections();
-                }
-                break;
             case 'requests':
                 if (this.cachedData.requests) {
                     console.log('[Cache] 使用缓存数据显示requests');
@@ -156,7 +148,6 @@ window.WebInterface = class {
             this.loadOverview(),
             this.endpointsManager.loadEndpoints(),
             this.groupsManager.loadGroups(),
-            this.loadConnections(),
             this.requestsManager.loadRequests(),
             this.loadConfig()
         ]).catch(error => {
@@ -174,9 +165,6 @@ window.WebInterface = class {
                 break;
             case 'groups':
                 this.groupsManager.loadGroups();
-                break;
-            case 'connections':
-                this.loadConnections();
                 break;
             case 'requests':
                 this.requestsManager.loadRequests();
@@ -244,33 +232,117 @@ window.WebInterface = class {
                 groupSuspendedInfoElement.style.display = 'none';
             }
 
+            // 更新连接详情区域
+            this.updateConnectionDetails(connections);
+            
+            // 更新挂起请求监控区域
+            this.updateSuspendedMonitoring(connections.suspended || {}, connections.suspended_connections || []);
+            
+            // 智能展开逻辑：如果有挂起请求，自动展开挂起监控区域
+            if (suspendedData.suspended_requests > 0) {
+                this.expandSection('suspended-monitoring');
+            }
+
         } catch (error) {
             console.error('加载概览数据失败:', error);
             Utils.showError('概览数据加载失败');
         }
     }
 
-    async loadConnections() {
-        try {
-            const response = await fetch('/api/v1/connections');
-            const data = await response.json();
-
-            // 更新缓存
-            this.cachedData.connections = data;
-
-            // 更新基础连接统计
-            const container = document.getElementById('connections-stats');
-            container.innerHTML = Utils.generateConnectionsStats(data);
-
-            // 更新挂起请求统计
-            this.updateSuspendedStats(data.suspended || {});
-            
-            // 更新挂起连接列表
-            this.updateSuspendedConnections(data.suspended_connections || []);
-        } catch (error) {
-            console.error('加载连接数据失败:', error);
-            Utils.showError('连接数据加载失败');
+    // 更新连接详情区域
+    updateConnectionDetails(connectionsData) {
+        const container = document.getElementById('connections-stats');
+        if (container) {
+            container.innerHTML = Utils.generateConnectionsStats(connectionsData);
         }
+    }
+
+    // 更新挂起请求监控区域
+    updateSuspendedMonitoring(suspendedData, suspendedConnections) {
+        // 更新挂起请求统计
+        this.updateSuspendedStats(suspendedData);
+        
+        // 更新挂起连接列表  
+        this.updateSuspendedConnections(suspendedConnections);
+    }
+
+    // 折叠/展开区域控制方法
+    toggleSection(sectionId) {
+        const content = document.getElementById(sectionId + '-content');
+        const indicator = document.getElementById(sectionId + '-indicator');
+        
+        if (!content || !indicator) return;
+        
+        const isCollapsed = content.classList.contains('collapsed');
+        
+        if (isCollapsed) {
+            // 展开
+            content.classList.remove('collapsed');
+            content.classList.add('expanded');
+            indicator.textContent = '▲';
+            indicator.style.transform = 'rotate(180deg)';
+            
+            // 保存状态到localStorage
+            localStorage.setItem(`section-${sectionId}`, 'expanded');
+        } else {
+            // 折叠
+            content.classList.remove('expanded');
+            content.classList.add('collapsed');
+            indicator.textContent = '▼';
+            indicator.style.transform = 'rotate(0deg)';
+            
+            // 保存状态到localStorage
+            localStorage.setItem(`section-${sectionId}`, 'collapsed');
+        }
+    }
+
+    // 智能展开区域（用于异常情况）
+    expandSection(sectionId) {
+        const content = document.getElementById(sectionId + '-content');
+        const indicator = document.getElementById(sectionId + '-indicator');
+        const header = document.getElementById(sectionId + '-section')?.querySelector('.section-header');
+        
+        if (!content || !indicator) return;
+        
+        // 展开内容
+        content.classList.remove('collapsed');
+        content.classList.add('expanded');
+        indicator.textContent = '▲';
+        indicator.style.transform = 'rotate(180deg)';
+        
+        // 添加警告样式
+        if (header) {
+            header.classList.add('has-alerts');
+        }
+        
+        // 保存状态
+        localStorage.setItem(`section-${sectionId}`, 'expanded');
+    }
+
+    // 初始化折叠区域状态
+    initializeCollapsibleSections() {
+        const sections = ['connection-details', 'suspended-monitoring'];
+        
+        sections.forEach(sectionId => {
+            const savedState = localStorage.getItem(`section-${sectionId}`);
+            const content = document.getElementById(sectionId + '-content');
+            const indicator = document.getElementById(sectionId + '-indicator');
+            
+            if (content && indicator) {
+                if (savedState === 'expanded') {
+                    content.classList.remove('collapsed');
+                    content.classList.add('expanded');
+                    indicator.textContent = '▲';
+                    indicator.style.transform = 'rotate(180deg)';
+                } else {
+                    // 默认折叠
+                    content.classList.add('collapsed');
+                    content.classList.remove('expanded');
+                    indicator.textContent = '▼';
+                    indicator.style.transform = 'rotate(0deg)';
+                }
+            }
+        });
     }
 
     async loadConfig() {
@@ -572,43 +644,54 @@ window.applyFilters = function() {
     if (timeRange === 'custom') {
         startDate = document.getElementById('start-date')?.value || '';
         endDate = document.getElementById('end-date')?.value || '';
-    } else if (timeRange && timeRange !== 'all') {
+    } else if (timeRange && timeRange !== 'all' && timeRange !== '') {
         const now = new Date();
-        endDate = now.toISOString().slice(0, 16); // YYYY-MM-DDTHH:mm格式
+        // 使用本地时间而不是UTC时间
+        const formatLocalDateTime = (date) => {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+08:00`;
+        };
+        
+        endDate = formatLocalDateTime(now);
         
         switch(timeRange) {
             case '1h':
-                startDate = new Date(now.getTime() - 1 * 60 * 60 * 1000).toISOString().slice(0, 16);
+                startDate = formatLocalDateTime(new Date(now.getTime() - 1 * 60 * 60 * 1000));
                 break;
             case '6h':
-                startDate = new Date(now.getTime() - 6 * 60 * 60 * 1000).toISOString().slice(0, 16);
+                startDate = formatLocalDateTime(new Date(now.getTime() - 6 * 60 * 60 * 1000));
                 break;
             case '24h':
-                startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+                startDate = formatLocalDateTime(new Date(now.getTime() - 24 * 60 * 60 * 1000));
                 break;
             case '7d':
-                startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+                startDate = formatLocalDateTime(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
                 break;
             case '30d':
-                startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+                startDate = formatLocalDateTime(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
                 break;
         }
     }
     
     // 更新RequestsManager的筛选条件
     window.webInterface.requestsManager.state.filters = {
-        start_date: startDate ? startDate.split('T')[0] : '',
-        end_date: endDate ? endDate.split('T')[0] : '', 
+        start_date: startDate || '',
+        end_date: endDate || '', 
         status: status === 'all' ? '' : status,
-        model: model || '',
-        endpoint: endpoint || '',
-        group: group === 'all' ? '' : group
+        model: model === 'all' ? '' : model || '',
+        endpoint: endpoint === 'all' ? '' : endpoint || '',
+        group: group === 'all' ? '' : group || ''
     };
     
     // 重置到第一页
     window.webInterface.requestsManager.state.currentPage = 1;
     
-    // 加载数据
+    // 加载数据和统计信息
     window.webInterface.requestsManager.loadRequests();
 };
 
@@ -628,10 +711,10 @@ window.resetFilters = function() {
     const startDate = document.getElementById('start-date');
     const endDate = document.getElementById('end-date');
     
-    if (timeRangeFilter) timeRangeFilter.value = '24h';
+    if (timeRangeFilter) timeRangeFilter.value = '';
     if (statusFilter) statusFilter.value = 'all';
-    if (modelFilter) modelFilter.value = '';
-    if (endpointFilter) endpointFilter.value = '';
+    if (modelFilter) modelFilter.value = 'all';
+    if (endpointFilter) endpointFilter.value = 'all';
     if (groupFilter) groupFilter.value = 'all';
     if (startDate) startDate.value = '';
     if (endDate) endDate.value = '';
@@ -644,17 +727,6 @@ window.resetFilters = function() {
     
     // 重置RequestsManager的筛选条件
     window.webInterface.requestsManager.resetFilters();
-};
-
-// 导出请求数据
-window.exportRequestData = function() {
-    if (!window.webInterface || !window.webInterface.requestsManager) {
-        console.error('WebInterface或RequestsManager未初始化');
-        return;
-    }
-    
-    // 默认导出CSV格式
-    window.webInterface.requestsManager.exportRequests('csv');
 };
 
 // 加载并填充端点下拉框

@@ -129,11 +129,16 @@ func (ut *UsageTracker) flushBatch(events []RequestEvent) {
 
 // processBatch 处理一批事件
 func (ut *UsageTracker) processBatch(events []RequestEvent) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 增加超时时间以处理高并发场景
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	tx, err := ut.db.BeginTx(ctx, nil)
 	if err != nil {
+		slog.Error("Failed to begin database transaction", 
+			"error", err, 
+			"batch_size", len(events),
+			"context_deadline", ctx.Err())
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -163,13 +168,20 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 			slog.Error("Failed to process tracking event", 
 				"error", err, 
 				"event_type", event.Type, 
-				"request_id", event.RequestID)
+				"request_id", event.RequestID,
+				"event_timestamp", event.Timestamp,
+				"data_type", fmt.Sprintf("%T", event.Data))
 			continue // 继续处理其他事件
 		}
 		successCount++
 	}
 
 	if err := tx.Commit(); err != nil {
+		slog.Error("Failed to commit database transaction", 
+			"error", err, 
+			"batch_size", len(events),
+			"success_count", successCount,
+			"context_deadline", ctx.Err())
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
@@ -218,6 +230,50 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 		return fmt.Errorf("invalid update event data type")
 	}
 
+	// 如果端点名和组名都为空，只更新状态相关字段
+	if data.EndpointName == "" && data.GroupName == "" {
+		query := `UPDATE request_logs SET
+			status = ?,
+			retry_count = ?,
+			http_status_code = ?,
+			updated_at = datetime('now', 'localtime')
+		WHERE request_id = ?`
+
+		result, err := tx.ExecContext(ctx, query,
+			data.Status,
+			data.RetryCount,
+			data.HTTPStatus,
+			event.RequestID)
+		
+		if err != nil {
+			return err
+		}
+
+		// 检查是否更新了记录
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		
+		if rowsAffected == 0 {
+			// 记录不存在，先创建一个基本记录
+			return ut.insertRequestStart(ctx, tx, RequestEvent{
+				Type:      "start", 
+				RequestID: event.RequestID,
+				Timestamp: event.Timestamp,
+				Data: RequestStartData{
+					ClientIP:  "unknown",
+					UserAgent: "unknown", 
+					Method:    "unknown",
+					Path:      "unknown",
+				},
+			})
+		}
+		
+		return nil
+	}
+
+	// 正常更新所有字段
 	query := `UPDATE request_logs SET
 		endpoint_name = ?,
 		group_name = ?,
@@ -321,7 +377,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		cache_creation_cost_usd = ?,
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
-		status = CASE WHEN status = 'pending' THEN 'success' ELSE status END,
+		status = CASE WHEN status = 'pending' THEN 'completed' ELSE status END,
 		updated_at = datetime('now', 'localtime')
 	WHERE request_id = ?`
 
@@ -357,7 +413,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			input_cost_usd, output_cost_usd, cache_creation_cost_usd, 
 			cache_read_cost_usd, total_cost_usd, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'success')`
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`
 		
 		// 使用已计算的 startTime 和 durationMs
 		_, err = tx.ExecContext(ctx, insertQuery,
@@ -524,7 +580,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 		COALESCE(endpoint_name, '') as endpoint_name,
 		COALESCE(group_name, '') as group_name,
 		COUNT(*) as request_count,
-		SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
 		SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
 		SUM(input_tokens) as total_input_tokens,
 		SUM(output_tokens) as total_output_tokens,

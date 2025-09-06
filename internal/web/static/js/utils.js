@@ -6,7 +6,10 @@ window.Utils = {
     // 格式化请求状态
     formatRequestStatus(status) {
         const statusMap = {
-            'success': '成功',
+            'forwarding': '转发中',
+            'processing': '解析中',  // 🆕 HTTP响应成功，Token解析中
+            'completed': '完成',     // 🆕 Token解析和计算完成
+            'success': '成功',       // 兼容旧数据
             'error': '失败',
             'timeout': '超时',
             'cancelled': '取消'
@@ -26,8 +29,36 @@ window.Utils = {
     
     // 格式化成本
     formatCost(cost) {
-        if (!cost || cost === 0) return '-';
-        return `$${Number(cost).toFixed(2)}`;
+        const numericCost = Number(cost) || 0;
+        
+        // 始终显示至少2位小数
+        if (numericCost === 0) return '$0.00';
+        
+        // 根据成本大小选择合适的精度
+        if (numericCost >= 1) {
+            return `$${numericCost.toFixed(2)}`;
+        } else if (numericCost >= 0.01) {
+            return `$${numericCost.toFixed(4)}`;
+        } else if (numericCost >= 0.001) {
+            return `$${numericCost.toFixed(5)}`;
+        } else {
+            return `$${numericCost.toFixed(6)}`;
+        }
+    },
+    
+    // 格式化Token数量 (以百万为单位显示)
+    formatTokens(tokens) {
+        const numericTokens = Number(tokens) || 0;
+        if (numericTokens === 0) return '0.00M';
+        
+        // 转换为百万单位
+        const tokensInM = numericTokens / 1000000;
+        
+        if (tokensInM >= 1) {
+            return `${tokensInM.toFixed(2)}M`;
+        } else {
+            return `${tokensInM.toFixed(3)}M`;
+        }
     },
     
     // 生成排序图标
@@ -41,15 +72,16 @@ window.Utils = {
     },
     
     // 生成分页控件HTML
-    generatePagination(total, currentPage, pageSize) {
+    generatePagination(total, currentPage, pageSize, managerName = 'requestsManager') {
         const totalPages = Math.ceil(total / pageSize);
         if (totalPages <= 1) return '';
         
         let html = '<div class="pagination-controls">';
+        html += `<div class="pagination-info">第 ${currentPage} 页，共 ${totalPages} 页，总计 ${total} 条记录</div>`;
         
         // 上一页
         if (currentPage > 1) {
-            html += `<button class="btn page-btn" onclick="webInterface.changePage(${currentPage - 1})">‹ 上一页</button>`;
+            html += `<button class="btn page-btn" onclick="webInterface.${managerName}.changePage(${currentPage - 1})">‹ 上一页</button>`;
         }
         
         // 页码
@@ -57,7 +89,7 @@ window.Utils = {
         const endPage = Math.min(totalPages, currentPage + 2);
         
         if (startPage > 1) {
-            html += `<button class="btn page-btn" onclick="webInterface.changePage(1)">1</button>`;
+            html += `<button class="btn page-btn" onclick="webInterface.${managerName}.changePage(1)">1</button>`;
             if (startPage > 2) {
                 html += '<span class="pagination-ellipsis">...</span>';
             }
@@ -65,19 +97,19 @@ window.Utils = {
         
         for (let i = startPage; i <= endPage; i++) {
             const activeClass = i === currentPage ? 'active' : '';
-            html += `<button class="btn page-btn ${activeClass}" onclick="webInterface.changePage(${i})">${i}</button>`;
+            html += `<button class="btn page-btn ${activeClass}" onclick="webInterface.${managerName}.changePage(${i})">${i}</button>`;
         }
         
         if (endPage < totalPages) {
             if (endPage < totalPages - 1) {
                 html += '<span class="pagination-ellipsis">...</span>';
             }
-            html += `<button class="btn page-btn" onclick="webInterface.changePage(${totalPages})">${totalPages}</button>`;
+            html += `<button class="btn page-btn" onclick="webInterface.${managerName}.changePage(${totalPages})">${totalPages}</button>`;
         }
         
         // 下一页
         if (currentPage < totalPages) {
-            html += `<button class="btn page-btn" onclick="webInterface.changePage(${currentPage + 1})">下一页 ›</button>`;
+            html += `<button class="btn page-btn" onclick="webInterface.${managerName}.changePage(${currentPage + 1})">下一页 ›</button>`;
         }
         
         html += '</div>';

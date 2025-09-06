@@ -196,36 +196,41 @@ window.SSEManager = class {
             console.log('[SSE] 连接数据已更新到缓存');
         }
         
-        // 如果当前在connections标签页，立即更新UI
-        if (this.webInterface.currentTab === 'connections') {
-            Utils.updateElementHTML('connections-stats', Utils.generateConnectionsStats(data));
-            console.log('[UI] connections标签页UI已更新');
+        // 如果在概览页面，更新连接详情和挂起监控区域
+        if (this.webInterface.currentTab === 'overview') {
+            // 更新连接详情区域
+            this.webInterface.updateConnectionDetails(data);
             
-            // 更新挂起请求统计
+            // 更新挂起请求监控区域
+            if (data.suspended || data.suspended_connections) {
+                this.webInterface.updateSuspendedMonitoring(
+                    data.suspended || {}, 
+                    data.suspended_connections || []
+                );
+            }
+            
+            // 更新概览页面的挂起请求信息
             if (data.suspended) {
-                this.updateSuspendedStats(data.suspended);
+                const suspendedElement = document.getElementById('suspended-requests');
+                const suspendedRateElement = document.getElementById('suspended-success-rate');
+                
+                if (suspendedElement) {
+                    suspendedElement.textContent = `${data.suspended.suspended_requests || 0} / ${data.suspended.total_suspended_requests || 0}`;
+                }
+                
+                if (suspendedRateElement) {
+                    const rate = data.suspended.success_rate || 0;
+                    suspendedRateElement.textContent = `成功率: ${rate.toFixed(1)}%`;
+                    suspendedRateElement.className = rate > 80 ? 'text-muted' : 'text-warning';
+                }
+                
+                // 智能展开逻辑：如果有挂起请求，自动展开监控区域
+                if (data.suspended.suspended_requests > 0) {
+                    this.webInterface.expandSection('suspended-monitoring');
+                }
             }
             
-            // 更新挂起连接列表
-            if (data.suspended_connections) {
-                this.updateSuspendedConnections(data.suspended_connections);
-            }
-        }
-        
-        // 如果在概览页面，更新挂起请求信息
-        if (this.webInterface.currentTab === 'overview' && data.suspended) {
-            const suspendedElement = document.getElementById('suspended-requests');
-            const suspendedRateElement = document.getElementById('suspended-success-rate');
-            
-            if (suspendedElement) {
-                suspendedElement.textContent = `${data.suspended.suspended_requests || 0} / ${data.suspended.total_suspended_requests || 0}`;
-            }
-            
-            if (suspendedRateElement) {
-                const rate = data.suspended.success_rate || 0;
-                suspendedRateElement.textContent = `成功率: ${rate.toFixed(1)}%`;
-                suspendedRateElement.className = rate > 80 ? 'text-muted' : 'text-warning';
-            }
+            console.log('[UI] 概览页面连接数据已更新');
         }
         
         // 更新概览页面的请求数
@@ -241,13 +246,13 @@ window.SSEManager = class {
     handleSuspendedEvent(data) {
         console.log('[SSE] 收到挂起请求事件数据:', data);
         
-        // 如果在连接标签页，更新挂起请求统计
-        if (this.webInterface.currentTab === 'connections') {
+        // 如果在概览页面，更新挂起请求监控区域
+        if (this.webInterface.currentTab === 'overview') {
             if (data.current) {
-                this.updateSuspendedStats(data.current);
-            }
-            if (data.suspended_connections) {
-                this.updateSuspendedConnections(data.suspended_connections);
+                this.webInterface.updateSuspendedMonitoring(
+                    data.current,
+                    data.suspended_connections || []
+                );
             }
         }
         
@@ -264,6 +269,11 @@ window.SSEManager = class {
                 const rate = data.current.success_rate || 0;
                 suspendedRateElement.textContent = `成功率: ${rate.toFixed(1)}%`;
                 suspendedRateElement.className = rate > 80 ? 'text-muted' : 'text-warning';
+            }
+            
+            // 智能展开逻辑：如果有挂起请求，自动展开监控区域
+            if (data.current.suspended_requests > 0) {
+                this.webInterface.expandSection('suspended-monitoring');
             }
         }
         

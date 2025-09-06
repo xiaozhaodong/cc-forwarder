@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -105,45 +106,37 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		FROM usage_summary WHERE 1=1`
 	
 	var args []interface{}
-	argIndex := 1
 	
 	if opts.StartDate != nil {
-		query += fmt.Sprintf(" AND date >= $%d", argIndex)
+		query += " AND date >= ?"
 		args = append(args, opts.StartDate.Format("2006-01-02"))
-		argIndex++
 	}
 	if opts.EndDate != nil {
-		query += fmt.Sprintf(" AND date <= $%d", argIndex)
+		query += " AND date <= ?"
 		args = append(args, opts.EndDate.Format("2006-01-02"))
-		argIndex++
 	}
 	if opts.ModelName != "" {
-		query += fmt.Sprintf(" AND model_name = $%d", argIndex)
+		query += " AND model_name = ?"
 		args = append(args, opts.ModelName)
-		argIndex++
 	}
 	if opts.EndpointName != "" {
-		query += fmt.Sprintf(" AND endpoint_name = $%d", argIndex)
+		query += " AND endpoint_name = ?"
 		args = append(args, opts.EndpointName)
-		argIndex++
 	}
 	if opts.GroupName != "" {
-		query += fmt.Sprintf(" AND group_name = $%d", argIndex)
+		query += " AND group_name = ?"
 		args = append(args, opts.GroupName)
-		argIndex++
 	}
 	
 	query += " ORDER BY date DESC, total_cost_usd DESC"
 	
 	if opts.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argIndex)
+		query += " LIMIT ?"
 		args = append(args, opts.Limit)
-		argIndex++
 	}
 	if opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argIndex)
+		query += " OFFSET ?"
 		args = append(args, opts.Offset)
-		argIndex++
 	}
 	
 	rows, err := ut.db.QueryContext(ctx, query, args...)
@@ -197,50 +190,41 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		FROM request_logs WHERE 1=1`
 	
 	var args []interface{}
-	argIndex := 1
 	
 	if opts.StartDate != nil {
-		query += fmt.Sprintf(" AND start_time >= $%d", argIndex)
-		args = append(args, *opts.StartDate)
-		argIndex++
+		query += " AND start_time >= ?"
+		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
 	}
 	if opts.EndDate != nil {
-		query += fmt.Sprintf(" AND start_time <= $%d", argIndex)
-		args = append(args, *opts.EndDate)
-		argIndex++
+		query += " AND start_time <= ?"
+		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
 	}
 	if opts.ModelName != "" {
-		query += fmt.Sprintf(" AND model_name = $%d", argIndex)
+		query += " AND model_name = ?"
 		args = append(args, opts.ModelName)
-		argIndex++
 	}
 	if opts.EndpointName != "" {
-		query += fmt.Sprintf(" AND endpoint_name = $%d", argIndex)
+		query += " AND endpoint_name = ?"
 		args = append(args, opts.EndpointName)
-		argIndex++
 	}
 	if opts.GroupName != "" {
-		query += fmt.Sprintf(" AND group_name = $%d", argIndex)
+		query += " AND group_name = ?"
 		args = append(args, opts.GroupName)
-		argIndex++
 	}
 	if opts.Status != "" {
-		query += fmt.Sprintf(" AND status = $%d", argIndex)
+		query += " AND status = ?"
 		args = append(args, opts.Status)
-		argIndex++
 	}
 	
 	query += " ORDER BY start_time DESC"
 	
 	if opts.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argIndex)
+		query += " LIMIT ?"
 		args = append(args, opts.Limit)
-		argIndex++
 	}
 	if opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argIndex)
+		query += " OFFSET ?"
 		args = append(args, opts.Offset)
-		argIndex++
 	}
 	
 	rows, err := ut.db.QueryContext(ctx, query, args...)
@@ -302,7 +286,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	
 	query := `SELECT 
 		COUNT(*) as total_requests,
-		CAST(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as success_rate,
+		CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as success_rate,
 		AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as avg_duration,
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
@@ -321,6 +305,14 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 		return nil, fmt.Errorf("failed to query usage stats: %w", err)
 	}
 	
+	// 添加调试日志
+	slog.Debug("Usage stats query result", 
+		"total_requests", stats.TotalRequests,
+		"success_rate", stats.SuccessRate,
+		"period", period,
+		"start_date", startDate,
+		"end_date", endDate)
+	
 	return &stats, nil
 }
 
@@ -332,37 +324,30 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 
 	query := "SELECT COUNT(*) FROM request_logs WHERE 1=1"
 	var args []interface{}
-	argIndex := 1
 	
 	if opts.StartDate != nil {
-		query += fmt.Sprintf(" AND start_time >= $%d", argIndex)
-		args = append(args, *opts.StartDate)
-		argIndex++
+		query += " AND start_time >= ?"
+		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
 	}
 	if opts.EndDate != nil {
-		query += fmt.Sprintf(" AND start_time <= $%d", argIndex)
-		args = append(args, *opts.EndDate)
-		argIndex++
+		query += " AND start_time <= ?"
+		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
 	}
 	if opts.ModelName != "" {
-		query += fmt.Sprintf(" AND model_name = $%d", argIndex)
+		query += " AND model_name = ?"
 		args = append(args, opts.ModelName)
-		argIndex++
 	}
 	if opts.EndpointName != "" {
-		query += fmt.Sprintf(" AND endpoint_name = $%d", argIndex)
+		query += " AND endpoint_name = ?"
 		args = append(args, opts.EndpointName)
-		argIndex++
 	}
 	if opts.GroupName != "" {
-		query += fmt.Sprintf(" AND group_name = $%d", argIndex)
+		query += " AND group_name = ?"
 		args = append(args, opts.GroupName)
-		argIndex++
 	}
 	if opts.Status != "" {
-		query += fmt.Sprintf(" AND status = $%d", argIndex)
+		query += " AND status = ?"
 		args = append(args, opts.Status)
-		argIndex++
 	}
 	
 	var count int

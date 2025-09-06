@@ -243,6 +243,103 @@ The codebase includes comprehensive unit tests:
 - **Issue Resolution**: Trace failed requests through retry attempts and fallback logic
 - **Request Correlation**: Connect client-side issues with server-side processing
 
+## Request Status System (2025-09-06 Update)
+
+**Enhanced Status Granularity**: The system now provides fine-grained request status tracking to eliminate user confusion and improve transparency in the Web interface.
+
+### Status Lifecycle
+
+The request status system uses a clear progression that accurately reflects the processing stages:
+
+```
+请求状态流程：forwarding → processing → completed
+              (转发中)   (解析中)    (完成)
+```
+
+### Status Definitions
+
+#### **Core Status States**
+- **`forwarding`**: Request is being forwarded to endpoint
+- **`processing`**: HTTP response received successfully, Token parsing in progress ⭐ **New**
+- **`completed`**: Token parsing and cost calculation fully completed ⭐ **New** 
+- **`error`**: Request failed at any stage
+- **`timeout`**: Request timed out
+
+#### **Status Update Triggers**
+1. **`forwarding`** → Set when request starts processing
+2. **`processing`** → Set when HTTP response returns successfully (internal/proxy/retry.go:181)
+3. **`completed`** → Set when Token parsing completes (internal/proxy/token_parser.go:209)
+
+### User Experience Improvements
+
+#### **Before Enhancement (User Confusion)**
+```
+req-abc123  22:15:33  ✅ 成功  -  0  0  0  0  $0.00
+                        ↑
+                "成功了为什么token是0？？？"
+```
+
+#### **After Enhancement (Clear Status)**
+```
+req-abc123  22:15:33  ⚙️ 解析中  -  0  0  0  0  $0.00
+                        ↓ Auto-updates after token parsing
+req-abc123  22:15:33  ✅ 完成    claude-sonnet-4  25  97  0  0  $0.45
+                        ↑
+              "Perfect! Now I understand the processing is complete!"
+```
+
+### Visual Design
+
+#### **Status Indicators in Web Interface**
+- **🔄 转发中** (`forwarding`): Blue gradient with pulsing animation
+- **⚙️ 解析中** (`processing`): Orange gradient with pulsing animation ⭐ **New**
+- **✅ 完成** (`completed`): Green gradient ⭐ **New**
+- **❌ 失败** (`error`): Red gradient
+- **⏰ 超时** (`timeout`): Orange-red gradient
+
+#### **CSS Implementation**
+```css
+.status-badge.status-processing {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #92400e;
+    animation: pulse 2s infinite;
+}
+
+.status-badge.status-completed {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+}
+```
+
+### Technical Implementation
+
+#### **Backend Status Updates**
+- **File**: `internal/proxy/retry.go` (Line 181)
+  - **Change**: `status := "processing"` (was `"success"`)
+  - **Trigger**: HTTP response successful
+  
+- **File**: `internal/proxy/token_parser.go` (Line 209)  
+  - **Addition**: `RecordRequestUpdate(requestID, "", "", "completed", 0, 0)`
+  - **Trigger**: Token parsing completed
+
+#### **Frontend Status Display**
+- **File**: `internal/web/static/js/utils.js`
+  - **Enhancement**: Added status mappings for `processing` and `completed`
+  - **Backward Compatibility**: Maintains support for legacy `success` status
+
+#### **Asynchronous Processing Benefits**
+- **Non-blocking**: Status updates don't affect request forwarding performance
+- **Real-time**: Web interface shows live status progression via SSE
+- **Transparent**: Users understand exactly what stage their request is in
+
+### Migration and Compatibility
+
+- **Backward Compatible**: Existing `success` status still supported for historical data
+- **Seamless Transition**: New requests automatically use enhanced status system
+- **No Breaking Changes**: API endpoints remain unchanged
+
+**Benefits**: Eliminates user confusion about "successful" requests with zero tokens, provides clear processing transparency, improves debugging capabilities, and enhances overall user experience in the Web interface.
+
 ## Request Suspension and Recovery System
 
 **Request Suspension Capability**: The system supports intelligent request suspension when all endpoint groups fail, preventing request loss during temporary outages.

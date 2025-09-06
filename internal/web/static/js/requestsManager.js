@@ -8,7 +8,7 @@ window.RequestsManager = class {
         // 请求追踪页面状态
         this.state = {
             currentPage: 1,
-            pageSize: 20,
+            pageSize: 50,
             totalRequests: 0,
             filters: {
                 start_date: '',
@@ -18,7 +18,7 @@ window.RequestsManager = class {
                 endpoint: '',
                 group: ''
             },
-            sortBy: 'created_at',
+            sortBy: 'start_time',
             sortOrder: 'desc'
         };
     }
@@ -66,9 +66,12 @@ window.RequestsManager = class {
                 // 更新计数信息
                 this.updateRequestsCountInfo(data.total, this.state.currentPage);
             } else {
-                tbody.innerHTML = '<tr><td colspan="13" class="no-data">📄 暂无请求数据</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="12" class="no-data">📄 暂无请求数据</td></tr>';
                 this.updateRequestsCountInfo(0, this.state.currentPage);
             }
+            
+            // 同时加载统计数据
+            this.loadRequestsStats();
         } catch (error) {
             console.error('加载请求数据失败:', error);
             Utils.showError('请求数据加载失败: ' + error.message);
@@ -78,7 +81,7 @@ window.RequestsManager = class {
     // 生成请求表格行内容（只生成tbody内的tr元素）
     generateRequestsRows(requests) {
         if (!requests || requests.length === 0) {
-            return '<tr><td colspan="13" class="no-data">📄 暂无请求数据</td></tr>';
+            return '<tr><td colspan="12" class="no-data">📄 暂无请求数据</td></tr>';
         }
 
         let html = '';
@@ -86,14 +89,14 @@ window.RequestsManager = class {
             const status = Utils.formatRequestStatus(request.status);
             const duration = Utils.formatDuration(request.duration_ms);
             const cost = Utils.formatCost(request.total_cost_usd);
-            const createdAt = new Date(request.created_at).toLocaleString('zh-CN');
+            const startTime = new Date(request.start_time).toLocaleString('zh-CN');
             
             html += `
                 <tr>
                     <td>
                         <code class="request-id">${request.request_id}</code>
                     </td>
-                    <td class="datetime">${createdAt}</td>
+                    <td class="datetime">${startTime}</td>
                     <td>
                         <span class="status-badge status-${request.status}">${status}</span>
                     </td>
@@ -103,8 +106,8 @@ window.RequestsManager = class {
                     <td class="duration">${duration}</td>
                     <td class="input-tokens">${request.input_tokens || 0}</td>
                     <td class="output-tokens">${request.output_tokens || 0}</td>
-                    <td class="cache-creation-tokens">${request.cache_creation_tokens || '-'}</td>
-                    <td class="cache-read-tokens">${request.cache_read_tokens || '-'}</td>
+                    <td class="cache-creation-tokens">${request.cache_creation_tokens || 0}</td>
+                    <td class="cache-read-tokens">${request.cache_read_tokens || 0}</td>
                     <td class="cost">${cost}</td>
                     <td class="actions">
                         <button class="btn btn-sm" onclick="window.webInterface.requestsManager.showRequestDetail('${request.request_id}')">
@@ -140,7 +143,9 @@ window.RequestsManager = class {
                                 <label for="status-filter">状态:</label>
                                 <select id="status-filter" name="status">
                                     <option value="">全部</option>
-                                    <option value="success" ${this.state.filters.status === 'success' ? 'selected' : ''}>成功</option>
+                                    <option value="completed" ${this.state.filters.status === 'completed' ? 'selected' : ''}>完成</option>
+                                    <option value="processing" ${this.state.filters.status === 'processing' ? 'selected' : ''}>解析中</option>
+                                    <option value="forwarding" ${this.state.filters.status === 'forwarding' ? 'selected' : ''}>转发中</option>
                                     <option value="error" ${this.state.filters.status === 'error' ? 'selected' : ''}>失败</option>
                                     <option value="timeout" ${this.state.filters.status === 'timeout' ? 'selected' : ''}>超时</option>
                                 </select>
@@ -185,9 +190,9 @@ window.RequestsManager = class {
                             请求ID
                             ${Utils.getSortIcon('request_id', this.state.sortBy, this.state.sortOrder)}
                         </th>
-                        <th class="sortable" data-sort="created_at">
-                            创建时间
-                            ${Utils.getSortIcon('created_at', this.state.sortBy, this.state.sortOrder)}
+                        <th class="sortable" data-sort="start_time">
+                            开始时间
+                            ${Utils.getSortIcon('start_time', this.state.sortBy, this.state.sortOrder)}
                         </th>
                         <th class="sortable" data-sort="status">
                             状态
@@ -209,9 +214,13 @@ window.RequestsManager = class {
                             耗时
                             ${Utils.getSortIcon('duration_ms', this.state.sortBy, this.state.sortOrder)}
                         </th>
-                        <th class="sortable" data-sort="total_cost">
+                        <th class="sortable" data-sort="input_tokens">输入Token</th>
+                        <th class="sortable" data-sort="output_tokens">输出Token</th>
+                        <th class="sortable" data-sort="cache_creation_tokens">缓存创建</th>
+                        <th class="sortable" data-sort="cache_read_tokens">缓存读取</th>
+                        <th class="sortable" data-sort="total_cost_usd">
                             成本
-                            ${Utils.getSortIcon('total_cost', this.state.sortBy, this.state.sortOrder)}
+                            ${Utils.getSortIcon('total_cost_usd', this.state.sortBy, this.state.sortOrder)}
                         </th>
                         <th>操作</th>
                     </tr>
@@ -226,7 +235,7 @@ window.RequestsManager = class {
             </table>
             
             <div class="pagination">
-                ${Utils.generatePagination(total, currentPage, this.state.pageSize)}
+                ${Utils.generatePagination(total, currentPage, this.state.pageSize, 'requestsManager')}
             </div>
         `;
         
@@ -241,23 +250,43 @@ window.RequestsManager = class {
             const endIndex = Math.min(startIndex + this.state.pageSize - 1, total);
             countInfoElement.textContent = `显示 ${startIndex}-${endIndex} 条，共 ${total} 条记录`;
         }
+        
+        // 更新分页控件
+        const totalPagesElement = document.getElementById('total-pages');
+        const currentPageInput = document.getElementById('current-page-input');
+        
+        if (totalPagesElement && currentPageInput) {
+            const totalPages = Math.ceil(total / this.state.pageSize);
+            totalPagesElement.textContent = totalPages;
+            currentPageInput.value = currentPage;
+            currentPageInput.max = totalPages;
+        }
     }
     
     // 绑定请求相关事件
     bindRequestsEvents() {
-        // 筛选表单事件
+        // 筛选表单事件 - 先移除之前的事件监听器，避免重复绑定
         const filterForm = document.getElementById('requests-filter-form');
         if (filterForm) {
-            filterForm.addEventListener('submit', (e) => {
+            // 移除之前可能存在的事件监听器
+            const newForm = filterForm.cloneNode(true);
+            filterForm.parentNode.replaceChild(newForm, filterForm);
+            
+            // 重新绑定事件
+            newForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 this.handleRequestsFilter();
             });
         }
         
-        // 排序事件
+        // 排序事件 - 也需要避免重复绑定
         document.querySelectorAll('.sortable').forEach(th => {
-            th.addEventListener('click', () => {
-                const sortBy = th.dataset.sort;
+            // 克隆元素来移除所有事件监听器
+            const newTh = th.cloneNode(true);
+            th.parentNode.replaceChild(newTh, th);
+            
+            newTh.addEventListener('click', () => {
+                const sortBy = newTh.dataset.sort;
                 if (this.state.sortBy === sortBy) {
                     this.state.sortOrder = this.state.sortOrder === 'asc' ? 'desc' : 'asc';
                 } else {
@@ -353,8 +382,8 @@ window.RequestsManager = class {
                                 <span class="status-badge status-${request.status}">${Utils.formatRequestStatus(request.status)}</span>
                             </div>
                             <div class="detail-item">
-                                <label>创建时间:</label>
-                                <span class="detail-value">${new Date(request.created_at).toLocaleString('zh-CN')}</span>
+                                <label>开始时间:</label>
+                                <span class="detail-value">${new Date(request.start_time).toLocaleString('zh-CN')}</span>
                             </div>
                             <div class="detail-item">
                                 <label>更新时间:</label>
@@ -465,51 +494,104 @@ window.RequestsManager = class {
         document.addEventListener('keydown', handleEscape);
     }
     
-    // 导出请求数据
-    async exportRequests(format) {
+    // 加载统计概览数据
+    async loadRequestsStats() {
         try {
-            // 构建查询参数
-            const params = new URLSearchParams({
-                format: format
-            });
+            // 根据当前筛选条件构建查询参数
+            const params = new URLSearchParams();
             
-            // 添加筛选参数
+            // 根据筛选条件决定时间段
+            if (this.state.filters.start_date && this.state.filters.end_date) {
+                // 有自定义时间范围时，使用自定义时间
+                params.append('start_date', this.state.filters.start_date);
+                params.append('end_date', this.state.filters.end_date);
+            } else {
+                // 没有时间筛选时，获取所有历史数据
+                params.append('period', '90d');
+            }
+            
+            // 添加其他筛选参数（排除时间参数）
             Object.entries(this.state.filters).forEach(([key, value]) => {
-                if (value && value.trim() !== '') {
+                if (value && value.trim() !== '' && key !== 'start_date' && key !== 'end_date') {
                     params.append(key, value.trim());
                 }
             });
             
-            const response = await fetch(`/api/v1/usage/export?${params}`);
+            const response = await fetch(`/api/v1/usage/stats?${params}`);
             if (!response.ok) {
-                throw new Error('导出数据失败');
+                throw new Error('获取统计数据失败');
             }
             
-            // 获取文件名
-            const contentDisposition = response.headers.get('Content-Disposition');
-            let filename = `requests_export.${format}`;
-            if (contentDisposition) {
-                const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-                if (filenameMatch) {
-                    filename = filenameMatch[1];
+            const result = await response.json();
+            if (result.success && result.data) {
+                this.updateStatsDisplay(result.data);
+            }
+        } catch (error) {
+            console.error('加载统计数据失败:', error);
+            // 不显示错误提示，避免干扰用户
+        }
+    }
+    
+    // 更新统计显示面板
+    updateStatsDisplay(stats) {
+        // 总请求数
+        const totalRequestsElement = document.getElementById('total-requests-count');
+        if (totalRequestsElement) {
+            totalRequestsElement.textContent = stats.total_requests || 0;
+        }
+        
+        // 成功率
+        const successRateElement = document.getElementById('success-rate');
+        if (successRateElement) {
+            const rate = stats.success_rate || 0;
+            successRateElement.textContent = `${rate.toFixed(1)}%`;
+        }
+        
+        // 平均响应时间
+        const avgResponseTimeElement = document.getElementById('avg-response-time');
+        if (avgResponseTimeElement) {
+            const avgTime = stats.avg_duration_ms || 0;
+            if (avgTime >= 1000) {
+                avgResponseTimeElement.textContent = `${(avgTime / 1000).toFixed(1)}s`;
+            } else {
+                avgResponseTimeElement.textContent = `${Math.round(avgTime)}ms`;
+            }
+        }
+        
+        // 总成本 
+        const totalCostElement = document.getElementById('total-cost');
+        if (totalCostElement) {
+            const cost = stats.total_cost_usd || 0;
+            totalCostElement.textContent = Utils.formatCost(cost);
+        }
+        
+        // 总Token数 (以百万为单位显示)
+        const totalTokensElement = document.getElementById('total-tokens');
+        if (totalTokensElement) {
+            const tokens = stats.total_tokens || 0;
+            totalTokensElement.textContent = Utils.formatTokens(tokens);
+        }
+        
+        // 挂起请求数 (使用统计API返回的数据)
+        const suspendedCountElement = document.getElementById('suspended-count');
+        if (suspendedCountElement) {
+            suspendedCountElement.textContent = stats.suspended_requests || 0;
+        }
+    }
+    
+    // 加载挂起请求数
+    async loadSuspendedCount() {
+        try {
+            const response = await fetch('/api/v1/connections');
+            if (response.ok) {
+                const data = await response.json();
+                const suspendedCountElement = document.getElementById('suspended-count');
+                if (suspendedCountElement && data.suspended) {
+                    suspendedCountElement.textContent = data.suspended.suspended_requests || 0;
                 }
             }
-            
-            // 下载文件
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-            
-            Utils.showSuccess(`数据已导出为 ${format.toUpperCase()} 格式`);
         } catch (error) {
-            console.error('导出数据失败:', error);
-            Utils.showError('导出数据失败: ' + error.message);
+            console.error('加载挂起请求数失败:', error);
         }
     }
     
@@ -527,7 +609,7 @@ window.RequestsManager = class {
     resetState() {
         this.state = {
             currentPage: 1,
-            pageSize: 20,
+            pageSize: 50,
             totalRequests: 0,
             filters: {
                 start_date: '',
@@ -537,9 +619,75 @@ window.RequestsManager = class {
                 endpoint: '',
                 group: ''
             },
-            sortBy: 'created_at',
+            sortBy: 'start_time',
             sortOrder: 'desc'
         };
+    }
+};
+
+// 分页导航全局函数
+window.goToFirstPage = function() {
+    if (window.webInterface && window.webInterface.requestsManager) {
+        window.webInterface.requestsManager.state.currentPage = 1;
+        window.webInterface.requestsManager.loadRequests();
+    }
+};
+
+window.goToPrevPage = function() {
+    if (window.webInterface && window.webInterface.requestsManager) {
+        const currentPage = window.webInterface.requestsManager.state.currentPage;
+        if (currentPage > 1) {
+            window.webInterface.requestsManager.state.currentPage = currentPage - 1;
+            window.webInterface.requestsManager.loadRequests();
+        }
+    }
+};
+
+window.goToNextPage = function() {
+    if (window.webInterface && window.webInterface.requestsManager) {
+        const manager = window.webInterface.requestsManager;
+        const totalPages = Math.ceil(manager.state.totalRequests / manager.state.pageSize);
+        if (manager.state.currentPage < totalPages) {
+            manager.state.currentPage = manager.state.currentPage + 1;
+            manager.loadRequests();
+        }
+    }
+};
+
+window.goToLastPage = function() {
+    if (window.webInterface && window.webInterface.requestsManager) {
+        const manager = window.webInterface.requestsManager;
+        const totalPages = Math.ceil(manager.state.totalRequests / manager.state.pageSize);
+        if (totalPages > 0) {
+            manager.state.currentPage = totalPages;
+            manager.loadRequests();
+        }
+    }
+};
+
+// 全局函数，供HTML模板调用
+window.changePageSize = function() {
+    const pageSizeSelect = document.getElementById('page-size-select');
+    const newPageSize = parseInt(pageSizeSelect.value);
+    
+    if (window.webInterface && window.webInterface.requestsManager) {
+        window.webInterface.requestsManager.state.pageSize = newPageSize;
+        window.webInterface.requestsManager.state.currentPage = 1; // 重置到第一页
+        window.webInterface.requestsManager.loadRequests();
+    }
+};
+
+window.goToPage = function() {
+    const currentPageInput = document.getElementById('current-page-input');
+    const newPage = parseInt(currentPageInput.value);
+    
+    if (window.webInterface && window.webInterface.requestsManager && newPage > 0) {
+        const totalPages = Math.ceil(window.webInterface.requestsManager.state.totalRequests / window.webInterface.requestsManager.state.pageSize);
+        const validPage = Math.max(1, Math.min(newPage, totalPages));
+        
+        window.webInterface.requestsManager.state.currentPage = validPage;
+        currentPageInput.value = validPage; // 确保输入框显示有效页码
+        window.webInterface.requestsManager.loadRequests();
     }
 };
 
