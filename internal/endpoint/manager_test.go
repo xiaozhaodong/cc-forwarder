@@ -17,10 +17,10 @@ func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 	}{
 		{"Success 200", 200, true},
 		{"Success 201", 201, true},
-		{"Bad Request 400", 400, true},  // API reachable but invalid request
-		{"Unauthorized 401", 401, true}, // API reachable but needs auth
-		{"Forbidden 403", 403, true},    // API reachable but forbidden
-		{"Not Found 404", 404, true},    // API reachable but endpoint not found
+		{"Bad Request 400", 400, false},  // API reachable but invalid request - should be unhealthy
+		{"Unauthorized 401", 401, false}, // API reachable but needs auth - should be unhealthy
+		{"Forbidden 403", 403, false},    // API reachable but forbidden - should be unhealthy
+		{"Not Found 404", 404, false},    // API reachable but endpoint not found - should be unhealthy
 		{"Server Error 500", 500, false}, // API has issues
 		{"Bad Gateway 502", 502, false},  // API unreachable
 	}
