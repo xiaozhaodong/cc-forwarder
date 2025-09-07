@@ -154,8 +154,8 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 		}
 	}
 
-	// 打开数据库 - 使用更安全的配置防止数据丢失
-	db, err := sql.Open("sqlite3", config.DatabasePath+"?_journal_mode=WAL&_synchronous=FULL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
+	// 打开数据库 - 本地使用优化配置 (NORMAL模式平衡性能和安全性)
+	db, err := sql.Open("sqlite3", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -433,6 +433,19 @@ func (ut *UsageTracker) GetPricing(modelName string) ModelPricing {
 		return pricing
 	}
 	return ut.config.DefaultPricing
+}
+
+// GetConfiguredModels 获取配置中的所有模型列表
+func (ut *UsageTracker) GetConfiguredModels() []string {
+	ut.mu.RLock()
+	defer ut.mu.RUnlock()
+	
+	models := make([]string, 0, len(ut.pricing))
+	for modelName := range ut.pricing {
+		models = append(models, modelName)
+	}
+	
+	return models
 }
 
 // GetUsageSummary 获取使用摘要（便利方法）

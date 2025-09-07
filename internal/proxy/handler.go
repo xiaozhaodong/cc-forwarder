@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"compress/lzw"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -347,6 +348,27 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 		return
 	}
 
+	// Fallback: No token information found, mark request as completed with default model
+	slog.InfoContext(ctx, fmt.Sprintf("🎯 [无Token响应] 端点: %s, 连接: %s - 响应不包含token信息，标记为完成", endpointName, connID))
+	
+	// Update request status to completed and set model name to "default"
+	if h.usageTracker != nil && connID != "" {
+		// Create empty token usage for consistent completion tracking
+		emptyTokens := &tracking.TokenUsage{
+			InputTokens:         0,
+			OutputTokens:        0,
+			CacheCreationTokens: 0,
+			CacheReadTokens:     0,
+		}
+		
+		// Record completion with default model name and zero duration (since we don't track start time here)
+		h.usageTracker.RecordRequestComplete(connID, "default", emptyTokens, 0)
+		
+		// Update status to completed
+		h.usageTracker.RecordRequestUpdate(connID, "", "", "completed", 0, 0)
+		
+		slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 已标记为完成状态，模型: default", connID))
+	}
 }
 
 // parseSSETokens parses SSE format response for token usage
@@ -366,7 +388,7 @@ func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName
 		}
 	}
 	
-	slog.DebugContext(ctx, "🚫 [SSE解析] 未找到token usage信息")
+	slog.InfoContext(ctx, "🚫 [SSE解析] 未找到token usage信息")
 }
 
 // parseJSONTokens parses single JSON response for token usage
@@ -375,6 +397,15 @@ func (h *Handler) parseJSONTokens(ctx context.Context, responseBody, endpointNam
 	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	
 	slog.InfoContext(ctx, "🔍 [JSON解析] 尝试解析JSON响应")
+	
+	// 🆕 First extract model information directly from JSON
+	var jsonResp map[string]interface{}
+	if err := json.Unmarshal([]byte(responseBody), &jsonResp); err == nil {
+		if model, ok := jsonResp["model"].(string); ok && model != "" {
+			tokenParser.SetModelName(model)
+			slog.InfoContext(ctx, "📋 [JSON解析] 提取到模型信息", "model", model)
+		}
+	}
 	
 	// Wrap JSON as SSE message_delta event
 	tokenParser.ParseSSELine("event: message_delta")

@@ -733,6 +733,17 @@ const indexHTML = `<!DOCTYPE html>
             color: white;
         }
         
+        .status-badge.status-cancelled {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+        }
+        
+        .status-badge.status-suspended {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            animation: pulse 2s infinite;
+        }
+        
         .status-badge.status-timeout {
             background: linear-gradient(135deg, #f97316, #ea580c);
             color: white;
@@ -1198,9 +1209,7 @@ const indexHTML = `<!DOCTYPE html>
                                 <label>模型:</label>
                                 <select id="model-filter">
                                     <option value="all">全部模型</option>
-                                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                                    <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
-                                    <option value="claude-3-5-sonnet-20240620">Claude 3.5 Sonnet</option>
+                                    <!-- 模型选项将通过JavaScript动态加载 -->
                                 </select>
                             </div>
                             

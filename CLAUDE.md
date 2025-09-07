@@ -340,6 +340,60 @@ req-abc123  22:15:33  ✅ 完成    claude-sonnet-4  25  97  0  0  $0.45
 
 **Benefits**: Eliminates user confusion about "successful" requests with zero tokens, provides clear processing transparency, improves debugging capabilities, and enhances overall user experience in the Web interface.
 
+### Non-Token Response Handling (2025-09-07 Update)
+
+**Enhanced Compatibility**: The system now provides intelligent fallback mechanisms for responses that don't contain token usage information, ensuring complete request lifecycle tracking for all API calls.
+
+#### **Problem Solved**
+Previously, requests that returned successful HTTP responses (200 OK) but contained no token information would remain indefinitely in `processing` status, causing user confusion in the Web interface.
+
+#### **Common Non-Token Response Types**
+- **Health Check Requests**: `/v1/models` endpoint returning model lists
+- **Third-party APIs**: Non-Claude compatible endpoints without usage tracking
+- **Configuration Queries**: System configuration or status endpoints  
+- **Error Responses**: Non-standard error formats without usage data
+
+#### **Fallback Implementation** 
+**File**: `internal/proxy/handler.go` (analyzeResponseForTokens function)
+
+```go
+// Fallback: No token information found, mark request as completed with default model
+if h.usageTracker != nil && connID != "" {
+    emptyTokens := &tracking.TokenUsage{
+        InputTokens: 0, OutputTokens: 0, 
+        CacheCreationTokens: 0, CacheReadTokens: 0,
+    }
+    h.usageTracker.RecordRequestComplete(connID, "default", emptyTokens, 0)
+    h.usageTracker.RecordRequestUpdate(connID, "", "", "completed", 0, 0)
+}
+```
+
+#### **Enhanced Logging**
+- **Response Content**: Info-level logging shows complete response content for analysis
+  ```
+  📄 [响应内容] 端点: packycode, 状态码: 200, 长度: 156字节, 响应内容: {"data": [...]}
+  ```
+- **Non-Token Detection**: Clear identification of responses without token information
+  ```  
+  🎯 [无Token响应] 端点: packycode, 连接: req-abc123 - 响应不包含token信息，标记为完成
+  ✅ [无Token完成] 连接: req-abc123 已标记为完成状态，模型: default
+  ```
+
+#### **Database Storage**
+Non-token requests are properly stored with:
+- **Status**: `completed` (no longer stuck in `processing`)
+- **Model Name**: `default` for identification and filtering
+- **Token Counts**: All set to 0 (accurate representation)
+- **Total Cost**: $0.00 (no AI processing cost incurred)
+
+#### **Web Interface Benefits**
+- **Clear Status**: Shows "完成" instead of indefinite "解析中" 
+- **Proper Filtering**: Non-token requests can be filtered by model "default"
+- **Complete Tracking**: Full request lifecycle visibility for all API calls
+- **Zero Confusion**: Users understand these requests completed successfully without token usage
+
+**Technical Benefits**: Ensures robust request tracking for all response types, improves system reliability, provides complete audit trails, and maintains consistent user experience across different API endpoint types.
+
 ## Request Suspension and Recovery System
 
 **Request Suspension Capability**: The system supports intelligent request suspension when all endpoint groups fail, preventing request loss during temporary outages.

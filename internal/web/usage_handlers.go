@@ -61,24 +61,42 @@ func (ws *WebServer) handleUsageModelStats(c *gin.Context) {
 		return
 	}
 	
-	// Return top models by usage
+	// 获取配置中的所有模型列表
+	models := make([]map[string]interface{}, 0)
+	
+	// 从UsageTracker获取真正配置的模型列表
+	configuredModels := ws.usageTracker.GetConfiguredModels()
+	
+	for _, modelName := range configuredModels {
+		models = append(models, map[string]interface{}{
+			"model_name": modelName,
+			"display_name": getModelDisplayName(modelName),
+		})
+	}
+	
 	c.JSON(http.StatusOK, map[string]interface{}{
 		"success": true,
-		"data": []map[string]interface{}{
-			{
-				"model_name": "claude-sonnet-4-20250514",
-				"request_count": 150,
-				"total_cost_usd": 45.67,
-				"avg_cost_usd": 0.304,
-			},
-			{
-				"model_name": "claude-3-5-haiku-20241022",
-				"request_count": 89,
-				"total_cost_usd": 12.34,
-				"avg_cost_usd": 0.139,
-			},
-		},
+		"data":    models,
 	})
+}
+
+// getModelDisplayName 返回模型的显示名称
+func getModelDisplayName(modelName string) string {
+	displayNames := map[string]string{
+		"claude-sonnet-4-20250514":     "Claude Sonnet 4",
+		"claude-3-5-haiku-20241022":    "Claude 3.5 Haiku",
+		"claude-3-5-sonnet-20241022":   "Claude 3.5 Sonnet",
+		"claude-opus-4":                "Claude Opus 4",
+		"claude-opus-4.1":              "Claude Opus 4.1",
+		"claude-3-haiku-20240307":      "Claude 3 Haiku",
+		"claude-3-sonnet-20240229":     "Claude 3 Sonnet", 
+		"claude-3-opus-20240229":       "Claude 3 Opus",
+	}
+	
+	if displayName, exists := displayNames[modelName]; exists {
+		return displayName
+	}
+	return modelName
 }
 
 // handleUsageEndpointStats handles GET /api/v1/usage/endpoints

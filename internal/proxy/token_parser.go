@@ -218,3 +218,8 @@ func (tp *TokenParser) Reset() {
 	tp.currentEvent = ""
 	tp.collectingData = false
 }
+
+// SetModelName allows setting the model name directly (useful for JSON response parsing)
+func (tp *TokenParser) SetModelName(modelName string) {
+	tp.modelName = modelName
+}

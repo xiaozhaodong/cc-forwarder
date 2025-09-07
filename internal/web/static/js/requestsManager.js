@@ -78,6 +78,45 @@ window.RequestsManager = class {
         }
     }
     
+    // 加载模型选项（动态从配置读取）
+    async loadModelOptions() {
+        try {
+            const response = await fetch('/api/v1/usage/models');
+            if (!response.ok) {
+                console.warn('Failed to load models from config, using default options');
+                return;
+            }
+            
+            const result = await response.json();
+            if (result.success && result.data) {
+                const modelSelect = document.getElementById('model-filter');
+                if (modelSelect) {
+                    // 清空现有选项（保留"全部模型"选项）
+                    const allOption = modelSelect.querySelector('option[value=""]');
+                    modelSelect.innerHTML = '';
+                    if (allOption) {
+                        modelSelect.appendChild(allOption);
+                    } else {
+                        modelSelect.innerHTML = '<option value="">全部模型</option>';
+                    }
+                    
+                    // 添加从配置读取的模型
+                    result.data.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.model_name;
+                        option.textContent = model.display_name || model.model_name;
+                        if (this.state.filters.model === model.model_name) {
+                            option.selected = true;
+                        }
+                        modelSelect.appendChild(option);
+                    });
+                }
+            }
+        } catch (error) {
+            console.warn('Error loading model options:', error);
+        }
+    }
+    
     // 生成请求表格行内容（只生成tbody内的tr元素）
     generateRequestsRows(requests) {
         if (!requests || requests.length === 0) {
@@ -146,7 +185,9 @@ window.RequestsManager = class {
                                     <option value="completed" ${this.state.filters.status === 'completed' ? 'selected' : ''}>完成</option>
                                     <option value="processing" ${this.state.filters.status === 'processing' ? 'selected' : ''}>解析中</option>
                                     <option value="forwarding" ${this.state.filters.status === 'forwarding' ? 'selected' : ''}>转发中</option>
+                                    <option value="suspended" ${this.state.filters.status === 'suspended' ? 'selected' : ''}>挂起中</option>
                                     <option value="error" ${this.state.filters.status === 'error' ? 'selected' : ''}>失败</option>
+                                    <option value="cancelled" ${this.state.filters.status === 'cancelled' ? 'selected' : ''}>取消</option>
                                     <option value="timeout" ${this.state.filters.status === 'timeout' ? 'selected' : ''}>超时</option>
                                 </select>
                             </div>
@@ -154,7 +195,10 @@ window.RequestsManager = class {
                         <div class="filter-row">
                             <div class="filter-group">
                                 <label for="model-filter">模型:</label>
-                                <input type="text" id="model-filter" name="model" value="${this.state.filters.model}" placeholder="输入模型名称">
+                                <select id="model-filter" name="model">
+                                    <option value="">全部模型</option>
+                                    <!-- 模型选项将动态加载 -->
+                                </select>
                             </div>
                             <div class="filter-group">
                                 <label for="endpoint-filter">端点:</label>
@@ -265,6 +309,9 @@ window.RequestsManager = class {
     
     // 绑定请求相关事件
     bindRequestsEvents() {
+        // 加载模型选项
+        this.loadModelOptions();
+        
         // 筛选表单事件 - 先移除之前的事件监听器，避免重复绑定
         const filterForm = document.getElementById('requests-filter-form');
         if (filterForm) {

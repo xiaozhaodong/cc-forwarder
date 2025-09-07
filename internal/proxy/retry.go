@@ -103,9 +103,17 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 				// 挂起请求等待组切换
 				if rh.waitForGroupSwitch(ctx, connID) {
 					slog.InfoContext(ctx, fmt.Sprintf("🚀 [挂起恢复] 连接 %s 组切换完成，重新进入重试循环", connID))
+					// 更新请求状态为转发中（从挂起状态恢复）
+					if rh.usageTracker != nil {
+						rh.usageTracker.RecordRequestUpdate(connID, "", "", "forwarding", totalEndpointsAttempted-1, 0)
+					}
 					continue // 重新进入外层循环，获取新的端点列表
 				} else {
 					slog.WarnContext(ctx, fmt.Sprintf("⚠️ [挂起失败] 连接 %s 挂起等待超时或被取消，继续原有错误处理", connID))
+					// 更新请求状态为超时（挂起失败）
+					if rh.usageTracker != nil {
+						rh.usageTracker.RecordRequestUpdate(connID, "", "", "timeout", totalEndpointsAttempted-1, 0)
+					}
 					// 继续执行原有的错误处理逻辑
 				}
 			}
@@ -161,6 +169,11 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					if lastResp != nil {
 						lastResp.Body.Close()
 					}
+					// 记录请求取消状态
+					if rh.usageTracker != nil && connID != "" {
+						cancelStatus := rh.determineErrorStatus(ctx.Err(), ctx)
+						rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, cancelStatus, attempt-1, 0)
+					}
 					return nil, ctx.Err()
 				default:
 				}
@@ -203,12 +216,15 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					// Network error or other failure
 					lastErr = err
 					if err != nil {
+						// 确定错误状态类型
+						errorStatus := rh.determineErrorStatus(err, ctx)
+						
 						slog.WarnContext(ctxWithEndpoint, fmt.Sprintf("❌ [网络错误] [%s] 端点: %s (组: %s, 尝试 %d/%d) - 错误: %s", 
 							connID, ep.Config.Name, groupName, attempt, rh.config.Retry.MaxAttempts, err.Error()))
 						
-						// Record error in usage tracking
+						// Record error with proper status in usage tracking
 						if rh.usageTracker != nil && connID != "" {
-							rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, "error", attempt-1, 0)
+							rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, errorStatus, attempt-1, 0)
 						}
 					}
 				}
@@ -234,6 +250,11 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 				case <-ctx.Done():
 					if lastResp != nil {
 						lastResp.Body.Close()
+					}
+					// 记录请求取消状态
+					if rh.usageTracker != nil && connID != "" {
+						cancelStatus := rh.determineErrorStatus(ctx.Err(), ctx)
+						rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, cancelStatus, attempt-1, 0)
 					}
 					return nil, ctx.Err()
 				case <-time.After(delay):
@@ -479,6 +500,37 @@ func (rh *RetryHandler) IsRetryableError(err error) bool {
 	return true
 }
 
+// determineErrorStatus 根据错误类型和上下文确定状态
+func (rh *RetryHandler) determineErrorStatus(err error, ctx context.Context) string {
+	// 优先检查context状态
+	if ctx.Err() == context.Canceled {
+		return "cancelled"  // 用户取消请求
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return "timeout"    // 请求超时
+	}
+	
+	// 检查错误本身
+	if err != nil {
+		if err == context.Canceled {
+			return "cancelled"
+		}
+		if err == context.DeadlineExceeded {
+			return "timeout"
+		}
+		// 检查错误消息中的取消标识
+		errorStr := strings.ToLower(err.Error())
+		if strings.Contains(errorStr, "context canceled") {
+			return "cancelled"
+		}
+		if strings.Contains(errorStr, "context deadline exceeded") {
+			return "timeout"
+		}
+	}
+	
+	return "error"  // 其他错误
+}
+
 // UpdateConfig updates the retry handler configuration
 func (rh *RetryHandler) UpdateConfig(cfg *config.Config) {
 	rh.config = cfg
@@ -577,6 +629,11 @@ func (rh *RetryHandler) waitForGroupSwitch(ctx context.Context, connID string) b
 	}()
 	
 	slog.InfoContext(ctx, fmt.Sprintf("⏸️ [请求挂起] 连接 %s 请求已挂起，等待组切换 (当前挂起数: %d)", connID, currentCount))
+	
+	// 更新请求状态为挂起状态
+	if rh.usageTracker != nil {
+		rh.usageTracker.RecordRequestUpdate(connID, "", "", "suspended", 0, 0)
+	}
 	
 	// 订阅组切换通知
 	groupChangeNotify := rh.endpointManager.GetGroupManager().SubscribeToGroupChanges()

@@ -77,6 +77,72 @@ web:
   host: "0.0.0.0"          # Web界面监听所有接口，默认: localhost
   port: 8088                 # Web界面端口，默认: 8088
 
+# 使用跟踪配置
+usage_tracking:
+  enabled: false                         # 是否启用使用跟踪，默认: false
+  database_path: "data/usage.db"         # SQLite数据库文件路径，默认: data/usage.db
+  
+  # 异步写入配置 - 本地使用优化
+  buffer_size: 300                      # 事件缓冲区大小，默认: 1000 (本地使用减小)
+  batch_size: 15                        # 批量写入大小，默认: 100 (本地使用减小，快速持久化)
+  flush_interval: "8s"                  # 强制刷新间隔，默认: 30s (本地使用加快刷新)
+  max_retry: 3                           # 写入失败最大重试次数，默认: 3
+  
+  # 数据保留策略
+  retention_days: 0                     # 数据保留天数 (0=永久保留)，默认: 90
+  cleanup_interval: "24h"                # 清理任务执行间隔，默认: 24h
+  
+  # 模型定价配置 (USD per 1M tokens) - 2025年最新官方定价
+  model_pricing:
+    "claude-sonnet-4-20250514":
+      input: 3.00
+      output: 15.00
+      cache_creation: 3.75      # 1.25x input (5分钟缓存)
+      cache_read: 0.30          # 0.1x input (缓存读取)
+    "claude-3-5-haiku-20241022":
+      input: 0.80
+      output: 4.00
+      cache_creation: 1.00      # 1.25x input
+      cache_read: 0.08          # 0.1x input
+    "claude-3-5-sonnet-20241022":  
+      input: 3.00
+      output: 15.00
+      cache_creation: 3.75      # 1.25x input
+      cache_read: 0.30          # 0.1x input
+    "claude-opus-4":
+      input: 15.00
+      output: 75.00
+      cache_creation: 18.75     # 1.25x input
+      cache_read: 1.50          # 0.1x input
+    "claude-opus-4.1":
+      input: 15.00
+      output: 75.00
+      cache_creation: 18.75     # 1.25x input
+      cache_read: 1.50          # 0.1x input
+    # 兼容旧版本模型
+    "claude-3-haiku-20240307":
+      input: 0.25
+      output: 1.25
+      cache_creation: 0.31      # 1.25x input
+      cache_read: 0.025         # 0.1x input
+    "claude-3-sonnet-20240229":  
+      input: 3.00
+      output: 15.00
+      cache_creation: 3.75      # 1.25x input
+      cache_read: 0.30          # 0.1x input
+    "claude-3-opus-20240229":
+      input: 15.00
+      output: 75.00
+      cache_creation: 18.75     # 1.25x input
+      cache_read: 1.50          # 0.1x input
+    
+  # 默认定价 (当模型不在配置中时使用)
+  default_pricing:
+    input: 3.00
+    output: 15.00
+    cache_creation: 3.75      # 1.25x input
+    cache_read: 0.30          # 0.1x input
+
 # 代理配置 (可选)
 proxy:
   enabled: false              # 是否启用代理
@@ -87,7 +153,7 @@ proxy:
   # url: "https://proxy.example.com:8080"
   # url: "socks5://proxy.example.com:1080"
   
-  # 方式二: 分别指定主机和端口
+  # 方式二: 分别指定主机和端点
   host: "proxy.example.com"   # 代理主机
   port: 8080                  # 代理端口
   
