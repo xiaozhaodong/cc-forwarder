@@ -9,6 +9,10 @@ on:
 env:
   GO_VERSION: '1.23'
 
+# 设置权限以允许创建Release
+permissions:
+  contents: write
+
 jobs:
   # Temporarily disable tests for v1.0.0 release - core functionality is working
   # test:
