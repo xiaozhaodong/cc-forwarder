@@ -203,11 +203,18 @@ func (h *Handler) handleRegularRequest(ctx context.Context, w http.ResponseWrite
 	w.WriteHeader(finalResp.StatusCode)
 
 	// Read and decompress response body if needed
+	slog.DebugContext(ctx, fmt.Sprintf("🔄 [开始读取响应] [%s] 端点: %s, Content-Encoding: %s", 
+		connID, selectedEndpointName, finalResp.Header.Get("Content-Encoding")))
+	
 	bodyBytes, err := h.readAndDecompressResponse(ctx, finalResp, selectedEndpointName)
 	if err != nil {
+		slog.ErrorContext(ctx, fmt.Sprintf("❌ [响应读取失败] [%s] 端点: %s, 错误: %v", connID, selectedEndpointName, err))
 		http.Error(w, "Failed to read response: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	slog.DebugContext(ctx, fmt.Sprintf("✅ [响应读取成功] [%s] 端点: %s, 长度: %d字节", 
+		connID, selectedEndpointName, len(bodyBytes)))
 
 	bodyContent := string(bodyBytes)
 	slog.DebugContext(ctx, fmt.Sprintf("🐛 [调试响应头] 端点: %s, 响应头: %v", selectedEndpointName, finalResp.Header))
@@ -217,7 +224,9 @@ func (h *Handler) handleRegularRequest(ctx context.Context, w http.ResponseWrite
 		selectedEndpointName, finalResp.StatusCode, len(bodyContent), bodyContent))
 	
 	// Analyze the complete response for token usage
+	slog.DebugContext(ctx, fmt.Sprintf("🔍 [开始Token分析] [%s] 端点: %s", connID, selectedEndpointName))
 	h.analyzeResponseForTokens(ctx, bodyContent, selectedEndpointName, r)
+	slog.DebugContext(ctx, fmt.Sprintf("✅ [Token分析完成] [%s] 端点: %s", connID, selectedEndpointName))
 	
 	// Write the body to client
 	_, writeErr := w.Write(bodyBytes)
@@ -336,7 +345,17 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 		connID = connIDValue
 	}
 	
+	// Add entry log for debugging
+	slog.DebugContext(ctx, fmt.Sprintf("🎯 [Token分析入口] [%s] 端点: %s, 响应长度: %d字节", 
+		connID, endpointName, len(responseBody)))
+	
 	// Method 1: Try to find SSE format in the response (for streaming responses that were buffered)
+	// Check for error events first before checking for token events
+	if strings.Contains(responseBody, "event:error") || strings.Contains(responseBody, "event: error") {
+		h.parseSSETokens(ctx, responseBody, endpointName, connID)
+		return
+	}
+	
 	// Check for both message_start and message_delta events as token info can be in either
 	if strings.Contains(responseBody, "event:message_start") || 
 	   strings.Contains(responseBody, "event: message_start") ||
@@ -352,10 +371,10 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 		return
 	}
 
-	// Fallback: No token information found, mark request as completed with default model
+	// Fallback: No token information found, mark request as completed with non_token_response model
 	slog.InfoContext(ctx, fmt.Sprintf("🎯 [无Token响应] 端点: %s, 连接: %s - 响应不包含token信息，标记为完成", endpointName, connID))
 	
-	// Update request status to completed and set model name to "default"
+	// Update request status to completed and set model name to "non_token_response"
 	if h.usageTracker != nil && connID != "" {
 		// Create empty token usage for consistent completion tracking
 		emptyTokens := &tracking.TokenUsage{
@@ -365,22 +384,30 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 			CacheReadTokens:     0,
 		}
 		
-		// Record completion with default model name and zero duration (since we don't track start time here)
-		h.usageTracker.RecordRequestComplete(connID, "default", emptyTokens, 0)
+		// Record completion with non_token_response model name and zero duration (since we don't track start time here)
+		h.usageTracker.RecordRequestComplete(connID, "non_token_response", emptyTokens, 0)
 		
 		// Update status to completed
 		h.usageTracker.RecordRequestUpdate(connID, "", "", "completed", 0, 0)
 		
-		slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 已标记为完成状态，模型: default", connID))
+		slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 已标记为完成状态，模型: non_token_response", connID))
 	}
 }
 
-// parseSSETokens parses SSE format response for token usage
+// parseSSETokens parses SSE format response for token usage or error events
 func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName, connID string) {
 	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	lines := strings.Split(responseBody, "\n")
 	
 	foundTokenUsage := false
+	hasErrorEvent := false
+	
+	// Check if response contains error events first
+	if strings.Contains(responseBody, "event:error") || strings.Contains(responseBody, "event: error") {
+		hasErrorEvent = true
+		slog.InfoContext(ctx, fmt.Sprintf("❌ [SSE错误检测] 端点: %s, 连接: %s - 检测到error事件", endpointName, connID))
+	}
+	
 	for _, line := range lines {
 		if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
 			foundTokenUsage = true
@@ -397,6 +424,12 @@ func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName
 			// So we can return successfully here
 			return
 		}
+	}
+	
+	// If we found an error event, the parseErrorEvent method would have already handled it
+	if hasErrorEvent {
+		slog.InfoContext(ctx, fmt.Sprintf("❌ [SSE错误处理] 端点: %s, 连接: %s - 错误事件已处理", endpointName, connID))
+		return
 	}
 	
 	if !foundTokenUsage {

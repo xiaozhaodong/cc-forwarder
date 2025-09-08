@@ -42,6 +42,24 @@ type MessageDelta struct {
 	Usage     *UsageData  `json:"usage,omitempty"`
 }
 
+// SSEErrorData represents the structure of error events in SSE streams
+type SSEErrorData struct {
+	Type  string `json:"type"`
+	Error struct {
+		Type    string `json:"type"` 
+		Message string `json:"message"`
+		RequestID string `json:"request_id,omitempty"`
+	} `json:"error"`
+}
+
+// Status constants for request processing states
+const (
+	StatusCompleted    = "completed"     // 真正成功（有Token或正常响应）
+	StatusErrorAPI     = "error_api"     // API层错误（overloaded等）
+	StatusErrorNetwork = "error_network" // 网络层错误（超时等）
+	StatusProcessing   = "processing"    // 处理中
+)
+
 // TokenParser handles parsing of SSE events for token usage extraction
 type TokenParser struct {
 	// Buffer to collect multi-line JSON data
@@ -96,8 +114,8 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 			eventType = strings.TrimPrefix(line, "event:")
 		}
 		tp.currentEvent = eventType
-		// Collect data for both message_start (for model info) and message_delta (for usage)
-		tp.collectingData = (eventType == "message_delta" || eventType == "message_start")
+		// Collect data for message_start (model info), message_delta (usage), and error events
+		tp.collectingData = (eventType == "message_delta" || eventType == "message_start" || eventType == "error")
 		tp.eventBuffer.Reset()
 		return nil
 	}
@@ -122,6 +140,10 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		} else if tp.currentEvent == "message_delta" {
 			// Parse message_delta for usage info
 			return tp.parseMessageDelta()
+		} else if tp.currentEvent == "error" {
+			// Parse error event and record as API error
+			tp.parseErrorEvent()
+			return nil // Error events don't return TokenUsage
 		}
 	}
 	
@@ -275,6 +297,71 @@ func (tp *TokenParser) Reset() {
 	tp.eventBuffer.Reset()
 	tp.currentEvent = ""
 	tp.collectingData = false
+}
+
+// parseErrorEvent parses SSE error events and records them as API errors
+func (tp *TokenParser) parseErrorEvent() {
+	defer func() {
+		tp.eventBuffer.Reset()
+		tp.collectingData = false
+		tp.currentEvent = ""
+	}()
+	
+	jsonData := tp.eventBuffer.String()
+	if jsonData == "" {
+		return
+	}
+	
+	// Parse the error JSON data
+	var errorData SSEErrorData
+	if err := json.Unmarshal([]byte(jsonData), &errorData); err != nil {
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("⚠️ [SSE错误解析] [%s] 无法解析错误数据: %s", tp.requestID, jsonData))
+		}
+		return
+	}
+	
+	// Extract error type and message
+	errorType := errorData.Error.Type
+	errorMessage := errorData.Error.Message
+	if errorType == "" {
+		errorType = "unknown_error"
+	}
+	if errorMessage == "" {
+		errorMessage = "Unknown error"
+	}
+	
+	// Log the API error
+	if tp.requestID != "" {
+		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s", 
+			tp.requestID, errorType, errorMessage))
+	} else {
+		slog.Info(fmt.Sprintf("❌ [API错误] 错误类型: %s, 错误信息: %s", 
+			errorType, errorMessage))
+	}
+	
+	// Record as API error in usage tracking
+	if tp.usageTracker != nil && tp.requestID != "" {
+		// Calculate duration since parser creation
+		duration := time.Since(tp.startTime)
+		
+		// Create error model name with error type
+		errorModelName := fmt.Sprintf("error:%s", errorType)
+		
+		// Record with empty token usage but error status
+		emptyTokens := &tracking.TokenUsage{
+			InputTokens:         0,
+			OutputTokens:        0,
+			CacheCreationTokens: 0,
+			CacheReadTokens:     0,
+		}
+		
+		// Record the completion with error model name
+		tp.usageTracker.RecordRequestComplete(tp.requestID, errorModelName, emptyTokens, duration)
+		
+		// Update request status to error_api
+		tp.usageTracker.RecordRequestUpdate(tp.requestID, "", "", StatusErrorAPI, 0, 0)
+	}
 }
 
 // SetModelName allows setting the model name directly (useful for JSON response parsing)
