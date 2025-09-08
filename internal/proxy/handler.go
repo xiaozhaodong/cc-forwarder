@@ -337,7 +337,11 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 	}
 	
 	// Method 1: Try to find SSE format in the response (for streaming responses that were buffered)
-	if strings.Contains(responseBody, "event: message_delta") {
+	// Check for both message_start and message_delta events as token info can be in either
+	if strings.Contains(responseBody, "event:message_start") || 
+	   strings.Contains(responseBody, "event: message_start") ||
+	   strings.Contains(responseBody, "event:message_delta") || 
+	   strings.Contains(responseBody, "event: message_delta") {
 		h.parseSSETokens(ctx, responseBody, endpointName, connID)
 		return
 	}
@@ -376,19 +380,28 @@ func (h *Handler) parseSSETokens(ctx context.Context, responseBody, endpointName
 	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	lines := strings.Split(responseBody, "\n")
 	
+	foundTokenUsage := false
 	for _, line := range lines {
 		if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
-			// Record token usage
+			foundTokenUsage = true
+			slog.InfoContext(ctx, fmt.Sprintf("✅ [SSE解析成功] 端点: %s, 连接: %s - 成功解析token信息", endpointName, connID))
+			
+			// Record token usage in monitoring middleware if available
 			if mm, ok := h.retryHandler.monitoringMiddleware.(interface{
 				RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 			}); ok && connID != "" {
 				mm.RecordTokenUsage(connID, endpointName, tokenUsage)
-				return
 			}
+			
+			// Token usage has already been recorded in usage tracker by TokenParser
+			// So we can return successfully here
+			return
 		}
 	}
 	
-	slog.InfoContext(ctx, "🚫 [SSE解析] 未找到token usage信息")
+	if !foundTokenUsage {
+		slog.InfoContext(ctx, fmt.Sprintf("🚫 [SSE解析] 端点: %s, 连接: %s - 未找到token usage信息", endpointName, connID))
+	}
 }
 
 // parseJSONTokens parses single JSON response for token usage

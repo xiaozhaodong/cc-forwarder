@@ -87,9 +87,14 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 	line = strings.TrimSpace(line)
 	
 	
-	// Handle event type lines
-	if strings.HasPrefix(line, "event: ") {
-		eventType := strings.TrimPrefix(line, "event: ")
+	// Handle event type lines - support both "event: " and "event:" formats
+	if strings.HasPrefix(line, "event:") {
+		var eventType string
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+		} else {
+			eventType = strings.TrimPrefix(line, "event:")
+		}
 		tp.currentEvent = eventType
 		// Collect data for both message_start (for model info) and message_delta (for usage)
 		tp.collectingData = (eventType == "message_delta" || eventType == "message_start")
@@ -97,9 +102,14 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		return nil
 	}
 	
-	// Handle data lines for message_delta events
-	if strings.HasPrefix(line, "data: ") && tp.collectingData {
-		dataContent := strings.TrimPrefix(line, "data: ")
+	// Handle data lines - support both "data: " and "data:" formats
+	if strings.HasPrefix(line, "data:") && tp.collectingData {
+		var dataContent string
+		if strings.HasPrefix(line, "data: ") {
+			dataContent = strings.TrimPrefix(line, "data: ")
+		} else {
+			dataContent = strings.TrimPrefix(line, "data:")
+		}
 		tp.eventBuffer.WriteString(dataContent)
 		return nil
 	}
@@ -107,9 +117,8 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 	// Handle empty lines that signal end of SSE event
 	if line == "" && tp.collectingData && tp.eventBuffer.Len() > 0 {
 		if tp.currentEvent == "message_start" {
-			// Parse message_start for model info, don't return TokenUsage
-			tp.parseMessageStart()
-			return nil
+			// Parse message_start for both model info and token usage
+			return tp.parseMessageStart()
 		} else if tp.currentEvent == "message_delta" {
 			// Parse message_delta for usage info
 			return tp.parseMessageDelta()
@@ -119,8 +128,8 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 	return nil
 }
 
-// parseMessageStart parses the collected message_start JSON data to extract model info
-func (tp *TokenParser) parseMessageStart() {
+// parseMessageStart parses the collected message_start JSON data to extract model info and token usage
+func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 	defer func() {
 		tp.eventBuffer.Reset()
 		tp.collectingData = false
@@ -129,19 +138,68 @@ func (tp *TokenParser) parseMessageStart() {
 	
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
-		return
+		return nil
 	}
 	
 	// Parse the JSON data
 	var messageStart MessageStart
 	if err := json.Unmarshal([]byte(jsonData), &messageStart); err != nil {
-		return
+		return nil
 	}
 	
 	// Extract model name if available
 	if messageStart.Message != nil && messageStart.Message.Model != "" {
 		tp.modelName = messageStart.Message.Model
 	}
+	
+	// Check if this message_start contains usage information (Claude API format)
+	if messageStart.Message != nil && messageStart.Message.Usage != nil {
+		// Convert to our TokenUsage format
+		tokenUsage := &monitor.TokenUsage{
+			InputTokens:            messageStart.Message.Usage.InputTokens,
+			OutputTokens:           messageStart.Message.Usage.OutputTokens,
+			CacheCreationTokens:    messageStart.Message.Usage.CacheCreationInputTokens,
+			CacheReadTokens:        messageStart.Message.Usage.CacheReadInputTokens,
+		}
+
+		modelInfo := ""
+		if tp.modelName != "" {
+			modelInfo = fmt.Sprintf(" 模型: %s,", tp.modelName)
+		}
+
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("🪙 [Token Parser] [%s] 从message_start事件中提取令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+				tp.requestID, modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
+		} else {
+			slog.Info(fmt.Sprintf("🪙 [Token Parser] 从message_start事件中提取令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+				modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
+		}
+
+		// Record request completion in usage tracking
+		if tp.usageTracker != nil && tp.requestID != "" {
+			// Calculate duration since parser creation
+			duration := time.Since(tp.startTime)
+			
+			// Convert monitor.TokenUsage to tracking.TokenUsage
+			trackingTokens := &tracking.TokenUsage{
+				InputTokens:         tokenUsage.InputTokens,
+				OutputTokens:        tokenUsage.OutputTokens,
+				CacheCreationTokens: tokenUsage.CacheCreationTokens,
+				CacheReadTokens:     tokenUsage.CacheReadTokens,
+			}
+			
+			// Record the completion with token usage and cost information
+			tp.usageTracker.RecordRequestComplete(tp.requestID, tp.modelName, trackingTokens, duration)
+			
+			// Update request status to completed
+			tp.usageTracker.RecordRequestUpdate(tp.requestID, "", "", "completed", 0, 0)
+		}
+
+		return tokenUsage
+	}
+	
+	// No usage information found in message_start
+	return nil
 }
 
 // parseMessageDelta parses the collected message_delta JSON data
