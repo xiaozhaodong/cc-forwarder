@@ -144,7 +144,7 @@ func (eh *ErrorHandler) attemptReconnection() bool {
 		}
 		
 		// 尝试重新打开数据库 - 使用更安全的配置
-		db, err := sql.Open("sqlite3", eh.tracker.config.DatabasePath+"?_journal_mode=WAL&_synchronous=FULL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
+		db, err := sql.Open("sqlite", eh.tracker.config.DatabasePath+"?_journal_mode=WAL&_synchronous=FULL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
 		if err != nil {
 			eh.logger.Error("Reconnection failed", "attempt", attempt, "error", err)
 			time.Sleep(time.Duration(attempt) * time.Second)
@@ -241,7 +241,7 @@ func (eh *ErrorHandler) CreateBackup() error {
 	defer cancel()
 	
 	// 创建临时备份
-	backupDB, err := sql.Open("sqlite3", tempBackupPath)
+	backupDB, err := sql.Open("sqlite", tempBackupPath)
 	if err != nil {
 		return fmt.Errorf("failed to create backup database: %w", err)
 	}

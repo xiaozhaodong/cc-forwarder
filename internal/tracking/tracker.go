@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
@@ -155,7 +155,7 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 	}
 
 	// 打开数据库 - 本地使用优化配置 (NORMAL模式平衡性能和安全性)
-	db, err := sql.Open("sqlite3", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
+	db, err := sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

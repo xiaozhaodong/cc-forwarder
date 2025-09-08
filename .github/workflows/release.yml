@@ -90,10 +90,13 @@ jobs:
       - name: Cache Go modules
         uses: actions/cache@v4
         with:
-          path: ~/go/pkg/mod
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+        continue-on-error: true  # 缓存失败不阻止构建
 
       - name: Download dependencies
         run: go mod download
@@ -116,31 +119,8 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0  # 使用纯Go SQLite，无需CGO
         run: |
-          # 设置 CGO 交叉编译环境
-          case "$GOOS-$GOARCH" in
-            "linux-amd64")
-              export CC=gcc
-              ;;
-            "linux-arm64")
-              sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-              export CC=aarch64-linux-gnu-gcc
-              ;;
-            "linux-arm")
-              sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabihf
-              export CC=arm-linux-gnueabihf-gcc
-              ;;
-            "windows-amd64"|"windows-arm64")
-              # Windows构建暂时禁用CGO，使用纯Go SQLite实现
-              export CGO_ENABLED=0
-              ;;
-            "darwin-amd64"|"darwin-arm64")
-              # macOS交叉编译复杂，禁用CGO
-              export CGO_ENABLED=0
-              ;;
-          esac
-          
           # 构建时嵌入版本信息
           BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S_UTC')
           COMMIT_HASH=$(git rev-parse --short HEAD)
@@ -153,13 +133,8 @@ jobs:
             BINARY_NAME="cc-forwarder.exe"
           fi
           
-          echo "Building ${{ matrix.name }} for $GOOS/$GOARCH (CGO_ENABLED=$CGO_ENABLED)"
+          echo "Building ${{ matrix.name }} for $GOOS/$GOARCH (纯Go模式，无CGO依赖)"
           go build -ldflags "$LDFLAGS" -o dist/${{ matrix.name }}/${BINARY_NAME} .
-
-      - name: Install cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
 
       - name: Prepare release assets
         run: |
@@ -167,7 +142,7 @@ jobs:
           
           # 复制必要文件到发布目录
           cp README.md dist/${{ matrix.name }}/
-          cp CLAUDE.md dist/${{ matrix.name }}/
+          # 注意: CLAUDE.md 是开发配置文件，不包含在用户发布包中
           cp -r config dist/${{ matrix.name }}/
           
           # 创建数据目录和说明文件
@@ -288,7 +263,6 @@ jobs:
           │   ├── usage.db          # 数据库（自动创建）
           │   └── README.txt        # 数据目录说明
           ├── README.md             # 项目说明
-          ├── CLAUDE.md             # 详细文档
           └── DEPLOYMENT.md         # 本部署指南
           ```
 
@@ -474,7 +448,6 @@ jobs:
           ### 📚 更多信息
           
           - [完整文档](README.md)
-          - [配置指南](CLAUDE.md)
           - [问题反馈](https://github.com/${{ github.repository }}/issues)
           EOF
 

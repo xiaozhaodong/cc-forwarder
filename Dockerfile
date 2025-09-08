@@ -1,8 +1,8 @@
 # Build stage
 FROM golang:1.23-alpine AS builder
 
-# Install git, ca-certificates and build-base for CGO (needed for SQLite)
-RUN apk add --no-cache git ca-certificates build-base
+# Install git and ca-certificates (no longer need build-base for CGO)
+RUN apk add --no-cache git ca-certificates
 
 # Set working directory
 WORKDIR /build
@@ -16,17 +16,17 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary (enable CGO for SQLite)
-RUN CGO_ENABLED=1 GOOS=linux go build \
+# Build the binary (pure Go, no CGO needed)
+RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w -X main.version=docker -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -a -installsuffix cgo \
+    -a -installsuffix netgo \
     -o endpoint_forwarder .
 
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates, curl and sqlite for runtime
-RUN apk --no-cache add ca-certificates tzdata curl sqlite
+# Install ca-certificates, curl and tzdata for runtime (no longer need sqlite)
+RUN apk --no-cache add ca-certificates tzdata curl
 
 # Set timezone to China Standard Time (CST +08:00)
 ENV TZ=Asia/Shanghai
