@@ -72,6 +72,40 @@
 
 - **智能挂起**: 在端点不可用时自动挂起请求
 - **自动恢复**: 端点恢复后自动处理挂起的请求
+
+#### 📊 使用情况追踪系统 (Usage Tracking)
+
+- **SQLite数据库**: 使用纯Go SQLite驱动，完美支持Windows/Linux/macOS
+- **全方位统计**: Token使用量、请求成功率、端点性能、成本分析
+- **实时监控**: Web界面实时显示使用统计和成本信息
+- **数据导出**: 支持CSV/JSON格式导出，便于进一步分析
+- **自动化处理**: 异步数据记录，不影响请求转发性能
+- **成本计算**: 基于模型定价自动计算Token使用成本
+
+**🪟 Windows兼容性保证**: v1.0.2版本彻底解决了Windows平台SQLite依赖问题，现在可以无障碍启用使用追踪功能。
+
+**配置示例**:
+```yaml
+usage_tracking:
+  enabled: true                          # 启用使用追踪
+  database_path: "data/usage.db"         # 数据库文件路径
+  buffer_size: 1000                      # 内存缓冲区大小
+  batch_size: 100                        # 批量写入大小
+  flush_interval: "5s"                   # 刷新间隔
+  
+  model_pricing:                         # 模型定价配置
+    "claude-3-5-haiku-20241022":
+      input: 1.00          # 每百万Token价格(USD)
+      output: 5.00         # 输出Token价格
+      cache_creation: 1.25 # 缓存创建Token价格
+      cache_read: 0.10     # 缓存读取Token价格
+    
+    "claude-sonnet-4-20250514":
+      input: 3.00
+      output: 15.00
+      cache_creation: 3.75
+      cache_read: 0.30
+```
 - **超时保护**: 配置超时时间防止请求无限挂起
 - **容量控制**: 限制最大挂起请求数量
 
@@ -233,6 +267,27 @@ go test ./internal/middleware
 
 ## 📝 更新日志
 
+### v1.0.2 (2025-09-08)
+
+#### 🪟 Windows平台SQLite兼容性重大修复
+
+- **解决关键问题**: 修复Windows平台"Binary was compiled with 'CGO_ENABLED=0', go-sqlite3 requires cgo"错误
+- **SQLite驱动升级**: 从`mattn/go-sqlite3` (CGO依赖)升级为`modernc.org/sqlite` (纯Go实现)
+- **跨平台兼容**: 完美支持Windows/Linux/macOS所有架构，无需C编译器
+- **构建优化**: 统一使用`CGO_ENABLED=0`纯Go编译，构建更快更稳定
+
+#### 📦 发布包优化
+
+- **文件清理**: 移除发布包中的`CLAUDE.md`开发配置文件
+- **Docker优化**: 镜像体积减少约50MB，移除build-base等CGO依赖
+- **构建简化**: GitHub Actions移除复杂的交叉编译工具配置
+
+#### 🎯 用户体验改进
+
+- **Windows用户**: 可直接启用usage_tracking功能，无需额外配置
+- **部署简化**: 单一二进制文件，零外部依赖
+- **性能保证**: SQLite功能完全保持不变，性能优化
+
 ### v1.0.1 (2025-09-08)
 
 #### 🔧 Token解析兼容性修复
@@ -255,15 +310,25 @@ go test ./internal/middleware
 - **数据准确性**: Token使用统计更加准确和完整
 - **调试友好**: 提供清晰的Token解析过程日志
 
-### v2.1.0 (2025-09-05)
+### v1.0.0 (2025-09-05)
 
-#### 🔄 重大架构重构
+#### 🚀 重大功能更新
+
+- **Web管理界面**: 现代化Web界面，支持实时监控和组管理
+- **请求ID追踪**: 完整的请求生命周期追踪系统 (`req-xxxxxxxx`格式)
+- **Token解析器**: Claude API SSE流中的模型信息和Token使用量提取  
+- **请求挂起系统**: 智能请求挂起和恢复机制
+- **手动组切换**: 支持手动暂停/恢复/激活组操作
+- **实时数据流**: Server-Sent Events (SSE) 实时更新
+- **使用情况追踪**: SQLite数据库使用统计和成本分析
+
+#### 🔄 架构重构
 
 - **模块化重构**: 将巨大的 `handlers.go` 文件（2475行）重构为11个专门模块
 - **单一职责原则**: 每个模块专注特定功能领域，提升代码质量
 - **团队协作优化**: 支持多人并行开发不同功能模块
 
-#### 📁 新增Go处理器模块 (10个)
+#### 📁 Web处理器模块化
 
 - `basic_handlers.go` (233行) - 基础API处理器：状态、端点、连接等
 - `sse_handlers.go` (249行) - Server-Sent Events实时通信处理
@@ -276,40 +341,14 @@ go test ./internal/middleware
 - `utils.go` (50行) - 格式化工具函数
 - `templates.go` (1272行) - Web界面HTML模板
 
-#### 🚀 前端JavaScript模块化 (6个)
+#### 🚀 前端JavaScript模块化
 
 - `endpointsManager.js` (429行) - 端点管理功能
-- `groupsManager.js` (358行) - 组管理操作
+- `groupsManager.js` (358行) - 组管理操作  
 - `requestsManager.js` (546行) - 请求追踪功能
 - `sseManager.js` (431行) - SSE连接管理
 - `utils.js` (301行) - 工具函数和格式化
 - `webInterface.js` (800行) - 核心Web界面类
-
-#### ✨ 重构收益
-
-- **可维护性**: 单文件2475行 → 11个专门文件，清晰职责分离
-- **扩展性**: 新功能可独立添加到相应模块，不影响其他部分
-- **调试效率**: 问题定位更准确，修改影响范围明确
-- **编译性能**: 模块化设计提升编译速度和开发体验
-- **100%兼容**: 保持所有原有功能和API接口完全不变
-
-### v2.0.0 (2025-09-04)
-
-- ✨ 新增Web管理界面，支持实时监控和组管理
-- 🎯 实现请求ID追踪系统，完整生命周期监控
-- 🤖 新增Token解析器，支持Claude API模型信息提取
-- ⏸️ 实现请求挂起与恢复系统
-- 🔄 支持手动组切换和管理
-- 📊 Server-Sent Events实时数据流
-- 🗃️ 设计使用情况追踪系统（SQLite数据库）
-
-### v1.x.x (原版本)
-
-- 基础转发功能
-- TUI界面
-- 健康检查
-- 重试机制
-- 组管理基础功能
 
 ## 🤝 贡献
 
