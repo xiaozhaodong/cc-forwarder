@@ -238,6 +238,11 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 				if rh.monitoringMiddleware != nil && connID != "" {
 					rh.monitoringMiddleware.RecordRetry(connID, ep.Config.Name)
 				}
+				
+				// 更新状态为retry（同端点重试也是重试状态）
+				if rh.usageTracker != nil && connID != "" {
+					rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, "retry", attempt-1, 0)
+				}
 
 				// Calculate delay with exponential backoff
 				delay := rh.calculateDelay(attempt)

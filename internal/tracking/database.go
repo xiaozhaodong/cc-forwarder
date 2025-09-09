@@ -377,7 +377,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		cache_creation_cost_usd = ?,
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
-		status = CASE WHEN status = 'pending' THEN 'completed' ELSE status END,
+		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
 		updated_at = datetime('now', 'localtime')
 	WHERE request_id = ?`
 

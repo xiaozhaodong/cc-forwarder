@@ -227,15 +227,18 @@ The codebase includes comprehensive unit tests:
 - **Memory Management**: Connection tracking integrated with monitoring system
 - **Debugging**: Easy log filtering using `grep "req-xxxxxxxx" logfile` for complete request analysis
 
-**Token Parser and Model Detection**:
-- **Dual Event Processing**: TokenParser simultaneously processes `message_start` and `message_delta` events from Claude API SSE streams
+**Token Parser and Model Detection** (2025-09-09 Update):
+- **Architecture Fix**: Resolved critical token parsing duplication bug where both `message_start` and `message_delta` events were processing token usage
+- **Correct Event Separation**: `message_start` now only extracts model information, `message_delta` handles complete token usage statistics
 - **Model Name Extraction**: Automatically extracts Claude model information (e.g., `claude-3-haiku-20240307`) from `message_start` events
-- **Integrated Logging**: Model information is seamlessly integrated into token usage logs:
+- **Non-Claude Endpoint Compatibility**: Added fallback mechanism in `message_delta` for endpoints that don't provide token usage information
+- **Clear Logging Separation**: 
   ```
-  🪙 [Token Parser] [req-xxxxxxxx] 从SSE流中提取令牌使用情况 - 模型: claude-3-haiku-20240307, 输入: 25, 输出: 10, 缓存创建: 0, 缓存读取: 0
+  🎯 [模型提取] [req-xxxxxxxx] 从message_start事件中提取模型信息: claude-3-5-haiku
+  🪙 [Token使用统计] [req-xxxxxxxx] 从message_delta事件中提取完整令牌使用情况 - 模型: claude-3-5-haiku, 输入: 25, 输出: 97, 缓存创建: 0, 缓存读取: 0
   ```
-- **Safe Implementation**: Model extraction does not affect data forwarding or client responses, operates as a pure monitoring feature
-- **Backward Compatibility**: Gracefully handles cases where model information is not available, falling back to standard token logging
+- **Database Status Logic Fix**: Corrected `completeRequest` SQL to properly update status from any non-completed state to completed
+- **Clean Architecture**: Removed redundant `RecordRequestUpdate` calls after `RecordRequestComplete` for better code maintainability
 
 **Benefits**:
 - **Easy Debugging**: Quickly identify all logs related to a specific request
@@ -243,7 +246,7 @@ The codebase includes comprehensive unit tests:
 - **Issue Resolution**: Trace failed requests through retry attempts and fallback logic
 - **Request Correlation**: Connect client-side issues with server-side processing
 
-## Request Status System (2025-09-06 Update)
+## Request Status System (2025-09-09 Update)
 
 **Enhanced Status Granularity**: The system now provides fine-grained request status tracking to eliminate user confusion and improve transparency in the Web interface.
 
@@ -252,23 +255,30 @@ The codebase includes comprehensive unit tests:
 The request status system uses a clear progression that accurately reflects the processing stages:
 
 ```
-请求状态流程：forwarding → processing → completed
-              (转发中)   (解析中)    (完成)
+正常流程: pending → forwarding → processing → completed
+重试流程: pending → forwarding → retry → retry → processing → completed  
+跨端点:  pending → forwarding → retry(端点2) → processing → completed
+挂起流程: pending → forwarding → suspended → forwarding → processing → completed
 ```
 
 ### Status Definitions
 
 #### **Core Status States**
-- **`forwarding`**: Request is being forwarded to endpoint
+- **`forwarding`**: Request is being forwarded to endpoint  
+- **`retry`**: Request is being retried (same endpoint or different endpoint) ⭐ **Enhanced**
 - **`processing`**: HTTP response received successfully, Token parsing in progress ⭐ **New**
 - **`completed`**: Token parsing and cost calculation fully completed ⭐ **New** 
+- **`suspended`**: Request temporarily suspended waiting for group recovery ⭐ **New**
 - **`error`**: Request failed at any stage
 - **`timeout`**: Request timed out
 
 #### **Status Update Triggers**
-1. **`forwarding`** → Set when request starts processing
-2. **`processing`** → Set when HTTP response returns successfully (internal/proxy/retry.go:181)
-3. **`completed`** → Set when Token parsing completes (internal/proxy/token_parser.go:209)
+1. **`pending`** → Set at request start (RecordRequestStart)
+2. **`forwarding`** → Set when first attempting an endpoint
+3. **`retry`** → Set when retrying same endpoint or switching to new endpoint ⭐ **Fixed**
+4. **`suspended`** → Set when all groups fail, request waits for recovery
+5. **`processing`** → Set when HTTP response returns successfully (internal/proxy/retry.go:198)
+6. **`completed`** → Set when token parsing completes (internal/tracking/database.go:380)
 
 ### User Experience Improvements
 
@@ -649,6 +659,28 @@ UPDATE table_name SET updated_at = datetime('now', 'localtime') WHERE id = NEW.i
 - **Batch Processing**: Groups events for efficient database writes (default 100 events/batch)
 - **Independent Goroutines**: Separate processing threads prevent main request blocking
 - **Graceful Degradation**: Event dropping on buffer overflow (with logging) instead of blocking
+
+### Critical Bug Fixes (2025-09-09)
+
+**Token Parser Architecture Overhaul**:
+- **Problem**: Both `message_start` and `message_delta` events were processing token usage, causing double token counting and incorrect cost calculations
+- **Solution**: Clear separation - `message_start` only extracts model information, `message_delta` handles complete token statistics
+- **Impact**: Accurate cost calculations, no more duplicate token counting, proper fallback for non-Claude endpoints
+
+**Database Status Logic Fix**:
+- **Problem**: `completeRequest` SQL only updated `pending → completed`, leaving `processing` requests stuck
+- **Solution**: Changed SQL to `status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END`
+- **Impact**: All request states now properly transition to completed
+
+**Retry Status Tracking Enhancement**:
+- **Problem**: Same-endpoint retries weren't updating status to `retry`, only cross-endpoint switches
+- **Solution**: Added status update to `retry` for all retry attempts (internal/proxy/retry.go:242-245)
+- **Impact**: Complete visibility into retry behavior, better debugging and monitoring
+
+**Event Architecture Clarification**:
+- **`RecordRequestStart`**: Initial request state (`pending`)
+- **`RecordRequestUpdate`**: All intermediate state changes (`forwarding`, `retry`, `processing`, etc.)
+- **`RecordRequestComplete`**: Final completion with token data and cost calculation (`completed`)
 
 ### Data Collection Points
 

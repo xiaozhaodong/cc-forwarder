@@ -387,9 +387,6 @@ func (h *Handler) analyzeResponseForTokens(ctx context.Context, responseBody, en
 		// Record completion with non_token_response model name and zero duration (since we don't track start time here)
 		h.usageTracker.RecordRequestComplete(connID, "non_token_response", emptyTokens, 0)
 		
-		// Update status to completed
-		h.usageTracker.RecordRequestUpdate(connID, "", "", "completed", 0, 0)
-		
 		slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 已标记为完成状态，模型: non_token_response", connID))
 	}
 }
