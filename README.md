@@ -267,6 +267,38 @@ go test ./internal/middleware
 
 ## 📝 更新日志
 
+### v1.0.3 (2025-09-09)
+
+#### 🔧 Token统计重复计费问题修复
+
+- **严重Bug修复**: 解决Token解析重复处理导致成本计算错误的严重bug
+- **架构重构**: 重构Token Parser架构，确保事件职责分离
+  - `message_start`事件: 只提取模型信息
+  - `message_delta`事件: 处理完整token使用统计
+- **状态流转完善**: 修复数据库状态更新逻辑，支持完整状态流转
+  - 解决`processing`状态无法更新为`completed`的问题
+  - SQL修复: `status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END`
+
+#### 🔄 重试机制增强
+
+- **重试状态跟踪**: 同端点重试也正确更新为`retry`状态，提升监控可见性
+- **状态流转**: `pending → forwarding → retry → processing → completed`
+- **兼容性增强**: 增强非Claude端点兼容性，添加fallback机制
+
+#### ✨ 代码架构改进
+
+- **日志分离**: 清晰的日志分离和错误处理
+  - 🎯 `[模型提取]`: message_start事件的模型信息提取
+  - 🪙 `[Token使用统计]`: message_delta事件的完整token统计
+- **架构清理**: 移除重复状态更新调用，提升代码可维护性
+- **事件架构**: 明确`RecordRequestStart` → `RecordRequestUpdate` → `RecordRequestComplete`流程
+
+#### 🎯 影响范围
+
+- **准确的成本计算**: 不再重复计费，确保Token统计准确性
+- **完整的生命周期跟踪**: 支持suspended状态和完整重试流转
+- **生产环境推荐**: 强烈建议从v1.0.2及以下版本升级
+
 ### v1.0.2 (2025-09-08)
 
 #### 🪟 Windows平台SQLite兼容性重大修复
@@ -360,11 +392,11 @@ go test ./internal/middleware
 
 ## 🙏 致谢
 
-- 感谢 [xinhai-ai/endpoint_forwarde](https://github.com/xinhai-ai/endpoint_forwarde) 项目提供的基础框架
+- 感谢 [xinhai-ai/endpoint_forwarder](https://github.com/xinhai-ai/endpoint_forwarder) 项目提供的基础框架
 - 感谢开源社区提供的各种优秀库和工具
 
 ---
 
 **开发者**: xiaozhaodong
 **项目地址**: https://github.com/xiaozhaodong/cc-forwarder
-**原项目**: https://github.com/xinhai-ai/endpoint_forwarde
+**原项目**: https://github.com/xinhai-ai/endpoint_forwarder
