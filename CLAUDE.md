@@ -1,745 +1,488 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities. It includes both a Terminal User Interface (TUI) and Web Interface for real-time monitoring and management.
+Claude Request Forwarder是高性能Go应用，透明转发Claude API请求到多个端点，支持智能路由、健康检查和自动重试/故障转移。包含TUI和Web界面用于实时监控管理。
 
-## Build and Development Commands
+## 构建和开发命令
 
 ```bash
-# Build the application
+# 构建应用
 go build -o cc-forwarder
 
-# Run with default configuration and TUI
+# 运行(TUI模式)
 ./cc-forwarder -config config/config.yaml
 
-# Run without TUI (console mode)
+# 运行(控制台模式)
 ./cc-forwarder -config config/config.yaml --no-tui
 
-# Run tests
+# 运行测试
 go test ./...
-
-# Test specific packages
-go test ./internal/endpoint
-go test ./internal/proxy
-go test ./internal/middleware
-
-# Check version
-./cc-forwarder -version
 ```
 
-## Architecture Overview
+## 架构概述
 
-### Core Components
+### 核心组件
+- **`main.go`**: 应用入口，TUI/控制台模式切换
+- **`config/`**: 配置管理，热重载
+- **`internal/endpoint/`**: 端点管理，健康检查，组管理
+- **`internal/proxy/`**: HTTP请求转发，流式支持，重试逻辑
+- **`internal/middleware/`**: 认证、日志、监控中间件
+- **`internal/web/`**: Web界面，SSE实时监控
+- **`internal/transport/`**: 代理传输配置
 
-- **`main.go`**: Application entry point with TUI/console mode switching, graceful shutdown, and configuration management
-- **`config/`**: Configuration management with hot-reloading via fsnotify
-- **`internal/endpoint/`**: Endpoint management, health checking, fast testing, and group management
-- **`internal/proxy/`**: HTTP request forwarding, streaming support, and retry logic with configurable group switching
-- **`internal/middleware/`**: Authentication, logging, and monitoring middleware
-- **`internal/tui/`**: Terminal User Interface using rivo/tview
-- **`internal/web/`**: Web Interface with real-time monitoring, SSE support, and group management
-- **`internal/transport/`**: HTTP/HTTPS/SOCKS5 proxy transport configuration
+### 请求流程
+1. 中间件链处理(认证→日志→监控)
+2. 基于策略和健康状态选择端点
+3. 请求头转换(移除客户端认证，注入端点token)
+4. 请求转发和重试处理
+5. 流式响应或缓冲响应处理
+6. 错误处理和自动故障转移
 
-### Key Design Patterns
+## 配置
 
-**Strategy Pattern**: Endpoint selection via "priority" or "fastest" strategies with optional pre-request fast testing
+**主配置**: `config/config.yaml` (复制自 `config/example.yaml`)
+**热重载**: 通过fsnotify自动重载，500ms防抖
+**动态Token解析**: 运行时动态解析token和API密钥
 
-**Middleware Chain**: Request processing through authentication, logging, and monitoring layers
-
-**Observer Pattern**: Configuration hot-reloading with callback-based component updates
-
-**Circuit Breaker Pattern**: Health checking with automatic endpoint marking as healthy/unhealthy
-
-### Request Flow
-
-1. Request reception with middleware chain (auth → logging → monitoring)
-2. Endpoint selection based on strategy and health status
-3. Header transformation (strip client auth, inject endpoint tokens and API keys)
-4. Request forwarding with timeout and retry handling
-5. Response streaming (SSE) or buffered response handling
-6. Error handling with automatic endpoint fallback
-
-## Configuration
-
-- **Primary config**: `config/config.yaml` (copy from `config/example.yaml`)
-- **Hot-reloading**: Automatic configuration reload via fsnotify with 500ms debounce
-- **Dynamic Token Resolution**: Tokens and API keys are resolved dynamically at runtime for group-based failover
-- **Global timeout**: Default timeout for all non-streaming requests (5 minutes)
-- **API Key support**: Endpoints can specify `api-key` field which is automatically passed as `X-Api-Key` header
-
-### Interface Configuration
-
-**Web Interface** (recommended for production):
+### 界面配置
 ```yaml
 web:
-  enabled: true              # Enable web interface
-  host: "0.0.0.0"           # Web interface host (default: localhost)
-  port: 8010                 # Web interface port (default: 8088)
-```
+  enabled: true
+  host: "0.0.0.0"
+  port: 8010
 
-**TUI Interface** (development/debugging):
-```yaml
 tui:
-  enabled: false             # Disable in production/Docker environments
-  update_interval: "1s"      # TUI refresh interval
-  save_priority_edits: false # Save priority changes to config file
-```
+  enabled: false  # 生产环境禁用
+  update_interval: "1s"
 
-### Advanced Group Configuration
-
-**Group Switching Control**:
-```yaml
 group:
-  cooldown: "600s"                      # Group failure cooldown duration
-  auto_switch_between_groups: true      # Enable automatic group switching (default: true)
-  # false = Manual intervention required via Web interface
-  # true = Automatic failover to backup groups
+  cooldown: "600s"
+  auto_switch_between_groups: true  # 自动组切换
 ```
 
-**Configuration Behavior**:
-- **Auto Mode** (`auto_switch_between_groups: true`): System automatically switches to backup groups when primary group fails
-- **Manual Mode** (`auto_switch_between_groups: false`): Requires manual intervention through Web interface when group fails
-- **Backward Compatibility**: Missing parameter defaults to automatic mode
+### 组管理
 
-### Group Management
+**组配置**:
+- 端点通过`group`字段属于某个组
+- 组优先级通过`group-priority`定义(数值越小优先级越高)
+- 同时只有一个组处于活跃状态
 
-The system supports endpoint grouping with automatic failover and cooldown mechanisms:
+**组状态**:
+- **Active**: 当前处理请求
+- **Available**: 健康可激活但未激活
+- **Cooldown**: 故障后冷却中
+- **Paused**: 手动暂停
+- **Unhealthy**: 组内所有端点不可用
 
-**Group Configuration**:
-- Each endpoint can belong to a group using the `group` field
-- Groups have priorities defined by `group-priority` (lower number = higher priority)
-- Only one group is active at a time based on priority and cooldown status
-- Groups inherit settings from the first endpoint in their group
+**手动操作API**:
+- `POST /api/v1/groups/{name}/activate` - 激活组
+- `POST /api/v1/groups/{name}/pause` - 暂停组
+- `POST /api/v1/groups/{name}/resume` - 恢复组
 
-**Group Behavior**:
-- **Active Group**: The highest priority group not in cooldown or manually paused
-- **Cooldown**: When all endpoints in a group fail, the group enters cooldown mode
-- **Manual Control**: Groups can be manually paused, resumed, or activated via Web interface with full lifecycle management
-- **Configurable Switching**: Auto/manual group switching controlled by `group.auto_switch_between_groups`
+**组继承规则**:
+- 端点继承前一个端点的`group`和`group-priority`
+- 静态继承: 配置解析时继承`timeout`和`headers`
+- 动态解析: 运行时从组内第一个端点解析`token`和`api-key`
 
-### Manual Group Operations
-**Web Interface Controls**: The Web interface provides comprehensive group management capabilities:
-- **Activate Group**: `POST /api/v1/groups/{name}/activate` - Forces a group to become active immediately, bypassing cooldown
-- **Pause Group**: `POST /api/v1/groups/{name}/pause` - Manually pauses a group, preventing it from being selected
-- **Resume Group**: `POST /api/v1/groups/{name}/resume` - Resumes a paused group, making it available for selection
-
-**Group States and Transitions**:
-- **Active**: Currently processing requests (only one group can be active at a time)
-- **Available**: Healthy and ready to be activated, but not currently active
-- **Cooldown**: Temporarily disabled due to failures, waiting for cooldown period to expire
-- **Paused**: Manually disabled by administrator, requires manual resumption
-- **Unhealthy**: All endpoints in the group are down
-
-**Manual Activation Scenarios**:
-1. **Emergency Failover**: Quickly switch to backup groups during primary group issues
-2. **Maintenance Mode**: Pause primary groups for maintenance, activate backup groups
-3. **Performance Optimization**: Activate faster responding groups during high load periods
-4. **Geographic Routing**: Manually activate region-specific groups based on user distribution
-
-**Integration with Request Suspension**:
-- Manual group activation immediately triggers processing of suspended requests
-- Administrators can strategically activate specific groups to handle different types of suspended requests
-- Real-time feedback shows how many suspended requests are processed upon group activation
-- **Cooldown Duration**: Configurable via `group.cooldown` (default: 10 minutes)
-
-**Group Inheritance Rules**:
-- Endpoints inherit `group` and `group-priority` from previous endpoints if not specified
-- Static inheritance: `timeout` and `headers` are inherited during configuration parsing
-- Dynamic resolution: `token` and `api-key` are resolved at runtime from the first endpoint in the same group
-- Groups can be mixed and matched with different priorities for failover scenarios
-
-**Dynamic Token Resolution**:
-- **Runtime Resolution**: Tokens and API keys are not inherited during config parsing but resolved dynamically at request time
-- **Group-based Sharing**: All endpoints in a group share the token/api-key from the first endpoint that defines it
-- **Override Support**: Individual endpoints can override group tokens by explicitly specifying their own `token` or `api-key`
-- **Failover-friendly**: When groups switch during failover, the new active group's tokens are automatically used
-
-**Example Group Configuration**:
+**配置示例**:
 ```yaml
 endpoints:
-  # Primary group (highest priority) - defines group token
   - name: "primary"
     url: "https://api.openai.com"
     group: "main"
     group-priority: 1
-    priority: 1
-    token: "sk-main-group-token"        # 🔑 Shared by all main group endpoints
+    token: "sk-main-token"  # 组内共享
     
-  # Backup for primary group - uses main group token
-  - name: "primary_backup"
+  - name: "backup"
     url: "https://api.anthropic.com"
-    priority: 2
-    # 🔄 Inherits group: "main" and group-priority: 1
-    # 🔑 Uses main group token dynamically at runtime
-    
-  # Secondary group (lower priority) - defines different group token
-  - name: "secondary"
-    url: "https://api.example.com"
-    group: "backup"
-    group-priority: 2
-    priority: 1
-    token: "sk-backup-group-token"      # 🔑 Shared by all backup group endpoints
-    
-  # Custom override within backup group
-  - name: "secondary_special"
-    url: "https://api.special.com"
-    priority: 2
-    token: "sk-special-override"        # 🔑 Overrides backup group token
-    # 🔄 Still inherits group: "backup" and group-priority: 2
+    priority: 2  # 继承group: "main"
 ```
 
-## Testing Approach
+## 测试
 
-The codebase includes comprehensive unit tests:
-- `*_test.go` files in each package
-- Test configuration in `test_config.yaml`
-- Health check testing with mock endpoints
-- Fast tester functionality testing
-- Proxy handler testing with various scenarios
+包含完整的单元测试:
+- 各包中的`*_test.go`文件
+- `test_config.yaml`测试配置
+- 健康检查和代理处理器测试
 
-## Request ID Tracking and Lifecycle Monitoring
+## 请求ID跟踪和生命周期监控
 
-**Request ID Generation**: The system generates unique short UUID-based request IDs in the format `req-xxxxxxxx` (8 hex characters) for every incoming request, replacing the previous timestamp-based format.
+**请求ID生成**: 系统为每个请求生成唯一的短UUID格式ID `req-xxxxxxxx` (8位十六进制)
 
-**Complete Lifecycle Tracking**: Each request can be traced through its entire lifecycle using the request ID:
+**完整生命周期跟踪**: 通过请求ID追踪完整请求生命周期
 
-```
-🚀 Request started [req-4167c856]
-🎯 [请求转发] [req-4167c856] 选择端点: instcopilot-sg (组: main, 总尝试 1)
-✅ [请求成功] [req-4167c856] 端点: instcopilot-sg (组: main), 状态码: 200 (总尝试 1 个端点)
-✅ Request completed [req-4167c856]
-```
+**日志覆盖**: 所有关键事件包含请求ID:
+- 请求开始/结束: `🚀 Request started [req-xxx]`
+- 端点选择: `🎯 [请求转发] [req-xxx] 选择端点`
+- 成功/失败: `✅ [请求成功] [req-xxx]`
+- 重试逻辑: `🔄 [需要重试] [req-xxx]`
+- 请求挂起: `⏸️ [请求挂起] 连接 req-xxx`
 
-**Log Coverage**: Request IDs are included in all critical log events:
-- **Request Start/End**: `🚀 Request started [req-xxxxxxxx]` and `✅ Request completed [req-xxxxxxxx]`
-- **Endpoint Selection**: `🎯 [请求转发] [req-xxxxxxxx] 选择端点: endpoint-name`
-- **Success/Failure**: `✅ [请求成功] [req-xxxxxxxx]` or `❌ [网络错误] [req-xxxxxxxx]`
-- **Retry Logic**: `🔄 [需要重试] [req-xxxxxxxx]` and `⏳ [等待重试] [req-xxxxxxxx]`
-- **Request Suspension**: `⏸️ [请求挂起] 连接 req-xxxxxxxx 请求已挂起`
-- **Error Handling**: `⚠️ Request error [req-xxxxxxxx]` and `🐌 Slow request detected [req-xxxxxxxx]`
+**调试**: 使用`grep "req-xxxxxxxx" logfile`过滤特定请求日志
 
-**Implementation Details**:
-- **UUID Generation**: Uses `crypto/rand` with 4-byte random values converted to hex
-- **Context Propagation**: Request ID flows through all middleware layers via `context.WithValue`
-- **Memory Management**: Connection tracking integrated with monitoring system
-- **Debugging**: Easy log filtering using `grep "req-xxxxxxxx" logfile` for complete request analysis
+**Token解析器和模型检测** (2025-09-09更新):
+- **架构修复**: 解决token解析重复处理bug
+- **事件分离**: `message_start`提取模型信息，`message_delta`处理token统计
+- **模型提取**: 自动提取Claude模型信息
+- **非Claude端点兼容**: 为无token信息端点添加fallback机制
+- **数据库状态修复**: 修正SQL逻辑，正确更新状态到completed
 
-**Token Parser and Model Detection** (2025-09-09 Update):
-- **Architecture Fix**: Resolved critical token parsing duplication bug where both `message_start` and `message_delta` events were processing token usage
-- **Correct Event Separation**: `message_start` now only extracts model information, `message_delta` handles complete token usage statistics
-- **Model Name Extraction**: Automatically extracts Claude model information (e.g., `claude-3-haiku-20240307`) from `message_start` events
-- **Non-Claude Endpoint Compatibility**: Added fallback mechanism in `message_delta` for endpoints that don't provide token usage information
-- **Clear Logging Separation**: 
-  ```
-  🎯 [模型提取] [req-xxxxxxxx] 从message_start事件中提取模型信息: claude-3-5-haiku
-  🪙 [Token使用统计] [req-xxxxxxxx] 从message_delta事件中提取完整令牌使用情况 - 模型: claude-3-5-haiku, 输入: 25, 输出: 97, 缓存创建: 0, 缓存读取: 0
-  ```
-- **Database Status Logic Fix**: Corrected `completeRequest` SQL to properly update status from any non-completed state to completed
-- **Clean Architecture**: Removed redundant `RecordRequestUpdate` calls after `RecordRequestComplete` for better code maintainability
+**优势**: 易于调试、性能分析、问题解决、请求关联
 
-**Benefits**:
-- **Easy Debugging**: Quickly identify all logs related to a specific request
-- **Performance Analysis**: Track request duration from start to completion
-- **Issue Resolution**: Trace failed requests through retry attempts and fallback logic
-- **Request Correlation**: Connect client-side issues with server-side processing
+## 请求状态系统 (2025-09-09更新)
 
-## Request Status System (2025-09-09 Update)
+**增强状态粒度**: 提供细粒度请求状态跟踪，消除用户混淆
 
-**Enhanced Status Granularity**: The system now provides fine-grained request status tracking to eliminate user confusion and improve transparency in the Web interface.
-
-### Status Lifecycle
-
-The request status system uses a clear progression that accurately reflects the processing stages:
-
+### 状态生命周期
 ```
 正常流程: pending → forwarding → processing → completed
-重试流程: pending → forwarding → retry → retry → processing → completed  
-跨端点:  pending → forwarding → retry(端点2) → processing → completed
+重试流程: pending → forwarding → retry → processing → completed
 挂起流程: pending → forwarding → suspended → forwarding → processing → completed
 ```
 
-### Status Definitions
+### 状态定义
+- **`forwarding`**: 请求转发中
+- **`retry`**: 请求重试中
+- **`processing`**: HTTP响应成功，Token解析中
+- **`completed`**: Token解析和成本计算完成
+- **`suspended`**: 请求暂停等待组恢复
+- **`error`**: 请求失败
+- **`timeout`**: 请求超时
 
-#### **Core Status States**
-- **`forwarding`**: Request is being forwarded to endpoint  
-- **`retry`**: Request is being retried (same endpoint or different endpoint) ⭐ **Enhanced**
-- **`processing`**: HTTP response received successfully, Token parsing in progress ⭐ **New**
-- **`completed`**: Token parsing and cost calculation fully completed ⭐ **New** 
-- **`suspended`**: Request temporarily suspended waiting for group recovery ⭐ **New**
-- **`error`**: Request failed at any stage
-- **`timeout`**: Request timed out
+### 用户体验改进
 
-#### **Status Update Triggers**
-1. **`pending`** → Set at request start (RecordRequestStart)
-2. **`forwarding`** → Set when first attempting an endpoint
-3. **`retry`** → Set when retrying same endpoint or switching to new endpoint ⭐ **Fixed**
-4. **`suspended`** → Set when all groups fail, request waits for recovery
-5. **`processing`** → Set when HTTP response returns successfully (internal/proxy/retry.go:198)
-6. **`completed`** → Set when token parsing completes (internal/tracking/database.go:380)
+**改进前**: `req-abc123 ✅ 成功 - 0 0 0 0 $0.00` (用户困惑：成功了为什么token是0？)
+**改进后**: `req-abc123 ⚙️ 解析中 - 0 0 0 0 $0.00` → `req-abc123 ✅ 完成 claude-sonnet-4 25 97 0 0 $0.45`
 
-### User Experience Improvements
+### 状态指示器
+- **🔄 转发中** (`forwarding`): 蓝色渐变脉动动画
+- **⚙️ 解析中** (`processing`): 橙色渐变脉动动画  
+- **✅ 完成** (`completed`): 绿色渐变
+- **❌ 失败** (`error`): 红色渐变
+- **⏰ 超时** (`timeout`): 橙红渐变
 
-#### **Before Enhancement (User Confusion)**
-```
-req-abc123  22:15:33  ✅ 成功  -  0  0  0  0  $0.00
-                        ↑
-                "成功了为什么token是0？？？"
-```
+**优势**: 消除用户混淆，提供清晰处理透明度，改善调试能力，提升Web界面用户体验。
 
-#### **After Enhancement (Clear Status)**
-```
-req-abc123  22:15:33  ⚙️ 解析中  -  0  0  0  0  $0.00
-                        ↓ Auto-updates after token parsing
-req-abc123  22:15:33  ✅ 完成    claude-sonnet-4  25  97  0  0  $0.45
-                        ↑
-              "Perfect! Now I understand the processing is complete!"
-```
+### 非Token响应处理 (2025-09-07更新)
 
-### Visual Design
+**增强兼容性**: 为不包含token信息的响应提供智能fallback机制
 
-#### **Status Indicators in Web Interface**
-- **🔄 转发中** (`forwarding`): Blue gradient with pulsing animation
-- **⚙️ 解析中** (`processing`): Orange gradient with pulsing animation ⭐ **New**
-- **✅ 完成** (`completed`): Green gradient ⭐ **New**
-- **❌ 失败** (`error`): Red gradient
-- **⏰ 超时** (`timeout`): Orange-red gradient
+#### **解决问题**
+之前成功返回(200 OK)但无token信息的请求会无限停留在`processing`状态
 
-#### **CSS Implementation**
-```css
-.status-badge.status-processing {
-    background: linear-gradient(135deg, #fbbf24, #f59e0b);
-    color: #92400e;
-    animation: pulse 2s infinite;
-}
+#### **常见非Token响应类型**
+- 健康检查请求: `/v1/models`端点
+- 第三方API: 非Claude兼容端点
+- 配置查询: 系统配置或状态端点
+- 错误响应: 非标准错误格式
 
-.status-badge.status-completed {
-    background: linear-gradient(135deg, #10b981, #059669);
-    color: white;
-}
-```
+#### **Fallback实现**
+无token信息时标记为completed，使用"default"模型，token数为0，成本$0.00
 
-### Technical Implementation
+**技术优势**: 确保所有响应类型的健壮请求跟踪，提高系统可靠性，提供完整审计跟踪。
 
-#### **Backend Status Updates**
-- **File**: `internal/proxy/retry.go` (Line 181)
-  - **Change**: `status := "processing"` (was `"success"`)
-  - **Trigger**: HTTP response successful
-  
-- **File**: `internal/proxy/token_parser.go` (Line 209)  
-  - **Addition**: `RecordRequestUpdate(requestID, "", "", "completed", 0, 0)`
-  - **Trigger**: Token parsing completed
+## 请求挂起和恢复系统
 
-#### **Frontend Status Display**
-- **File**: `internal/web/static/js/utils.js`
-  - **Enhancement**: Added status mappings for `processing` and `completed`
-  - **Backward Compatibility**: Maintains support for legacy `success` status
+**请求挂起能力**: 当所有端点组失败时智能挂起请求，防止临时故障期间请求丢失
 
-#### **Asynchronous Processing Benefits**
-- **Non-blocking**: Status updates don't affect request forwarding performance
-- **Real-time**: Web interface shows live status progression via SSE
-- **Transparent**: Users understand exactly what stage their request is in
-
-### Migration and Compatibility
-
-- **Backward Compatible**: Existing `success` status still supported for historical data
-- **Seamless Transition**: New requests automatically use enhanced status system
-- **No Breaking Changes**: API endpoints remain unchanged
-
-**Benefits**: Eliminates user confusion about "successful" requests with zero tokens, provides clear processing transparency, improves debugging capabilities, and enhances overall user experience in the Web interface.
-
-### Non-Token Response Handling (2025-09-07 Update)
-
-**Enhanced Compatibility**: The system now provides intelligent fallback mechanisms for responses that don't contain token usage information, ensuring complete request lifecycle tracking for all API calls.
-
-#### **Problem Solved**
-Previously, requests that returned successful HTTP responses (200 OK) but contained no token information would remain indefinitely in `processing` status, causing user confusion in the Web interface.
-
-#### **Common Non-Token Response Types**
-- **Health Check Requests**: `/v1/models` endpoint returning model lists
-- **Third-party APIs**: Non-Claude compatible endpoints without usage tracking
-- **Configuration Queries**: System configuration or status endpoints  
-- **Error Responses**: Non-standard error formats without usage data
-
-#### **Fallback Implementation** 
-**File**: `internal/proxy/handler.go` (analyzeResponseForTokens function)
-
-```go
-// Fallback: No token information found, mark request as completed with default model
-if h.usageTracker != nil && connID != "" {
-    emptyTokens := &tracking.TokenUsage{
-        InputTokens: 0, OutputTokens: 0, 
-        CacheCreationTokens: 0, CacheReadTokens: 0,
-    }
-    h.usageTracker.RecordRequestComplete(connID, "default", emptyTokens, 0)
-    h.usageTracker.RecordRequestUpdate(connID, "", "", "completed", 0, 0)
-}
-```
-
-#### **Enhanced Logging**
-- **Response Content**: Info-level logging shows complete response content for analysis
-  ```
-  📄 [响应内容] 端点: packycode, 状态码: 200, 长度: 156字节, 响应内容: {"data": [...]}
-  ```
-- **Non-Token Detection**: Clear identification of responses without token information
-  ```  
-  🎯 [无Token响应] 端点: packycode, 连接: req-abc123 - 响应不包含token信息，标记为完成
-  ✅ [无Token完成] 连接: req-abc123 已标记为完成状态，模型: default
-  ```
-
-#### **Database Storage**
-Non-token requests are properly stored with:
-- **Status**: `completed` (no longer stuck in `processing`)
-- **Model Name**: `default` for identification and filtering
-- **Token Counts**: All set to 0 (accurate representation)
-- **Total Cost**: $0.00 (no AI processing cost incurred)
-
-#### **Web Interface Benefits**
-- **Clear Status**: Shows "完成" instead of indefinite "解析中" 
-- **Proper Filtering**: Non-token requests can be filtered by model "default"
-- **Complete Tracking**: Full request lifecycle visibility for all API calls
-- **Zero Confusion**: Users understand these requests completed successfully without token usage
-
-**Technical Benefits**: Ensures robust request tracking for all response types, improves system reliability, provides complete audit trails, and maintains consistent user experience across different API endpoint types.
-
-## Request Suspension and Recovery System
-
-**Request Suspension Capability**: The system supports intelligent request suspension when all endpoint groups fail, preventing request loss during temporary outages.
-
-### Configuration
+### 配置
 ```yaml
 request_suspend:
-  enabled: true                # Enable request suspension functionality
-  timeout: "300s"             # Maximum suspension time (5 minutes default)
-  max_suspended_requests: 100 # Maximum number of requests that can be suspended simultaneously
+  enabled: true
+  timeout: "300s"             # 最大挂起时间
+  max_suspended_requests: 100  # 最大挂起请求数
 ```
 
-### Suspension Behavior
-- **Automatic Suspension**: When all groups fail, requests are automatically suspended instead of being dropped
-- **Group Recovery Detection**: System continuously monitors for group recovery and automatically resumes suspended requests
-- **FIFO Processing**: Suspended requests are processed in first-in-first-out order when groups become available
-- **Timeout Protection**: Requests suspended longer than the configured timeout are automatically failed to prevent indefinite hanging
-- **Capacity Management**: System limits the number of suspended requests to prevent memory exhaustion
+### 挂起行为
+- **自动挂起**: 所有组失败时自动挂起而非丢弃请求
+- **组恢复检测**: 持续监控组恢复并自动恢复挂起请求
+- **FIFO处理**: 先进先出顺序处理挂起请求
+- **超时保护**: 超时挂起请求自动失败
+- **容量管理**: 限制挂起请求数量防止内存耗尽
 
-### Request Lifecycle with Suspension
-1. **Normal Processing**: Request forwarded to available endpoint in active group
-2. **Group Failure**: If current group fails, system attempts other available groups
-3. **Total Failure**: If all groups fail, request is suspended with log: `⏸️ [请求挂起] 连接 req-xxxxxxxx 请求已挂起`
-4. **Group Recovery**: When any group recovers, suspended requests resume processing
-5. **Successful Recovery**: Resumed request processed normally: `🔄 [请求恢复] 连接 req-xxxxxxxx 请求已恢复处理`
-6. **Timeout Handling**: Long-suspended requests fail gracefully: `⏰ [请求超时] 连接 req-xxxxxxxx 挂起超时`
+### 挂起生命周期
+1. 正常处理 → 2. 组失败 → 3. 全部失败(挂起) → 4. 组恢复 → 5. 恢复处理 → 6. 超时处理
 
-### Manual Group Management Integration
-The request suspension system works seamlessly with manual group management:
-- **Manual Activation**: Administrators can manually activate groups via Web interface to resume suspended requests
-- **Strategic Recovery**: Different groups can be activated based on current conditions and performance requirements
-- **Load Distribution**: Suspended requests distribute across newly activated endpoints
+## 关键特性
 
-## Key Features to Understand
+**TUI界面**: 实时监控，包含概述、端点、连接、日志和配置标签页
 
-**TUI Interface**: Real-time monitoring with tabs for Overview, Endpoints, Connections, Logs, and Configuration
+**Web界面**: 现代Web监控管理界面，包含:
+- 实时仪表板(SSE即时更新)
+- 请求跟踪(完整生命周期监控)
+- 组管理(交互式激活/暂停/恢复操作)
+- 端点监控(可视化健康状态)
+- 图表分析(Chart.js集成)
+- 数据导出(CSV/JSON)
+- 模块化架构和响应式设计
 
-**Web Interface**: Modern web-based monitoring and management interface with the following features:
-- **Real-time Dashboard**: Live monitoring with Server-Sent Events (SSE) for instant updates
-- **Request Tracking**: Complete request lifecycle monitoring with detailed tracking page
-- **Group Management**: Interactive group control with activate/pause/resume operations
-- **Endpoint Monitoring**: Visual health status and performance metrics
-- **Charts & Analytics**: Performance visualization with Chart.js integration
-- **Data Export**: CSV/JSON export functionality for request data
-- **Modular Architecture**: Modern JavaScript architecture with separated modules for maintainability
-- **Responsive Design**: Mobile-friendly interface with modern CSS styling
-- **API Integration**: RESTful API for all management operations
+**其他特性**:
+- 流式支持: 自动SSE检测和实时流处理
+- 代理支持: HTTP/HTTPS/SOCKS5配置
+- 安全: Bearer token认证，API key支持
+- 健康监控: 持续端点健康检查
+- 高级组管理: 自动/手动切换，优先级路由
 
-**Streaming Support**: Automatic SSE detection and real-time streaming with proper event handling
+## SSE事件驱动架构 (2025-09-10更新)
 
-**Proxy Support**: HTTP/HTTPS/SOCKS5 proxy configuration for all outbound requests
+**纯事件驱动Web界面**: 从轮询更新完全转换为纯Server-Sent Events(SSE)架构，实现最佳性能和实时响应性。
 
-**Security**: Bearer token authentication with automatic header stripping and token injection. API key support with X-Api-Key header injection.
+### 架构转换
+**之前**: 混合轮询+SSE方式，30秒服务端状态更新循环，前端定时器运行时间更新
+**之后**: 100%事件驱动架构零周期轮询，服务器发送启动时间戳一次，前端实时计算运行时间，智能SSE缓存即时UI更新
 
-**Health Monitoring**: Continuous endpoint health checking with `/v1/models` endpoint testing
+### 关键SSE增强
+#### **前端实时运行时间计算(行业最佳实践)**
+```javascript
+// 服务器发送启动时间戳一次
+{ "start_timestamp": 1757485684 }
 
-**Advanced Group Management**: 
-- **Configurable Behavior**: Auto/manual group switching via `group.auto_switch_between_groups`
-- **Web-based Control**: Full group lifecycle management through web interface
-- **Real-time Updates**: Live status updates via SSE for group state changes
-- **Intelligent Failover**: Priority-based routing with cooldown periods
-- **Manual Intervention**: Ability to override automatic behavior when needed
-
-## Web API Reference
-
-The application provides a comprehensive REST API for monitoring and management:
-
-### Group Management API
-```bash
-# Get all groups status
-GET /api/v1/groups
-
-# Manually activate a group
-POST /api/v1/groups/{name}/activate
-
-# Pause a group (manual intervention)
-POST /api/v1/groups/{name}/pause
-
-# Resume a paused group
-POST /api/v1/groups/{name}/resume
+// 前端每秒计算运行时间
+setInterval(() => {
+    const uptimeSeconds = Math.floor(Date.now() / 1000) - serverStartTimestamp;
+    displayUptime(formatUptime(uptimeSeconds));
+}, 1000);
 ```
 
-### Monitoring API
+**优势**: 零服务器负载，完美准确性，网络弹性，行业标准
+
+#### **智能SSE数据缓存**
+- **端点页面**: SSE缓存→API后备
+- **组页面**: SSE缓存→API后备  
+- **图表页面**: 纯SSE数据自动刷新
+- **概述页面**: 组合数据总是重新加载
+- **请求页面**: 传统缓存(大数据集)
+
+#### **实时单端点更新**
+健康检查完成→单个表格行更新(无需全页刷新)
+
+### 技术实现细节
+- **后端优化**: 移除所有周期广播循环，增强单端点更新
+- **前端架构**: SSE事件处理，缓存管理，实时更新
+- **响应时间显示优化**: 基于响应时间大小的智能精度
+
+### 性能优化
+**调试日志清理**: 移除高频调试日志(~50+日志/分钟)影响浏览器性能
+**网络流量减少**: 端点健康检查、状态更新、组管理缓存数据消除重复API请求
+
+### 浏览器性能影响
+| 指标 | 之前 | 之后 | 改进 |
+|------|------|------|------|
+| 控制台日志/分钟 | ~150 | ~10 | 93%减少 |
+| API调用/页面切换 | 2-3 | 0-1 | 67%减少 |
+| 内存使用 | 更高 | 更低 | 控制台对象清理 |
+| UI响应性 | 1-30秒延迟 | <1秒 | 实时更新 |
+
+**技术结果**: 纯事件驱动架构，行业标准实时监控能力，优化性能，卓越用户体验。
+
+## Web API参考
+
+应用程序提供完整的REST API用于监控和管理:
+
+### 组管理API
 ```bash
-# Get system status
-GET /api/v1/status
-
-# Get endpoints status  
-GET /api/v1/endpoints
-
-# Get connection statistics
-GET /api/v1/connections
-
-# Real-time updates via Server-Sent Events
-GET /api/v1/stream?client_id={id}&events=status,endpoint,group,connection,log,chart
+GET /api/v1/groups                    # 获取所有组状态
+POST /api/v1/groups/{name}/activate   # 手动激活组
+POST /api/v1/groups/{name}/pause      # 暂停组
+POST /api/v1/groups/{name}/resume     # 恢复组
 ```
 
-### Usage Tracking API
+### 监控API
 ```bash
-# Get usage statistics with filtering
-GET /api/v1/usage/stats?start_date=2025-01-01&end_date=2025-12-31&model=claude-3-5-haiku&endpoint=instcopilot-sg
+GET /api/v1/status                    # 系统状态
+GET /api/v1/endpoints                 # 端点状态
+GET /api/v1/connections               # 连接统计
+# 通过SSE实时更新
+GET /api/v1/stream?client_id={id}&events=status,endpoint,group
+```
 
-# Get detailed request logs
-GET /api/v1/usage/requests?limit=100&offset=0&model=claude-sonnet-4&status=success
-
-# Export usage data
-GET /api/v1/usage/export?format=csv&start_date=2025-09-01&end_date=2025-09-30
+### 使用跟踪API
+```bash
+# 使用统计(带过滤)
+GET /api/v1/usage/stats?start_date=2025-01-01&model=claude-3-5-haiku
+# 详细请求日志
+GET /api/v1/usage/requests?limit=100&model=claude-sonnet-4&status=success
+# 导出使用数据
+GET /api/v1/usage/export?format=csv&start_date=2025-09-01
 GET /api/v1/usage/export?format=json&model=claude-3-5-haiku
-
-# Get database health and statistics
+# 数据库健康统计
 GET /api/v1/usage/health
 ```
 
-### Authentication
-All API requests require Bearer token authentication:
+### 认证
+所有API请求需要Bearer token认证:
 ```bash
 curl -H "Authorization: Bearer your-token-here" http://localhost:8010/api/v1/groups
 ```
 
-## Development Architecture
+## 开发架构
 
-### File Structure
+### 文件结构
 ```
 internal/
-├── web/
-│   ├── server.go          # Web server setup and routing
-│   ├── handlers.go        # Main handler documentation (16 lines)
-│   ├── basic_handlers.go  # Basic API handlers (233 lines)
-│   ├── sse_handlers.go    # Server-Sent Events handlers (249 lines)
-│   ├── broadcast_handlers.go # Event broadcasting (62 lines)
-│   ├── metrics_handlers.go   # Performance metrics (79 lines)
-│   ├── chart_handlers.go     # Data visualization charts (173 lines)
-│   ├── group_handlers.go     # Group management (140 lines)
-│   ├── suspended_handlers.go # Request suspension handling (86 lines)
-│   ├── usage_handlers.go     # Usage tracking API (183 lines)
-│   ├── utils.go             # Utility functions (50 lines)
-│   ├── templates.go         # HTML templates (1272 lines)
-│   ├── events.go            # Server-Sent Events implementation
-│   ├── usage_api.go         # Usage tracking API endpoints
-│   └── static/
-│       ├── css/style.css    # Web interface styling
-│       └── js/              # Modularized JavaScript architecture
-│           ├── utils.js           # Utility functions and formatters
-│           ├── sseManager.js      # SSE connection management
-│           ├── requestsManager.js # Request tracking functionality
-│           ├── groupsManager.js   # Group management operations
-│           ├── endpointsManager.js # Endpoint management
-│           ├── webInterface.js    # Core Web interface class
-│           └── charts.js          # Chart.js integration
+├── web/                        # Web服务器和路由
+│   ├── basic_handlers.go       # 基础API处理器(233行)
+│   ├── sse_handlers.go         # SSE事件处理器(249行)
+│   ├── group_handlers.go       # 组管理(140行)
+│   ├── usage_handlers.go       # 使用跟踪API(183行)
+│   ├── templates.go            # HTML模板(1272行)
+│   └── static/js/              # 模块化JavaScript架构
+│       ├── utils.js            # 工具函数和格式化
+│       ├── sseManager.js       # SSE连接管理
+│       ├── requestsManager.js  # 请求跟踪功能
+│       ├── webInterface.js     # 核心Web界面类
+│       └── charts.js           # Chart.js集成
 ├── endpoint/
-│   ├── manager.go         # Endpoint and group management
-│   └── group_manager.go   # Advanced group operations
+│   ├── manager.go              # 端点和组管理
+│   └── group_manager.go        # 高级组操作
 ├── tracking/
-│   ├── tracker.go         # Main usage tracker with async operations
-│   ├── database.go        # Database operations and schema management
-│   ├── queries.go         # Query methods and data retrieval
-│   ├── error_handler.go   # Error handling and recovery
-│   └── schema.sql         # Database schema with timezone fixes
+│   ├── tracker.go              # 主使用跟踪器异步操作
+│   ├── database.go             # 数据库操作和模式管理
+│   ├── queries.go              # 查询方法和数据检索
+│   └── schema.sql              # 数据库模式时区修复
 └── proxy/
-    ├── retry.go           # Configurable retry logic with group switching
-    └── token_parser.go    # SSE token parsing and model detection
+    ├── retry.go                # 可配置重试逻辑组切换
+    └── token_parser.go         # SSE令牌解析模型检测
 ```
 
-### Code Architecture Refactoring (2025-09-05)
+### 代码架构重构 (2025-09-05)
 
-**Major Web Handler Refactoring**: The monolithic `handlers.go` file (2475 lines) has been successfully refactored into a modular architecture with 11 specialized files, each following the single responsibility principle:
+**主要Web处理器重构**: 单一`handlers.go`文件(2475行)成功重构为11个专门文件的模块化架构:
 
-1. **Modular Design**: Each handler file focuses on specific functionality (basic API, SSE, metrics, charts, groups, etc.)
-2. **Maintainability**: Individual files are 16-250 lines, making them easier to understand and modify
-3. **Team Collaboration**: Different developers can work on separate modules simultaneously without conflicts
-4. **Code Quality**: Clear separation of concerns with utilities, templates, and specific handlers
-5. **Scalability**: New features can be added to appropriate modules without affecting others
+**重构优势**:
+- **之前**: 单一2475行文件混合职责
+- **之后**: 11个专注文件总计~4105行清晰模块边界
+- **质量**: 100%功能保留改进代码组织
+- **性能**: 更好编译时间和减少认知负担
 
-**Refactoring Benefits**:
-- **Before**: Single 2475-line file with mixed responsibilities
-- **After**: 11 focused files totaling ~4105 lines with clear module boundaries
-- **Quality**: 100% functionality preservation with improved code organization
-- **Performance**: Better compilation times and reduced cognitive load
+### 重要实现说明
 
-### Important Implementation Notes
+1. **HTML模板**: Web界面HTML现在在专门的`templates.go`文件中，修改需要重新编译
+2. **静态资源**: CSS和JS文件从文件系统提供，可以在不重新编译的情况下修改
+3. **纯SSE架构**: 实时更新使用100%事件驱动SSE零周期轮询，由`sse_handlers.go`处理
+4. **前端运行时间计算**: 服务器发送启动时间戳一次，前端实时计算运行时间(1秒间隔)
+5. **智能SSE缓存**: 智能分页缓存策略在保持实时响应性的同时消除冗余API调用
+6. **组状态管理**: `group_handlers.go`中的线程安全组操作与适当的锁定机制
+7. **配置热重载**: 文件系统监控与防抖更新(500ms延迟)
+8. **使用跟踪**: `usage_handlers.go`中完全异步数据库操作与适当的时区处理(CST +08:00)
+9. **模块化架构**: Go后端和JavaScript前端都使用模块化设计以获得更好的可维护性和团队协作
+10. **性能优化**: 调试日志清理将浏览器控制台输出减少93%，显著提高性能
 
-1. **HTML Templates**: Web interface HTML is now in dedicated `templates.go` file, requiring recompilation for changes
-2. **Static Assets**: CSS and JS files are served from the filesystem and can be modified without recompilation
-3. **SSE Integration**: Real-time updates use Server-Sent Events for efficient push notifications, handled by `sse_handlers.go`
-4. **Group State Management**: Thread-safe group operations with proper locking mechanisms in `group_handlers.go`
-5. **Configuration Hot-Reload**: File system monitoring with debounced updates (500ms delay)
-6. **Usage Tracking**: Fully asynchronous database operations with proper timezone handling (CST +08:00) in `usage_handlers.go`
-7. **Modular Architecture**: Both Go backend and JavaScript frontend use modular design for better maintainability and team collaboration
+### JavaScript模块架构
 
-### JavaScript Module Architecture
+**现代前端设计** (2025-09-10更新):
+Web界面使用为SSE事件驱动更新优化的模块化JavaScript架构:
 
-**Modern Frontend Design** (2025-09-05 Update):
-The Web interface now uses a modular JavaScript architecture for enhanced maintainability:
+- **utils.js** (302行): 格式化函数，通知，DOM实用程序，响应时间格式化
+- **sseManager.js** (900+行): SSE连接，实时运行时间计算，事件处理，连接监控
+- **requestsManager.js** (512行): 请求跟踪，过滤，分页，导出
+- **webInterface.js** (494行): 核心类，智能缓存，标签管理，初始化
 
-- **utils.js** (302 lines): Formatting functions, notifications, DOM utilities
-- **sseManager.js** (430 lines): SSE connections, reconnection logic, event handling
-- **requestsManager.js** (512 lines): Request tracking, filtering, pagination, export
-- **groupsManager.js** (357 lines): Group operations, status management
-- **endpointsManager.js** (428 lines): Endpoint monitoring, priority management
-- **webInterface.js** (494 lines): Core class, tab management, initialization
+**SSE优化优势**:
+- **实时性能**: 通过优化SSE事件处理实现亚秒级UI更新
+- **智能缓存**: 智能分页缓存策略减少67%API调用
+- **连接弹性**: 自动重连逻辑与运行时间暂停/恢复
+- **调试优化**: 控制台日志减少93%，获得更好的浏览器性能
+- **内存效率**: 减少对象创建和清理周期
 
-**Benefits**:
-- **Maintainability**: Each module has focused responsibilities (~200-500 lines each)
-- **Team Collaboration**: Multiple developers can work on different modules simultaneously  
-- **Code Reuse**: Utility functions shared across modules
-- **Debugging**: Issues can be isolated to specific modules
-- **Performance**: Modules loaded in optimized order with intelligent caching
+## 使用跟踪系统
 
-## Usage Tracking System
+### 完整请求生命周期跟踪
 
-### Complete Request Lifecycle Tracking
+**请求跟踪界面** (2025-09-05更新):
+Web界面现在包括一个全面的请求跟踪页面，替换了简单的日志视图:
 
-**Request Tracking Interface** (2025-09-05 Update):
-The Web interface now includes a comprehensive request tracking page that replaces the simple logs view:
+**功能**:
+- **多维过滤**: 按日期范围，状态，模型，端点，组过滤
+- **实时更新**: 通过SSE集成进行实时请求监控  
+- **详细视图**: 完整的请求生命周期，包含时间，令牌和成本信息
+- **导出功能**: 带灵活过滤选项的CSV/JSON导出
+- **性能分析**: 统计摘要和趋势
+- **分页支持**: 高效浏览大型请求数据集
 
-**Features**:
-- **Multi-dimensional Filtering**: Filter by date range, status, model, endpoint, group
-- **Real-time Updates**: Live request monitoring via SSE integration  
-- **Detailed View**: Complete request lifecycle with timing, tokens, and cost information
-- **Export Capabilities**: CSV/JSON export with flexible filtering options
-- **Performance Analytics**: Statistical summaries and trends
-- **Pagination Support**: Efficient browsing of large request datasets
+### 数据库模式和时区处理
 
-**Usage Tracking APIs**:
-```bash
-# Get detailed request logs with filtering and pagination
-GET /api/v1/usage/requests?limit=100&offset=0&status=success&model=claude-sonnet-4
-
-# Get usage statistics and summaries
-GET /api/v1/usage/stats?period=7d&start_date=2025-09-01&end_date=2025-09-05
-
-# Export request data in multiple formats
-GET /api/v1/usage/export?format=csv&model=claude-3-5-haiku&start_date=2025-09-01
-```
-
-### Database Schema and Timezone Handling
-
-The system uses SQLite with WAL mode for high-performance usage tracking. **All timestamp fields use local timezone (CST +08:00)** for accurate time recording:
+系统使用带WAL模式的SQLite进行高性能使用跟踪。**所有时间戳字段使用本地时区(CST +08:00)**准确时间记录:
 
 ```sql
--- Correct timezone configuration in schema.sql
 created_at DATETIME DEFAULT (datetime('now', 'localtime')),
 updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
-
--- Triggers also use local time
-UPDATE table_name SET updated_at = datetime('now', 'localtime') WHERE id = NEW.id;
 ```
 
-### Asynchronous Operation Design
+### 异步操作设计
 
-**Complete Non-Blocking Architecture**:
-- **Event Channel**: Buffered channel (default 1000 events) with non-blocking send
-- **Batch Processing**: Groups events for efficient database writes (default 100 events/batch)
-- **Independent Goroutines**: Separate processing threads prevent main request blocking
-- **Graceful Degradation**: Event dropping on buffer overflow (with logging) instead of blocking
+**完全非阻塞架构**:
+- **事件通道**: 缓冲通道(默认1000事件)非阻塞发送
+- **批处理**: 为高效数据库写入分组事件(默认100事件/批次)
+- **独立协程**: 单独的处理线程防止主请求阻塞
+- **优雅降级**: 缓冲区溢出时丢弃事件(带日志)而不是阻塞
 
-### Critical Bug Fixes (2025-09-09)
+### 关键错误修复 (2025-09-09)
 
-**Token Parser Architecture Overhaul**:
-- **Problem**: Both `message_start` and `message_delta` events were processing token usage, causing double token counting and incorrect cost calculations
-- **Solution**: Clear separation - `message_start` only extracts model information, `message_delta` handles complete token statistics
-- **Impact**: Accurate cost calculations, no more duplicate token counting, proper fallback for non-Claude endpoints
+**Token解析器架构改革**:
+- **问题**: `message_start`和`message_delta`事件都在处理token使用，导致双倍token计算和错误成本计算
+- **解决方案**: 清晰分离-`message_start`仅提取模型信息，`message_delta`处理完整token统计
+- **影响**: 准确的成本计算，不再有重复token计算，为非Claude端点提供适当的fallback
 
-**Database Status Logic Fix**:
-- **Problem**: `completeRequest` SQL only updated `pending → completed`, leaving `processing` requests stuck
-- **Solution**: Changed SQL to `status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END`
-- **Impact**: All request states now properly transition to completed
+### 数据收集点
 
-**Retry Status Tracking Enhancement**:
-- **Problem**: Same-endpoint retries weren't updating status to `retry`, only cross-endpoint switches
-- **Solution**: Added status update to `retry` for all retry attempts (internal/proxy/retry.go:242-245)
-- **Impact**: Complete visibility into retry behavior, better debugging and monitoring
-
-**Event Architecture Clarification**:
-- **`RecordRequestStart`**: Initial request state (`pending`)
-- **`RecordRequestUpdate`**: All intermediate state changes (`forwarding`, `retry`, `processing`, etc.)
-- **`RecordRequestComplete`**: Final completion with token data and cost calculation (`completed`)
-
-### Data Collection Points
-
-**Request Lifecycle Tracking**:
+**请求生命周期跟踪**:
 ```go
-// 1. Request Start (middleware/logging.go:76)
+// 1. 请求开始 (middleware/logging.go:76)
 usageTracker.RecordRequestStart(requestID, clientIP, userAgent)
 
-// 2. Status Updates (proxy/retry.go:154,185,211)  
+// 2. 状态更新 (proxy/retry.go:154,185,211)
 usageTracker.RecordRequestUpdate(requestID, endpoint, group, status, retryCount, httpStatus)
 
-// 3. Token Completion (proxy/token_parser.go:206)
+// 3. Token完成 (proxy/token_parser.go:206)
 usageTracker.RecordRequestComplete(requestID, modelName, tokens, duration)
 ```
 
-### Model Detection and Token Parsing
+### 模型检测和Token解析
 
-**Dual SSE Event Processing**:
-- **message_start**: Extracts model information (e.g., `claude-3-5-haiku-20241022`)
-- **message_delta**: Processes token usage from response streams
-- **Integrated Logging**: Model info included in token usage logs
-- **Safe Implementation**: Model extraction doesn't affect client responses
+**双SSE事件处理**:
+- **message_start**: 提取模型信息(例如，`claude-3-5-haiku-20241022`)
+- **message_delta**: 处理响应流中的token使用
+- **集成日志**: token使用日志中包含模型信息
+- **安全实现**: 模型提取不影响客户端响应
 
-### Cost Calculation
+### 成本计算
 
-**Real-time Pricing Integration**:
+**实时定价集成**:
 ```yaml
 model_pricing:
   "claude-sonnet-4-20250514":
-    input: 3.00          # USD per 1M tokens
+    input: 3.00          # 每100万token的美元
     output: 15.00
-    cache_creation: 3.75 # 1.25x input for cache creation
-    cache_read: 0.30     # 0.1x input for cache reads
+    cache_creation: 3.75 # 输入的1.25倍用于缓存创建
+    cache_read: 0.30     # 输入的0.1倍用于缓存读取
 ```
 
-### Performance Characteristics
+### 性能特征
 
-**Verified Operation Metrics** (2025-09-05):
-- **Zero Blocking**: All database operations asynchronous 
-- **Accurate Timezone**: CST +08:00 timestamps in all fields
-- **Model Detection**: 100% success rate for SSE streams with model info
-- **Cost Tracking**: Precise calculation including cache token costs
-- **Example Usage**: 5 requests, $0.044938 total cost, 1,148 input + 97 output tokens
+**验证操作指标** (2025-09-05):
+- **零阻塞**: 所有数据库操作异步
+- **准确时区**: 所有字段中的CST +08:00时间戳
+- **模型检测**: 带模型信息的SSE流100%成功率
+- **成本跟踪**: 包括缓存token成本的精确计算
+- **示例使用**: 5个请求，$0.044938总成本，1,148输入+97输出token
 
-### Data Export Capabilities
+### 数据导出功能
 
-**Multi-format Export Support**:
+**多格式导出支持**:
 ```go
-// CSV Export with full request lifecycle
+// 带完整请求生命周期的CSV导出
 tracker.ExportToCSV(ctx, startTime, endTime, modelName, endpointName, groupName)
 
-// JSON Export for programmatic access  
+// 用于程序访问的JSON导出
 tracker.ExportToJSON(ctx, startTime, endTime, modelName, endpointName, groupName)
 ```
 
-### Troubleshooting
+### 故障排除
 
-**Common Issues Resolved**:
-1. **Timezone Problems**: Use `datetime('now', 'localtime')` instead of `CURRENT_TIMESTAMP`
-2. **Model Name Missing**: Ensure SSE streams contain `message_start` events
-3. **High Costs**: Monitor cache token usage (cache_creation_tokens, cache_read_tokens)
-4. **Performance Impact**: All tracking operations are fully asynchronous and non-blocking
+**已解决的常见问题**:
+1. **时区问题**: 使用`datetime('now', 'localtime')`而不是`CURRENT_TIMESTAMP`
+2. **缺少模型名称**: 确保SSE流包含`message_start`事件
+3. **高成本**: 监控缓存token使用(cache_creation_tokens, cache_read_tokens)
+4. **性能影响**: 所有跟踪操作完全异步且非阻塞

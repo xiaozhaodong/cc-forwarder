@@ -89,24 +89,22 @@ window.WebInterface = class {
                 this.loadOverview();
                 break;
             case 'endpoints':
-                if (this.cachedData.endpoints) {
-                    console.log('[Cache] 使用缓存数据显示endpoints');
+                // 端点页面优先使用SSE推送的缓存数据
+                if (this.cachedData.endpoints && this.cachedData.endpoints.endpoints) {
                     const container = document.getElementById('endpoints-table');
                     if (container) {
                         container.innerHTML = this.endpointsManager.generateEndpointsTable(this.cachedData.endpoints.endpoints);
                         this.endpointsManager.bindEndpointEvents();
                     }
                 } else {
-                    console.log('[Cache] 无缓存数据，请求endpoints API');
                     this.endpointsManager.loadEndpoints();
                 }
                 break;
             case 'groups':
-                if (this.cachedData.groups) {
-                    console.log('[Cache] 使用缓存数据显示groups');
+                // 组页面优先使用SSE推送的缓存数据
+                if (this.cachedData.groups && this.cachedData.groups.groups) {
                     this.groupsManager.displayGroups(this.cachedData.groups);
                 } else {
-                    console.log('[Cache] 无缓存数据，请求groups API');
                     this.groupsManager.loadGroups();
                 }
                 break;
@@ -131,6 +129,17 @@ window.WebInterface = class {
                         self.initializeRequestsFilters();
                     }
                 }, 100);
+                break;
+            case 'charts':
+                // 图表页面依赖chart.js，使用SSE数据进行实时更新
+                if (window.chartManager) {
+                    // 图表管理器存在，确保使用SSE更新模式
+                    if (!window.chartManager.sseEnabled) {
+                        window.chartManager.enableSSEUpdates();
+                    }
+                    // 触发图表数据刷新
+                    window.chartManager.refreshAllCharts();
+                }
                 break;
             case 'config':
                 // 配置数据总是重新加载以确保最新
@@ -413,19 +422,22 @@ window.WebInterface = class {
     }
 
     startAutoRefresh() {
-        // SSE连接建立后不再需要定时刷新
-        // 但为了兼容性保留，在SSE连接失败时使用
+        // 注意：移除定时刷新机制，改为纯事件驱动架构
+        // SSE连接建立后完全依赖事件推送，不需要定时刷新
         if (this.sseManager.isConnected()) {
             this.stopAutoRefresh();
+            console.log('✅ SSE已连接，使用事件驱动模式，无需定时刷新');
             return;
         }
         
-        // 每30秒自动刷新当前标签页数据
-        this.refreshInterval = setInterval(() => {
-            if (!this.sseManager.isConnected()) {
-                this.loadTabData(this.currentTab);
-            }
-        }, 30000);
+        // 仅在SSE连接失败时提供回退机制（保留框架但不启动定时器）
+        console.log('⚠️ SSE未连接，但定时刷新已禁用，完全依赖事件驱动');
+        // 原先的30秒定时刷新机制已移除：
+        // this.refreshInterval = setInterval(() => {
+        //     if (!this.sseManager.isConnected()) {
+        //         this.loadTabData(this.currentTab);
+        //     }
+        // }, 30000);
     }
 
     stopAutoRefresh() {

@@ -7,6 +7,13 @@ class ChartManager {
         this.isDestroyed = false;
         this.sseEnabled = false;
         
+        // 检查Chart.js是否可用
+        if (typeof Chart === 'undefined' || window.chartLoadFailed) {
+            console.warn('Chart.js不可用，图表功能将被禁用');
+            this.chartDisabled = true;
+            return;
+        }
+        
         // Chart.js 默认配置
         Chart.defaults.responsive = true;
         Chart.defaults.maintainAspectRatio = false;
@@ -59,7 +66,11 @@ class ChartManager {
 
     // 初始化所有图表
     async initializeCharts() {
-        if (this.isDestroyed) return;
+        if (this.isDestroyed || this.chartDisabled) {
+            console.log('图表功能已禁用，跳过初始化');
+            this.showChartDisabledMessage();
+            return;
+        }
         
         try {
             // 显示加载状态
@@ -118,6 +129,15 @@ class ChartManager {
             loading.style.display = 'block';
             loading.textContent = message;
             loading.style.color = '#ef4444';
+        });
+    }
+
+    // 显示图表禁用消息
+    showChartDisabledMessage() {
+        document.querySelectorAll('.chart-loading').forEach(loading => {
+            loading.style.display = 'block';
+            loading.textContent = '图表功能暂不可用 (Chart.js加载失败)';
+            loading.style.color = '#6b7280';
         });
     }
 

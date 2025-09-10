@@ -13,6 +13,7 @@ import (
 // EventBroadcaster 定义事件广播接口
 type EventBroadcaster interface {
 	BroadcastConnectionUpdate(data map[string]interface{})
+	BroadcastConnectionUpdateSmart(data map[string]interface{}, changeType string)
 	BroadcastEndpointUpdate(data map[string]interface{})
 	BroadcastLogEvent(data map[string]interface{})
 }
@@ -211,13 +212,17 @@ func (mm *MonitoringMiddleware) RecordRequest(endpoint, clientIP, userAgent, met
 func (mm *MonitoringMiddleware) RecordResponse(connID string, statusCode int, responseTime time.Duration, bytesSent int64, endpoint string) {
 	mm.metrics.RecordResponse(connID, statusCode, responseTime, bytesSent, endpoint)
 	
-	// 广播连接统计更新（限制频率，避免过度推送）
-	if mm.eventBroadcaster != nil && mm.shouldBroadcast("connection", 5*time.Second) {
+	// 使用智能推送系统
+	if mm.eventBroadcaster != nil {
 		stats := mm.metrics.GetMetrics()
 		suspendedStats := mm.metrics.GetSuspendedRequestStats()
+		
 		connectionData := map[string]interface{}{
+			"event":                       "connection_stats_updated",
+			"timestamp":                   time.Now().Format("2006-01-02 15:04:05"),
 			"total_requests":              stats.TotalRequests,
 			"active_connections":          len(stats.ActiveConnections),
+			"streaming_connections":       mm.getStreamingConnections(stats.ActiveConnections),
 			"successful_requests":         stats.SuccessfulRequests,
 			"failed_requests":             stats.FailedRequests,
 			"average_response_time":       stats.GetAverageResponseTime().String(),
@@ -227,9 +232,55 @@ func (mm *MonitoringMiddleware) RecordResponse(connID string, statusCode int, re
 			"timeout_suspended_requests":  suspendedStats["timeout_suspended_requests"],
 			"suspended_success_rate":      suspendedStats["success_rate"],
 			"average_suspended_time":      suspendedStats["average_suspended_time"],
+			// 智能推送相关的元数据
+			"status_code":                 statusCode,
+			"response_time_ms":            float64(responseTime.Nanoseconds()) / 1000000,
+			"endpoint":                    endpoint,
+			"bytes_sent":                  bytesSent,
 		}
-		mm.eventBroadcaster.BroadcastConnectionUpdate(connectionData)
+		
+		// 根据响应特征确定变化类型和优先级
+		changeType := mm.determineChangeType(statusCode, responseTime, endpoint)
+		mm.eventBroadcaster.BroadcastConnectionUpdateSmart(connectionData, changeType)
 	}
+}
+
+// determineChangeType 智能确定变化类型和优先级
+func (mm *MonitoringMiddleware) determineChangeType(statusCode int, responseTime time.Duration, endpoint string) string {
+	responseTimeMs := float64(responseTime.Nanoseconds()) / 1000000
+	
+	// 错误响应 - 高优先级
+	if statusCode >= 500 {
+		return "error_response"
+	}
+	
+	// 客户端错误 - 中等优先级
+	if statusCode >= 400 {
+		return "client_error_response"
+	}
+	
+	// 极慢响应 - 高优先级告警
+	if responseTimeMs > 10000 { // 10秒
+		return "critical_slow_response"
+	}
+	
+	// 慢响应 - 中等优先级
+	if responseTimeMs > 5000 { // 5秒
+		return "slow_response"
+	}
+	
+	// 正常响应但略慢 - 低优先级
+	if responseTimeMs > 2000 { // 2秒
+		return "normal_slow_response"
+	}
+	
+	// 快速响应 - 低优先级
+	if responseTimeMs < 100 { // 100ms以下
+		return "fast_response"
+	}
+	
+	// 常规响应 - 低优先级
+	return "request_completed"
 }
 
 // RecordRetry records a retry attempt
@@ -249,8 +300,8 @@ func (mm *MonitoringMiddleware) UpdateEndpointHealthStatus() {
 		)
 	}
 	
-	// 广播端点状态更新（限制频率）
-	if mm.eventBroadcaster != nil && mm.shouldBroadcast("endpoint", 10*time.Second) {
+	// 广播端点状态更新（立即推送，移除频率限制）
+	if mm.eventBroadcaster != nil {
 		endpointData := make([]map[string]interface{}, 0, len(endpoints))
 		for _, ep := range endpoints {
 			status := ep.GetStatus()

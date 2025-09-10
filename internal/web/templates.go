@@ -8,8 +8,18 @@ const indexHTML = `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Claude Request Forwarder - Web界面</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <!-- Chart.js with fallback and timeout -->
+    <script>
+    window.chartLoadTimeout = setTimeout(() => {
+        if (!window.Chart) {
+            console.warn('Chart.js CDN loading timeout, charts will be disabled');
+            window.chartLoadFailed = true;
+        }
+    }, 3000);
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js" 
+            onload="clearTimeout(window.chartLoadTimeout); console.log('Chart.js loaded successfully');"
+            onerror="window.chartLoadFailed=true; clearTimeout(window.chartLoadTimeout); console.warn('Chart.js CDN failed, charts disabled');"></script>
     <style>
         .connection-indicator {
             position: absolute;
@@ -1373,6 +1383,7 @@ const indexHTML = `<!DOCTYPE html>
     <script src="/static/js/charts.js"></script>
     <!-- 模块化JavaScript文件 -->
     <script src="/static/js/utils.js"></script>
+    <script src="/static/js/smartUpdateManager.js"></script>
     <script src="/static/js/sseManager.js"></script>
     <script src="/static/js/requestsManager.js"></script>
     <script src="/static/js/groupsManager.js"></script>

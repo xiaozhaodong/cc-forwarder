@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
@@ -27,12 +28,19 @@ type contextKey string
 
 const EndpointContextKey = contextKey("endpoint")
 
+// WebNotifier interface for Web interface notifications
+type WebNotifier interface {
+	BroadcastConnectionUpdateSmart(data map[string]interface{}, changeType string)
+	IsEventManagerActive() bool
+}
+
 // Handler handles HTTP proxy requests
 type Handler struct {
 	endpointManager *endpoint.Manager
 	config          *config.Config
 	retryHandler    *RetryHandler
 	usageTracker    *tracking.UsageTracker
+	webNotifier     WebNotifier // 添加Web通知器
 }
 
 // NewHandler creates a new proxy handler
@@ -57,6 +65,11 @@ func (h *Handler) SetMonitoringMiddleware(mm interface{
 // SetUsageTracker sets the usage tracker for request tracking
 func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	h.usageTracker = ut
+}
+
+// SetWebNotifier sets the web notifier for real-time connection updates
+func (h *Handler) SetWebNotifier(notifier WebNotifier) {
+	h.webNotifier = notifier
 }
 
 // GetRetryHandler returns the retry handler for accessing suspended request counts
@@ -171,6 +184,9 @@ func (h *Handler) handleRegularRequest(ctx context.Context, w http.ResponseWrite
 	}
 	
 	if lastErr != nil {
+		// 通知Web界面连接失败
+		h.notifyConnectionEvent(connID, selectedEndpointName, "error_response", lastErr)
+		
 		// Check if the error is due to no healthy endpoints
 		if strings.Contains(lastErr.Error(), "no healthy endpoints") {
 			http.Error(w, "Service Unavailable: No healthy endpoints available", http.StatusServiceUnavailable)
@@ -182,6 +198,8 @@ func (h *Handler) handleRegularRequest(ctx context.Context, w http.ResponseWrite
 	}
 
 	if finalResp == nil {
+		// 通知Web界面无响应错误
+		h.notifyConnectionEvent(connID, selectedEndpointName, "no_response", fmt.Errorf("no response received"))
 		http.Error(w, "No response received from any endpoint", http.StatusBadGateway)
 		return
 	}
@@ -231,6 +249,11 @@ func (h *Handler) handleRegularRequest(ctx context.Context, w http.ResponseWrite
 	// Write the body to client
 	_, writeErr := w.Write(bodyBytes)
 	if writeErr != nil {
+		// 通知Web界面写入失败
+		h.notifyConnectionEvent(connID, selectedEndpointName, "write_error", writeErr)
+	} else {
+		// 通知Web界面请求成功完成
+		h.notifyConnectionEvent(connID, selectedEndpointName, "request_completed", nil)
 	}
 }
 
@@ -538,4 +561,26 @@ func (h *Handler) UpdateConfig(cfg *config.Config) {
 	
 	// Update retry handler with new config
 	h.retryHandler.UpdateConfig(cfg)
+}
+
+// notifyConnectionEvent notifies the web interface about connection events
+func (h *Handler) notifyConnectionEvent(connID, endpoint, changeType string, err error) {
+	if h.webNotifier == nil || !h.webNotifier.IsEventManagerActive() {
+		return
+	}
+	
+	// 构建事件数据
+	data := map[string]interface{}{
+		"connection_id": connID,
+		"endpoint":      endpoint,
+		"change_type":   changeType,
+		"timestamp":     time.Now().Format("2006-01-02 15:04:05"),
+	}
+	
+	if err != nil {
+		data["error"] = err.Error()
+	}
+	
+	// 异步发送通知，避免阻塞请求处理
+	go h.webNotifier.BroadcastConnectionUpdateSmart(data, changeType)
 }

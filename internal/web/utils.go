@@ -12,15 +12,26 @@ func formatResponseTime(d time.Duration) string {
 	}
 	
 	ms := d.Milliseconds()
-	if ms >= 1000 {
+	if ms >= 10000 { // 10秒以上
 		seconds := float64(ms) / 1000
 		return fmt.Sprintf("%.1fs", seconds)
-	} else if ms >= 1 {
-		return fmt.Sprintf("%dms", ms)
+	} else if ms >= 1000 { // 1-10秒
+		seconds := float64(ms) / 1000
+		return fmt.Sprintf("%.2fs", seconds)
+	} else if ms >= 100 { // 100-999毫秒
+		return fmt.Sprintf("%.0fms", float64(ms))
+	} else if ms >= 10 { // 10-99毫秒
+		return fmt.Sprintf("%.1fms", float64(ms))
+	} else if ms >= 1 { // 1-9毫秒
+		return fmt.Sprintf("%.0fms", float64(ms))
 	} else {
 		// 小于1毫秒的情况，显示微秒
 		us := d.Microseconds()
-		return fmt.Sprintf("%dμs", us)
+		if us >= 100 {
+			return fmt.Sprintf("%.0fμs", float64(us))
+		} else {
+			return fmt.Sprintf("%.1fμs", float64(us))
+		}
 	}
 }
 

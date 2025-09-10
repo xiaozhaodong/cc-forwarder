@@ -326,6 +326,8 @@ func main() {
 		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, usageTracker, logger, startTime, *configPath)
 		// Register web server as endpoint notifier for real-time updates
 		endpointManager.SetWebNotifier(webServer)
+		// Register web server as proxy handler notifier for connection updates
+		proxyHandler.SetWebNotifier(webServer)
 		if err := webServer.Start(); err != nil {
 			logger.Error(fmt.Sprintf("❌ Web服务器启动失败: %v", err))
 		}
