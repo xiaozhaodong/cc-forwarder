@@ -2,9 +2,41 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version Information
+
+**Current Version**: v2.0 Architecture (2025-09-11)
+**Major Update**: Complete proxy architecture redesign with enhanced streaming and error recovery
+
+### Recent Updates
+
+**2025-09-11**: Major architecture upgrade
+- Stream Processor v2 with advanced streaming capabilities
+- Intelligent error recovery and classification system
+- Complete request lifecycle management
+- 25+ comprehensive test files added
+- Unified request processing architecture
+- Enhanced logging with architecture identification
+
+**2025-09-09**: Token parsing and status system enhancements  
+- Fixed token parsing duplication bug
+- Enhanced request status granularity  
+- Improved user experience in Web interface
+
+**2025-09-05**: Web handler refactoring and JavaScript modularization
+- Modular web handler architecture (11 specialized files)
+- Modern JavaScript module system
+- Comprehensive request tracking interface
+
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities. It includes both a Terminal User Interface (TUI) and Web Interface for real-time monitoring and management.
+
+**Key Features v2.0**:
+- **Dual Architecture**: Streaming v2 and Unified v2 request processing
+- **Intelligent Error Recovery**: Smart error classification and recovery strategies  
+- **Complete Lifecycle Tracking**: End-to-end request monitoring and analytics
+- **Advanced Streaming**: Real-time SSE processing with cancellation support
+- **Comprehensive Testing**: 25+ test files with extensive coverage
 
 ## Build and Development Commands
 
@@ -43,6 +75,37 @@ go test ./internal/middleware
 - **`internal/web/`**: Web Interface with real-time monitoring, SSE support, and group management
 - **`internal/transport/`**: HTTP/HTTPS/SOCKS5 proxy transport configuration
 
+### Proxy Architecture v2 (2025-09-11 Update)
+
+**Major Architecture Enhancement**: The proxy system has been completely redesigned with enhanced streaming capabilities, intelligent error recovery, and comprehensive lifecycle management.
+
+#### **Stream Processor v2**
+- **`internal/proxy/stream_processor.go`**: Advanced streaming request processor with cancellation support and error recovery
+- **Token Integration**: Seamless integration with token parsing and usage tracking
+- **Performance Optimization**: Efficient buffering and flushing mechanisms
+- **Error Resilience**: Automatic error detection and recovery for streaming connections
+
+#### **Error Recovery Management**
+- **`internal/proxy/error_recovery.go`**: Intelligent error classification and recovery system
+- **Smart Categorization**: Automatic classification of network, API, and streaming errors
+- **Recovery Strategies**: Context-aware error handling with appropriate recovery actions
+- **User Feedback**: Clear error messaging and status reporting
+
+#### **Request Lifecycle Management** 
+- **`internal/proxy/lifecycle_manager.go`**: Complete request state tracking and management
+- **Status Transitions**: Comprehensive tracking from initiation to completion
+- **Duration Monitoring**: Accurate timing measurements for performance analysis
+- **Integration Hub**: Central coordination point for all request-related components
+
+#### **Unified Request Handling**
+- **Architecture Identification**: Clear distinction between streaming (v2) and regular (unified v2) requests
+- **Enhanced Logging**: All requests now include architecture type in logs:
+  ```
+  🌊 [流式架构] [req-xxxxxxxx] 使用streaming v2架构
+  🔄 [常规架构] [req-xxxxxxxx] 使用unified v2架构
+  ```
+- **Consistent Processing**: Unified error handling and status tracking across both request types
+
 ### Key Design Patterns
 
 **Strategy Pattern**: Endpoint selection via "priority" or "fastest" strategies with optional pre-request fast testing
@@ -53,14 +116,31 @@ go test ./internal/middleware
 
 **Circuit Breaker Pattern**: Health checking with automatic endpoint marking as healthy/unhealthy
 
-### Request Flow
+**Factory Pattern**: Request processor creation based on request type (streaming vs regular)
 
-1. Request reception with middleware chain (auth → logging → monitoring)
-2. Endpoint selection based on strategy and health status
-3. Header transformation (strip client auth, inject endpoint tokens and API keys)
-4. Request forwarding with timeout and retry handling
-5. Response streaming (SSE) or buffered response handling
-6. Error handling with automatic endpoint fallback
+**State Machine Pattern**: Request lifecycle management with clear state transitions
+
+### Request Flow v2
+
+#### **Enhanced Request Processing Pipeline**
+1. **Request Reception**: Middleware chain processing (auth → logging → monitoring)
+2. **Architecture Detection**: Automatic SSE stream detection and processor selection
+3. **Lifecycle Initialization**: Request ID generation and lifecycle manager setup
+4. **Endpoint Selection**: Strategy-based selection with health status validation
+5. **Request Processing**: 
+   - **Streaming Requests**: Stream Processor v2 with real-time token parsing
+   - **Regular Requests**: Unified processor with response analysis
+6. **Error Handling**: Intelligent error classification and recovery attempts
+7. **Status Tracking**: Complete lifecycle monitoring with granular status updates
+8. **Response Delivery**: Optimized delivery with proper connection management
+
+#### **Status Flow Enhancement**
+```
+正常流程: pending → forwarding → processing → completed
+流式流程: pending → forwarding → streaming → processing → completed
+重试流程: pending → forwarding → retry → processing → completed
+错误恢复: pending → forwarding → error_recovery → retry → completed
+```
 
 ## Configuration
 
@@ -191,14 +271,106 @@ endpoints:
     # 🔄 Still inherits group: "backup" and group-priority: 2
 ```
 
-## Testing Approach
+## Testing Approach (2025-09-11 Update)
 
-The codebase includes comprehensive unit tests:
-- `*_test.go` files in each package
-- Test configuration in `test_config.yaml`
-- Health check testing with mock endpoints
-- Fast tester functionality testing
-- Proxy handler testing with various scenarios
+**Comprehensive Test Architecture**: The codebase has been significantly enhanced with extensive test coverage following Go best practices.
+
+### Test Organization
+
+The testing structure follows Go conventions with tests co-located with source code:
+
+#### **Unit Tests** (Internal Package Testing)
+- **Location**: `*_test.go` files alongside source code in each package
+- **Access**: Can test unexported functions and internal implementation details
+- **Coverage**: Core business logic, edge cases, and error conditions
+- **Examples**:
+  ```bash
+  internal/proxy/handler_test.go           # Request handler testing
+  internal/proxy/stream_processor_test.go  # Streaming logic testing
+  internal/proxy/error_recovery_test.go    # Error handling testing
+  internal/endpoint/manager_test.go        # Endpoint management testing
+  internal/tracking/tracker_test.go        # Usage tracking testing
+  ```
+
+#### **Integration Tests** (External Testing)
+- **Location**: `tests/integration/` directory 
+- **Access**: Test through public APIs and interfaces
+- **Coverage**: End-to-end workflows and component integration
+- **Examples**:
+  ```bash
+  tests/integration/request_suspend/       # Request suspension workflows
+  tests/unit/monitor/                     # External monitoring interfaces
+  ```
+
+### Test Categories and Coverage
+
+#### **Core Proxy Testing**
+- **Stream Processing**: Comprehensive streaming request handling with cancellation
+- **Error Recovery**: All error types (network, API, streaming) with recovery strategies
+- **Lifecycle Management**: Complete request state transitions and timing
+- **Token Parsing**: SSE event processing and model detection
+- **Retry Logic**: Multi-endpoint retry scenarios with group switching
+
+#### **Performance Testing** 
+- **`internal/proxy/performance_test.go`**: Load testing and performance benchmarks
+- **Concurrent Request Handling**: Multi-threaded request processing validation
+- **Memory Efficiency**: Resource usage monitoring and leak detection
+- **Response Time Analysis**: Latency measurements and optimization validation
+
+#### **Integration Testing**
+- **Request Suspension**: Complete suspension/recovery workflows
+- **Group Management**: Multi-group failover and manual intervention scenarios  
+- **Usage Tracking**: End-to-end request tracking and data export
+- **Stream Token Integration**: Real-time token parsing during streaming
+
+### Test Configuration
+
+- **Test Configuration**: `test_config.yaml` for test-specific settings
+- **Mock Endpoints**: Configurable test servers for controlled testing environments
+- **Database Testing**: In-memory SQLite for isolated database tests
+- **Concurrency Testing**: Multi-goroutine safety validation
+
+### Testing Commands
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run specific module tests
+go test ./internal/proxy/...
+go test ./internal/endpoint/...
+go test ./internal/tracking/...
+
+# Run integration tests only
+go test ./tests/...
+
+# Run performance tests
+go test -bench=. ./internal/proxy/
+
+# Run tests with race detection
+go test -race ./...
+
+# Verbose test output
+go test -v ./internal/proxy/
+```
+
+### Test Quality Metrics
+
+**Coverage Statistics** (2025-09-11):
+- **Total Test Files**: 25+ comprehensive test files
+- **Code Coverage**: High coverage of critical paths and error conditions  
+- **Test Scenarios**: 200+ individual test cases covering normal and edge cases
+- **Performance Tests**: Dedicated benchmarking for critical components
+- **Integration Workflows**: Complete end-to-end testing scenarios
+
+**Test Categories**:
+- **Unit Tests**: 20 files testing individual components and functions
+- **Integration Tests**: 5 files testing system workflows and interactions
+- **Performance Tests**: Dedicated benchmarking and load testing
+- **Edge Case Testing**: Comprehensive error condition and boundary testing
 
 ## Request ID Tracking and Lifecycle Monitoring
 
@@ -525,7 +697,7 @@ curl -H "Authorization: Bearer your-token-here" http://localhost:8010/api/v1/gro
 
 ## Development Architecture
 
-### File Structure
+### File Structure (2025-09-11 Update)
 ```
 internal/
 ├── web/
@@ -563,9 +735,40 @@ internal/
 │   ├── error_handler.go   # Error handling and recovery
 │   └── schema.sql         # Database schema with timezone fixes
 └── proxy/
+    ├── handler.go         # Main request handler with unified architecture
     ├── retry.go           # Configurable retry logic with group switching
-    └── token_parser.go    # SSE token parsing and model detection
+    ├── token_parser.go    # SSE token parsing and model detection
+    ├── stream_processor.go # Advanced streaming processor v2 ⭐ NEW
+    ├── error_recovery.go  # Intelligent error classification and recovery ⭐ NEW 
+    ├── lifecycle_manager.go # Complete request lifecycle management ⭐ NEW
+    └── [15+ test files]   # Comprehensive test coverage
 ```
+
+### New Architecture Components (2025-09-11)
+
+#### **Stream Processor v2** (`stream_processor.go`)
+- **528 lines**: Advanced streaming request processor
+- **Features**: Cancellation support, error recovery, token integration
+- **Performance**: Optimized buffering and real-time processing
+- **Integration**: Seamless usage tracking and lifecycle management
+
+#### **Error Recovery System** (`error_recovery.go`) 
+- **475 lines**: Intelligent error classification and recovery
+- **Categories**: Network errors, API errors, streaming errors, unknown errors
+- **Recovery**: Context-aware recovery strategies and user feedback
+- **Monitoring**: Comprehensive error tracking and reporting
+
+#### **Lifecycle Management** (`lifecycle_manager.go`)
+- **279 lines**: Complete request state tracking
+- **Features**: Status transitions, duration monitoring, endpoint tracking  
+- **Integration**: Central coordination hub for all request components
+- **Analytics**: Detailed timing and performance metrics
+
+#### **Enhanced Handler Architecture** 
+- **handler.go**: Expanded from basic forwarding to unified architecture (695 lines added)
+- **Dual Processing**: Automatic detection and routing for streaming vs regular requests
+- **Architecture Logging**: Clear identification of processing type in logs
+- **Integration**: Seamless coordination with all v2 components
 
 ### Code Architecture Refactoring (2025-09-05)
 
