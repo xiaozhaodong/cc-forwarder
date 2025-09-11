@@ -11,6 +11,21 @@ import (
 	"cc-forwarder/internal/tracking"
 )
 
+// TokenParserInterface 统一的Token解析接口
+// 根据STREAMING_REFACTOR_PROPOSAL.md方案设计
+type TokenParserInterface interface {
+	ParseMessageStart(line string) *ModelInfo
+	ParseMessageDelta(line string) *tracking.TokenUsage  
+	SetModel(modelName string)
+	GetFinalUsage() *tracking.TokenUsage
+	Reset()
+}
+
+// ModelInfo 模型信息结构体
+type ModelInfo struct {
+	Model string `json:"model"`
+}
+
 // UsageData represents the usage field in Claude API SSE events
 type UsageData struct {
 	InputTokens            int64 `json:"input_tokens"`
@@ -61,6 +76,7 @@ const (
 )
 
 // TokenParser handles parsing of SSE events for token usage extraction
+// 实现TokenParserInterface接口
 type TokenParser struct {
 	// Buffer to collect multi-line JSON data
 	eventBuffer     strings.Builder
@@ -74,6 +90,10 @@ type TokenParser struct {
 	usageTracker    *tracking.UsageTracker
 	// Start time for duration calculation
 	startTime       time.Time
+	// Final token usage for accumulation
+	finalUsage      *tracking.TokenUsage
+	// Partial usage for handling interruptions
+	partialUsage    *tracking.TokenUsage
 }
 
 // NewTokenParser creates a new token parser instance
@@ -173,14 +193,9 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 	if messageStart.Message != nil && messageStart.Message.Model != "" {
 		tp.modelName = messageStart.Message.Model
 		
-		// Log model extraction (不处理token usage)
-		if tp.requestID != "" {
-			slog.Info(fmt.Sprintf("🎯 [模型提取] [%s] 从message_start事件中提取模型信息: %s", 
-				tp.requestID, tp.modelName))
-		} else {
-			slog.Info(fmt.Sprintf("🎯 [模型提取] 从message_start事件中提取模型信息: %s", 
-				tp.modelName))
-		}
+		// Log model extraction (不处理token usage) - 始终包含requestID
+		slog.Info(fmt.Sprintf("🎯 [模型提取] [%s] 从message_start事件中提取模型信息: %s", 
+			tp.requestID, tp.modelName))
 	}
 	
 	// ⚠️ 重要：message_start事件不处理token usage信息
@@ -248,37 +263,41 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 		CacheCreationTokens:    messageDelta.Usage.CacheCreationInputTokens,
 		CacheReadTokens:        messageDelta.Usage.CacheReadInputTokens,
 	}
-
-	modelInfo := ""
-	if tp.modelName != "" {
-		modelInfo = fmt.Sprintf(" 模型: %s,", tp.modelName)
+	
+	// ✅ 设置finalUsage供GetFinalUsage()方法使用
+	tp.finalUsage = &tracking.TokenUsage{
+		InputTokens:         messageDelta.Usage.InputTokens,
+		OutputTokens:        messageDelta.Usage.OutputTokens,
+		CacheCreationTokens: messageDelta.Usage.CacheCreationInputTokens,
+		CacheReadTokens:     messageDelta.Usage.CacheReadInputTokens,
 	}
 
-	if tp.requestID != "" {
-		slog.Info(fmt.Sprintf("🪙 [Token使用统计] [%s] 从message_delta事件中提取完整令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
-			tp.requestID, modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
-	} else {
-		slog.Info(fmt.Sprintf("🪙 [Token使用统计] 从message_delta事件中提取完整令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
-			modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
-	}
+	// 移除重复的日志记录 - 由StreamProcessor统一处理
+	// if tp.requestID != "" {
+	//	slog.Info(fmt.Sprintf("🪙 [Token使用统计] [%s] 从message_delta事件中提取完整令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+	//		tp.requestID, modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
+	// } else {
+	//	slog.Info(fmt.Sprintf("🪙 [Token使用统计] 从message_delta事件中提取完整令牌使用情况 -%s 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+	//		modelInfo, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
+	// }
 
-	// ✅ 只在message_delta中记录请求完成和成本计算
-	// 这是正确的时机，因为message_delta包含最终的完整token usage信息
-	if tp.usageTracker != nil && tp.requestID != "" {
-		// Calculate duration since parser creation
-		duration := time.Since(tp.startTime)
-		
-		// Convert monitor.TokenUsage to tracking.TokenUsage
-		trackingTokens := &tracking.TokenUsage{
-			InputTokens:         tokenUsage.InputTokens,
-			OutputTokens:        tokenUsage.OutputTokens,
-			CacheCreationTokens: tokenUsage.CacheCreationTokens,
-			CacheReadTokens:     tokenUsage.CacheReadTokens,
-		}
-		
-		// Record the completion with token usage and cost information
-		tp.usageTracker.RecordRequestComplete(tp.requestID, tp.modelName, trackingTokens, duration)
-	}
+	// ✅ TokenParser只负责解析，不直接调用usage tracker
+	// usage tracker的调用由上层（StreamProcessor或Handler）统一管理
+	// if tp.usageTracker != nil && tp.requestID != "" {
+	//	// Calculate duration since parser creation
+	//	duration := time.Since(tp.startTime)
+	//	
+	//	// Convert monitor.TokenUsage to tracking.TokenUsage
+	//	trackingTokens := &tracking.TokenUsage{
+	//		InputTokens:         tokenUsage.InputTokens,
+	//		OutputTokens:        tokenUsage.OutputTokens,
+	//		CacheCreationTokens: tokenUsage.CacheCreationTokens,
+	//		CacheReadTokens:     tokenUsage.CacheReadTokens,
+	//	}
+	//	
+	//	// Record the completion with token usage and cost information
+	//	tp.usageTracker.RecordRequestComplete(tp.requestID, tp.modelName, trackingTokens, duration)
+	// }
 
 	return tokenUsage
 }
@@ -288,6 +307,9 @@ func (tp *TokenParser) Reset() {
 	tp.eventBuffer.Reset()
 	tp.currentEvent = ""
 	tp.collectingData = false
+	tp.finalUsage = nil
+	tp.partialUsage = nil
+	tp.startTime = time.Now()
 }
 
 // parseErrorEvent parses SSE error events and records them as API errors
@@ -358,4 +380,98 @@ func (tp *TokenParser) parseErrorEvent() {
 // SetModelName allows setting the model name directly (useful for JSON response parsing)
 func (tp *TokenParser) SetModelName(modelName string) {
 	tp.modelName = modelName
+}
+
+// ParseMessageStart 实现接口方法 - 解析message_start事件提取模型信息
+func (tp *TokenParser) ParseMessageStart(line string) *ModelInfo {
+	if !strings.HasPrefix(line, "data: ") {
+		return nil
+	}
+	
+	data := line[6:] // Remove "data: "
+	if strings.TrimSpace(data) == "[DONE]" {
+		return nil
+	}
+	
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return nil
+	}
+	
+	if event["type"] == "message_start" {
+		if message, ok := event["message"].(map[string]interface{}); ok {
+			if model, ok := message["model"].(string); ok {
+				tp.SetModel(model)
+				return &ModelInfo{Model: model}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// ParseMessageDelta 实现接口方法 - 解析message_delta事件提取Token使用统计
+func (tp *TokenParser) ParseMessageDelta(line string) *tracking.TokenUsage {
+	if !strings.HasPrefix(line, "data: ") {
+		return nil
+	}
+	
+	data := line[6:] // Remove "data: "
+	if strings.TrimSpace(data) == "[DONE]" {
+		return nil
+	}
+	
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return nil
+	}
+	
+	if event["type"] == "message_delta" {
+		if usage, ok := event["usage"].(map[string]interface{}); ok {
+			tokenUsage := &tracking.TokenUsage{}
+			
+			if inputTokens, ok := usage["input_tokens"].(float64); ok {
+				tokenUsage.InputTokens = int64(inputTokens)
+			}
+			if outputTokens, ok := usage["output_tokens"].(float64); ok {
+				tokenUsage.OutputTokens = int64(outputTokens)
+			}
+			if cacheCreation, ok := usage["cache_creation_input_tokens"].(float64); ok {
+				tokenUsage.CacheCreationTokens = int64(cacheCreation)
+			}
+			if cacheRead, ok := usage["cache_read_input_tokens"].(float64); ok {
+				tokenUsage.CacheReadTokens = int64(cacheRead)
+			}
+			
+			// 保存最终使用统计
+			tp.finalUsage = tokenUsage
+			
+			return tokenUsage
+		}
+	}
+	
+	return nil
+}
+
+// SetModel 实现接口方法 - 设置模型名称
+func (tp *TokenParser) SetModel(modelName string) {
+	tp.modelName = modelName
+}
+
+// GetFinalUsage 实现接口方法 - 获取最终Token使用统计
+func (tp *TokenParser) GetFinalUsage() *tracking.TokenUsage {
+	return tp.finalUsage
+}
+
+// GetModelName 获取模型名称
+func (tp *TokenParser) GetModelName() string {
+	return tp.modelName
+}
+
+// GetPartialUsage 获取部分Token使用统计（用于网络中断恢复）
+func (tp *TokenParser) GetPartialUsage() *tracking.TokenUsage {
+	if tp.partialUsage != nil {
+		return tp.partialUsage
+	}
+	return tp.finalUsage
 }

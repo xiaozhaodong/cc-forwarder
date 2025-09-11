@@ -185,17 +185,27 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					retryDecision := rh.shouldRetryStatusCode(resp.StatusCode)
 					
 					if !retryDecision.IsRetryable {
-						// Success or non-retryable error - return the response
-						slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: %d (总尝试 %d 个端点)", 
-							connID, ep.Config.Name, groupName, resp.StatusCode, totalEndpointsAttempted))
-						
-						// Record success in usage tracking
-						if rh.usageTracker != nil && connID != "" {
-							status := "processing"  // 改为processing，表示HTTP响应成功但Token解析中
-							if resp.StatusCode >= 400 {
-								status = "error"
+						// 区分真正的成功和不可重试的错误
+						if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+							// 2xx/3xx - 真正的成功
+							slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: %d (总尝试 %d 个端点)", 
+								connID, ep.Config.Name, groupName, resp.StatusCode, totalEndpointsAttempted))
+							
+							// Record success in usage tracking
+							if rh.usageTracker != nil && connID != "" {
+								status := "processing"  // HTTP响应成功但Token解析中
+								rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, attempt-1, resp.StatusCode)
 							}
-							rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, attempt-1, resp.StatusCode)
+						} else {
+							// 4xx/5xx - 不可重试的错误（如404, 401等）
+							slog.ErrorContext(ctxWithEndpoint, fmt.Sprintf("❌ [请求失败] [%s] 端点: %s (组: %s), 状态码: %d - %s (总尝试 %d 个端点)", 
+								connID, ep.Config.Name, groupName, resp.StatusCode, retryDecision.Reason, totalEndpointsAttempted))
+							
+							// Record error in usage tracking
+							if rh.usageTracker != nil && connID != "" {
+								status := "error"  // 明确标记为错误状态
+								rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, attempt-1, resp.StatusCode)
+							}
 						}
 						
 						return resp, nil

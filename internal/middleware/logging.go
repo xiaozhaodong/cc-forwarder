@@ -86,8 +86,8 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 			bytes:          0,
 		}
 
-		// Log initial request (without endpoint info yet)
-		lm.logger.Info(fmt.Sprintf("🚀 Request started [%s]", connID),
+		// Store request info (request start logging handled by lifecycle manager)
+		lm.logger.Debug(fmt.Sprintf("📝 [请求接收] [%s] %s %s", connID, r.Method, r.URL.Path), 
 			"method", r.Method,
 			"path", r.URL.Path,
 			"client_ip", clientIP,
@@ -113,9 +113,9 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 			lm.monitoringMiddleware.RecordResponse(connID, rw.statusCode, duration, rw.bytes, selectedEndpoint)
 		}
 
-		// Log response
+		// Log response details (completion logging handled by lifecycle manager)
 		statusEmoji := getStatusEmoji(rw.statusCode)
-		lm.logger.Info(fmt.Sprintf("%s Request completed [%s]", statusEmoji, connID),
+		lm.logger.Debug(fmt.Sprintf("%s [请求详情] [%s] %s %s → %d (%s)", statusEmoji, connID, r.Method, r.URL.Path, rw.statusCode, formatDuration(duration)),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"endpoint", selectedEndpoint,
@@ -147,7 +147,7 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 				emoji = "❌"
 			}
 			
-			lm.logger.Log(r.Context(), level, fmt.Sprintf("%s Request error [%s]", emoji, connID),
+			lm.logger.Log(r.Context(), level, fmt.Sprintf("%s Error details", emoji),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"endpoint", selectedEndpoint,
