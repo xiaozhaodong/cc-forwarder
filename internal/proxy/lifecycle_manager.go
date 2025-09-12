@@ -84,6 +84,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 
 // CompleteRequest 完成请求跟踪
 // 调用 RecordRequestComplete 记录请求完成，包含Token使用信息和成本计算
+// 这是所有请求完成的统一入口，确保架构一致性
 func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage) {
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		duration := time.Since(rlm.startTime)
@@ -94,13 +95,28 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 			modelName = "unknown"
 		}
 		
+		// 记录请求完成信息到使用跟踪器
 		rlm.usageTracker.RecordRequestComplete(rlm.requestID, modelName, tokens, duration)
 		
 		// 同时更新状态为完成
 		rlm.UpdateStatus("completed", rlm.retryCount, 0)
 		
-		slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 模型: %s, 耗时: %dms", 
-			rlm.requestID, modelName, duration.Milliseconds()))
+		// 增强的完成日志，包含更详细信息
+		if tokens != nil {
+			totalTokens := tokens.InputTokens + tokens.OutputTokens
+			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
+			
+			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: 200 (总尝试 %d 个端点)", 
+				rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount+1))
+			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms", 
+				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens, 
+				totalTokens, cacheTokens, duration.Milliseconds()))
+		} else {
+			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 模型: %s, 耗时: %dms (无Token统计)", 
+				rlm.requestID, rlm.endpointName, rlm.groupName, modelName, duration.Milliseconds()))
+		}
+		
+		slog.Info(fmt.Sprintf("✅ Request completed [%s]", rlm.requestID))
 	}
 }
 

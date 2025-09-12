@@ -335,7 +335,7 @@ func TestStreamProcessor_FullPerformance(t *testing.T) {
 			
 			// 执行完整的流式处理
 			resp := createMockResponse(data)
-			err := processor.ProcessStream(context.Background(), resp)
+			_, err := processor.ProcessStream(context.Background(), resp)
 			resp.Body.Close()
 			
 			duration := time.Since(start)
@@ -418,7 +418,7 @@ func TestStreamProcessor_TokenParsingPerformance(t *testing.T) {
 	
 	// 执行Token解析性能测试
 	resp := createMockResponse(data)
-	err := processor.ProcessStream(context.Background(), resp)
+	_, err := processor.ProcessStream(context.Background(), resp)
 	resp.Body.Close()
 	
 	duration := time.Since(start)

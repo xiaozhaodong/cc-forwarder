@@ -84,20 +84,10 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokens(ctx context.Context, responseBo
 	// Fallback: No token information found, mark request as completed with non_token_response model
 	slog.InfoContext(ctx, fmt.Sprintf("🎯 [无Token响应] 端点: %s, 连接: %s - 响应不包含token信息，标记为完成", endpointName, connID))
 	
-	// Update request status to completed and set model name to "non_token_response"
-	if a.usageTracker != nil && connID != "" {
-		// Create empty token usage for consistent completion tracking
-		emptyTokens := &tracking.TokenUsage{
-			InputTokens:         0,
-			OutputTokens:        0,
-			CacheCreationTokens: 0,
-			CacheReadTokens:     0,
-		}
-		
-		// Record completion with non_token_response model name and zero duration (since we don't track start time here)
-		a.usageTracker.RecordRequestComplete(connID, "non_token_response", emptyTokens, 0)
-		
-		slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 已标记为完成状态，模型: non_token_response", connID))
+	// ⚠️ 注意：这个方法不再直接记录到数据库，由调用方决定如何处理
+	// 但为了兼容现有调用，我们保留日志记录功能
+	if connID != "" {
+		slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 检测为无Token响应，模型: non_token_response", connID))
 	}
 }
 
@@ -217,36 +207,12 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 	   strings.Contains(responseBody, "event: message_delta") {
 		a.ParseSSETokens(ctx, responseBody, endpointName, connID)
 		
-		// ⚠️ 补充：ParseSSETokens不再记录到数据库，需要在此处补充
-		// 重新解析获取token信息并记录到UsageTracker
-		if a.usageTracker != nil && connID != "" {
-			tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
-			lines := strings.Split(responseBody, "\n")
-			
-			for _, line := range lines {
-				if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
-					// 获取模型名称
-					modelName := "unknown"
-					if tp, ok := tokenParser.(interface{ GetModelName() string }); ok {
-						modelName = tp.GetModelName()
-					}
-					
-					// 转换为tracking.TokenUsage格式
-					trackingTokens := &tracking.TokenUsage{
-						InputTokens:         tokenUsage.InputTokens,
-						OutputTokens:        tokenUsage.OutputTokens,
-						CacheCreationTokens: tokenUsage.CacheCreationTokens,
-						CacheReadTokens:     tokenUsage.CacheReadTokens,
-					}
-					
-					// 获取准确的持续时间
-					duration := lifecycleManager.GetDuration()
-					
-					// 记录到数据库
-					a.usageTracker.RecordRequestComplete(connID, modelName, trackingTokens, duration)
-					break // 找到token usage后退出循环
-				}
-			}
+		// ℹ️ 返回Token信息，由Handler通过生命周期管理器记录
+		// 不再直接调用usageTracker.RecordRequestComplete，遵循架构原则
+		if tokenUsage, modelName := a.parseSSEForTokens(responseBody, connID, endpointName); tokenUsage != nil {
+			slog.InfoContext(ctx, fmt.Sprintf("💾 [SSEToken解析] [%s] 模型: %s, Token信息已解析完成", connID, modelName))
+			// 返回Token信息，由上层Handler调用生命周期管理器记录
+			return // TokenAnalyzer不再直接记录，返回给上层处理
 		}
 		
 		return
@@ -287,61 +253,145 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 				"cacheRead", tokenUsage.CacheReadTokens)
 		}
 		
-		// 🔧 修复：同时保存到数据库，使用准确的处理时间
-		if a.usageTracker != nil && connID != "" && lifecycleManager != nil {
-			// 转换Token格式
-			dbTokens := &tracking.TokenUsage{
+		// ℹ️ 返回Token信息，由Handler通过生命周期管理器记录
+		// 不再直接调用usageTracker.RecordRequestComplete，遵循架构原则
+		if tokenUsage, modelName := a.parseJSONForTokens(responseBody, connID, endpointName); tokenUsage != nil {
+			slog.InfoContext(ctx, "💾 [JSON数据库保存] JSON解析的Token信息已解析完成",
+				"request_id", connID, "model", modelName, 
+				"inputTokens", tokenUsage.InputTokens, "outputTokens", tokenUsage.OutputTokens)
+			// TokenAnalyzer不再直接记录，返回给上层处理
+		} else {
+			slog.DebugContext(ctx, fmt.Sprintf("🚫 [JSON解析] [%s] JSON中未找到token usage信息", connID))
+			
+			// ℹ️ Fallback: 返回空的Token信息，由Handler通过生命周期管理器记录
+			// 不再直接调用usageTracker.RecordRequestComplete，遵循架构原则
+			slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 将由Handler标记为完成状态，模型: non_token_response", connID))
+		}
+	}
+}
+
+// AnalyzeResponseForTokensUnified 简化版本的Token分析（用于统一接口）
+// 返回值: (tokenUsage, modelName) - tokenUsage为nil表示无Token信息
+func (a *TokenAnalyzer) AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string) (*tracking.TokenUsage, string) {
+	if len(responseBytes) == 0 {
+		return nil, "empty_response"
+	}
+	
+	responseStr := string(responseBytes)
+	
+	// Method 1: 检查是否为SSE格式响应
+	if strings.Contains(responseStr, "event:error") || strings.Contains(responseStr, "event: error") {
+		return a.parseSSEForTokens(responseStr, connID, endpointName)
+	}
+	
+	// Check for both message_start and message_delta events
+	if strings.Contains(responseStr, "event:message_start") || 
+	   strings.Contains(responseStr, "event: message_start") ||
+	   strings.Contains(responseStr, "event:message_delta") || 
+	   strings.Contains(responseStr, "event: message_delta") {
+		return a.parseSSEForTokens(responseStr, connID, endpointName)
+	}
+	
+	// Method 2: 尝试解析JSON响应
+	if strings.HasPrefix(strings.TrimSpace(responseStr), "{") && strings.Contains(responseStr, "usage") {
+		return a.parseJSONForTokens(responseStr, connID, endpointName)
+	}
+	
+	// Fallback: 无Token信息
+	slog.Info(fmt.Sprintf("🎯 [无Token响应] 端点: %s, 连接: %s - 响应不包含token信息", endpointName, connID))
+	return nil, "non_token_response"
+}
+
+// parseSSEForTokens 解析SSE格式响应获取Token信息（不直接记录）
+func (a *TokenAnalyzer) parseSSEForTokens(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
+	lines := strings.Split(responseStr, "\n")
+	
+	var foundTokenUsage *tracking.TokenUsage
+	var modelName string = "unknown"
+	hasErrorEvent := false
+	
+	// 检查是否包含错误事件
+	if strings.Contains(responseStr, "event:error") || strings.Contains(responseStr, "event: error") {
+		hasErrorEvent = true
+		slog.Info(fmt.Sprintf("❌ [SSE错误检测] [%s] 端点: %s - 检测到error事件", connID, endpointName))
+	}
+	
+	// 解析每一行
+	for _, line := range lines {
+		if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
+			// 获取模型名称
+			if tp, ok := tokenParser.(interface{ GetModelName() string }); ok {
+				modelName = tp.GetModelName()
+			}
+			
+			// 转换为tracking.TokenUsage格式
+			foundTokenUsage = &tracking.TokenUsage{
 				InputTokens:         tokenUsage.InputTokens,
 				OutputTokens:        tokenUsage.OutputTokens,
 				CacheCreationTokens: tokenUsage.CacheCreationTokens,
 				CacheReadTokens:     tokenUsage.CacheReadTokens,
 			}
 			
-			// 使用提取的模型名称，如果没有则使用default
-			modelName := "default"
-			if model != "" {
-				modelName = model
-			}
+			slog.Info(fmt.Sprintf("✅ [SSE解析成功] [%s] 端点: %s - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d", 
+				connID, endpointName, modelName, 
+				foundTokenUsage.InputTokens, foundTokenUsage.OutputTokens, 
+				foundTokenUsage.CacheCreationTokens, foundTokenUsage.CacheReadTokens))
 			
-			// 🎯 使用lifecycleManager获取准确的处理时间
-			duration := lifecycleManager.GetDuration()
-			
-			// 保存到数据库
-			a.usageTracker.RecordRequestComplete(connID, modelName, dbTokens, duration)
-			slog.InfoContext(ctx, "💾 [数据库保存] JSON解析的Token信息已保存到数据库",
-				"request_id", connID, "model", modelName, 
-				"inputTokens", dbTokens.InputTokens, "outputTokens", dbTokens.OutputTokens,
-				"duration", duration)
-		}
-	} else {
-		slog.DebugContext(ctx, fmt.Sprintf("🚫 [JSON解析] [%s] JSON中未找到token usage信息", connID))
-		
-		// Fallback: No token information found, mark request as completed with default model
-		if a.usageTracker != nil && connID != "" && lifecycleManager != nil {
-			emptyTokens := &tracking.TokenUsage{
-				InputTokens: 0, OutputTokens: 0, 
-				CacheCreationTokens: 0, CacheReadTokens: 0,
-			}
-			duration := lifecycleManager.GetDuration()
-			a.usageTracker.RecordRequestComplete(connID, "non_token_response", emptyTokens, duration)
-			slog.InfoContext(ctx, fmt.Sprintf("✅ [无Token完成] 连接: %s 已标记为完成状态，模型: non_token_response, 处理时间: %v", 
-				connID, duration))
+			return foundTokenUsage, modelName
 		}
 	}
+	
+	// 如果有错误事件或没找到Token信息
+	if hasErrorEvent {
+		slog.Info(fmt.Sprintf("❌ [SSE错误处理] [%s] 端点: %s - 错误事件已处理", connID, endpointName))
+		return nil, "error_response"
+	}
+	
+	slog.Info(fmt.Sprintf("🚫 [SSE解析] [%s] 端点: %s - 未找到token usage信息", connID, endpointName))
+	return nil, "no_token_sse"
 }
 
-// AnalyzeResponseForTokensUnified 简化版本的Token分析（用于统一接口）
-func (a *TokenAnalyzer) AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string, lifecycleManager RequestLifecycleManager) {
-	if len(responseBytes) == 0 {
-		return
+// parseJSONForTokens 解析JSON格式响应获取Token信息（不直接记录）
+func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
+	
+	slog.Info(fmt.Sprintf("🔍 [JSON解析] [%s] 尝试解析JSON响应", connID))
+	
+	// 首先提取模型信息
+	var jsonResp map[string]interface{}
+	var modelName string = "default"
+	
+	if err := json.Unmarshal([]byte(responseStr), &jsonResp); err == nil {
+		if model, ok := jsonResp["model"].(string); ok && model != "" {
+			modelName = model
+			tokenParser.SetModelName(model)
+			slog.Info("📋 [JSON解析] 提取到模型信息", "model", model)
+		}
 	}
 	
-	responseStr := string(responseBytes)
+	// 将JSON包装为SSE message_delta事件进行解析
+	tokenParser.ParseSSELine("event: message_delta")
+	tokenParser.ParseSSELine("data: " + responseStr)
+	if tokenUsage := tokenParser.ParseSSELine(""); tokenUsage != nil {
+		// 转换为tracking.TokenUsage格式
+		trackingTokenUsage := &tracking.TokenUsage{
+			InputTokens:         tokenUsage.InputTokens,
+			OutputTokens:        tokenUsage.OutputTokens,
+			CacheCreationTokens: tokenUsage.CacheCreationTokens,
+			CacheReadTokens:     tokenUsage.CacheReadTokens,
+		}
+		
+		slog.Info("✅ [JSON解析] 成功解析Token使用信息", 
+			"endpoint", endpointName, 
+			"inputTokens", trackingTokenUsage.InputTokens, 
+			"outputTokens", trackingTokenUsage.OutputTokens,
+			"cacheCreation", trackingTokenUsage.CacheCreationTokens,
+			"cacheRead", trackingTokenUsage.CacheReadTokens)
+		
+		return trackingTokenUsage, modelName
+	}
 	
-	// 使用现有的Token分析方法（创建一个临时的Request对象）
-	req := &http.Request{} // 创建一个空的request对象
-	req = req.WithContext(context.WithValue(context.Background(), "conn_id", connID))
-	
-	// 调用现有的分析方法，传入lifecycleManager以获取准确的duration
-	a.AnalyzeResponseForTokensWithLifecycle(req.Context(), responseStr, endpointName, req, lifecycleManager)
+	slog.Debug(fmt.Sprintf("🚫 [JSON解析] [%s] JSON中未找到token usage信息", connID))
+	return nil, modelName
 }

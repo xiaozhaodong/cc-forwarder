@@ -162,8 +162,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				
 				slog.Info(fmt.Sprintf("🚀 [开始流式处理] [%s] 端点: %s", connID, ep.Config.Name))
 				
-				// 执行流式处理
-				if err := processor.ProcessStreamWithRetry(ctx, resp); err != nil {
+				// 执行流式处理并获取Token信息和模型名称
+				finalTokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
+				if err != nil {
 					slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 错误: %v", 
 						connID, ep.Config.Name, err))
 					
@@ -174,8 +175,15 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 					return
 				}
 				
-				// 处理成功完成
-				lifecycleManager.UpdateStatus("completed", i+1, resp.StatusCode)
+				// ✅ 流式处理成功完成，使用生命周期管理器完成请求
+				if finalTokenUsage != nil {
+					// 设置模型名称并通过生命周期管理器完成请求
+					lifecycleManager.SetModel(modelName)
+					lifecycleManager.CompleteRequest(finalTokenUsage)
+				} else {
+					// 没有Token信息，使用HandleNonTokenResponse处理
+					lifecycleManager.HandleNonTokenResponse("")
+				}
 				return
 			}
 			

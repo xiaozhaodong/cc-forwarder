@@ -88,7 +88,7 @@ func TestStreamProcessor_CancellationDetection(t *testing.T) {
 	cancel()
 	
 	// 执行流处理
-	err := processor.ProcessStream(ctx, resp)
+	_, err := processor.ProcessStream(ctx, resp)
 	
 	// 验证检测到取消错误
 	if err == nil {
@@ -124,7 +124,7 @@ func TestStreamProcessor_CancellationWithTimeout(t *testing.T) {
 	start := time.Now()
 	
 	// 执行流处理
-	err := processor.ProcessStream(ctx, resp)
+	_, err := processor.ProcessStream(ctx, resp)
 	
 	duration := time.Since(start)
 	
@@ -214,17 +214,24 @@ func TestStreamProcessor_CollectAvailableInfo(t *testing.T) {
 			// 重置完成标志
 			processor.completionRecorded = false
 			
-			err := processor.collectAvailableInfo(cancelErr, tt.status)
+			// 测试新版本的 collectAvailableInfoV2 方法
+			tokenUsage, err := processor.collectAvailableInfoV2(cancelErr, tt.status)
 			
 			// 验证返回原始取消错误
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("Expected context.Canceled, got: %v", err)
 			}
 			
-			// 验证完成状态被记录 (由于UsageTracker为模拟对象，这里验证逻辑执行即可)
-			if !processor.completionRecorded {
-				t.Error("Expected completion to be recorded")
+			// 验证Token使用信息被返回（新架构下的预期）
+			if tokenUsage == nil {
+				t.Error("Expected tokenUsage to be returned, got nil")
 			}
+			
+			// 注释掉旧的验证，因为新架构不再直接设置这个标志
+			// 验证完成状态被记录 (由于UsageTracker为模拟对象，这里验证逻辑执行即可)
+			// if !processor.completionRecorded {
+			//     t.Error("Expected completion to be recorded")
+			// }
 			
 			t.Logf("Successfully collected info for status: %s", tt.status)
 		})

@@ -31,6 +31,7 @@ type StreamProcessor struct {
 	
 	// 错误处理和恢复
 	errorRecovery  *ErrorRecoveryManager     // 错误恢复管理器
+	lastAPIError   error                     // V2架构：最后一次API错误信息
 	
 	// 请求标识信息
 	requestID      string                    // 请求唯一标识符
@@ -75,7 +76,7 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 
 // ProcessStream 实现边接收边转发的8KB缓冲区流式处理
 // 这是核心方法，实现真正的流式处理机制
-func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Response) error {
+func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, error) {
 	defer resp.Body.Close()
 	defer sp.waitForBackgroundParsing() // 确保所有后台解析完成
 	
@@ -92,7 +93,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 		select {
 		case <-ctx.Done():
 			// 客户端取消，进入优雅取消处理
-			return sp.handleCancellation(ctx, ctx.Err())
+			return sp.handleCancellationV2(ctx, ctx.Err())
 		default:
 			// 继续正常处理
 		}
@@ -112,7 +113,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 				errorCtx := sp.errorRecovery.ClassifyError(writeErr, sp.requestID, sp.endpoint, "", 0)
 				sp.errorRecovery.HandleFinalFailure(errorCtx)
 				slog.Error(fmt.Sprintf("❌ [流式错误] [%s] 转发到客户端失败: %v", sp.requestID, writeErr))
-				return fmt.Errorf("failed to forward to client: %w", writeErr)
+				return nil, fmt.Errorf("failed to forward to client: %w", writeErr)
 			}
 			
 			// 3. 并行解析Token信息 - 不影响转发性能
@@ -127,17 +128,17 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			// 等待所有后台解析完成
 			sp.waitForBackgroundParsing()
 			
-			// 检查是否已经通过SSE解析记录了完成状态，如果没有则使用fallback
-			sp.ensureRequestCompletion()
+			// 获取最终的 Token 使用信息
+			finalTokenUsage := sp.getFinalTokenUsage()
 			
 			slog.Info(fmt.Sprintf("✅ [流式完成] [%s] 端点: %s, 流处理正常完成，已处理 %d 字节", 
 				sp.requestID, sp.endpoint, sp.bytesProcessed))
-			return nil
+			return finalTokenUsage, nil
 		}
 		
 		if err != nil {
 			// 网络中断或其他错误，尝试部分数据处理
-			return sp.handlePartialStream(err)
+			return sp.handlePartialStreamV2(err)
 		}
 	}
 }
@@ -191,81 +192,68 @@ func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
 }
 
 // processSSELine 处理单个SSE行
+// 修改版本：仅进行 Token 解析，不再直接记录到 usageTracker
 func (sp *StreamProcessor) processSSELine(line string) {
-	// 使用现有的TokenParser进行解析
-	tokenUsage := sp.tokenParser.ParseSSELine(line)
+	// ✅ 使用V2架构进行解析
+	result := sp.tokenParser.ParseSSELineV2(line)
 	
-	if tokenUsage != nil {
-		// 解析成功，转换为tracking.TokenUsage并记录到usage tracker
-		trackingTokens := &tracking.TokenUsage{
-			InputTokens:          int64(tokenUsage.InputTokens),
-			OutputTokens:         int64(tokenUsage.OutputTokens),
-			CacheCreationTokens:  int64(tokenUsage.CacheCreationTokens),
-			CacheReadTokens:      int64(tokenUsage.CacheReadTokens),
-		}
-		
-		// 获取模型名称
-		modelName := sp.tokenParser.GetModelName()
-		if modelName == "" {
-			modelName = "default"
-		}
-		
-		// 记录完成状态到usage tracker
-		if sp.usageTracker != nil && sp.requestID != "" && !sp.completionRecorded {
-			duration := time.Since(sp.startTime)
-			sp.usageTracker.RecordRequestComplete(sp.requestID, modelName, trackingTokens, duration)
-			sp.usageTracker.RecordRequestUpdate(sp.requestID, sp.endpoint, "", "completed", 0, 0)
-			sp.completionRecorded = true  // 标记已记录完成状态
+	if result != nil {
+		// ✅ 检查是否有错误信息
+		if result.ErrorInfo != nil {
+			// V2架构：处理API错误信息
+			slog.Error(fmt.Sprintf("❌ [API错误V2] [%s] 类型: %s, 消息: %s", 
+				sp.requestID, result.ErrorInfo.Type, result.ErrorInfo.Message))
 			
-			slog.Info(fmt.Sprintf("🪙 [Token使用统计] [%s] 从流式解析中提取完整令牌使用情况 - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d", 
-				sp.requestID, modelName, trackingTokens.InputTokens, trackingTokens.OutputTokens, trackingTokens.CacheCreationTokens, trackingTokens.CacheReadTokens))
+			// 将错误信息存储，供上层生命周期管理器处理
+			sp.lastAPIError = fmt.Errorf("API错误 %s: %s", result.ErrorInfo.Type, result.ErrorInfo.Message)
+			return
+		}
+		
+		// ✅ 处理正常Token信息
+		if result.TokenUsage != nil {
+			// V2架构：直接使用ParseResult，无需类型转换
+			trackingTokens := result.TokenUsage
+			modelName := result.ModelName
+			
+			// 确保模型名称不为空
+			if modelName == "" {
+				modelName = "default"
+			}
+			
+			// 仅记录解析日志，不再直接记录到 usageTracker
+			if !sp.completionRecorded {
+				sp.completionRecorded = true  // 标记已解析完成状态
+				
+				slog.Debug(fmt.Sprintf("🔄 [Token解析进度] [%s] V2架构实时解析 - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d", 
+					sp.requestID, modelName, trackingTokens.InputTokens, trackingTokens.OutputTokens, trackingTokens.CacheCreationTokens, trackingTokens.CacheReadTokens))
+			}
 		}
 	}
 }
 
 // ensureRequestCompletion 确保请求完成状态被记录（fallback机制）
+// 🚫 DEPRECATED: 已被 getFinalTokenUsage() 替代，此方法已完全移除违规调用
+// 此方法不再执行任何操作，仅保留方法签名以维持兼容性
 func (sp *StreamProcessor) ensureRequestCompletion() {
-	sp.parseMutex.Lock()
-	defer sp.parseMutex.Unlock()
+	// ⚠️ 此方法已完全弃用，所有功能已迁移到 getFinalTokenUsage() 方法
+	// 原因：违反单一责任原则，直接调用 usageTracker 而非通过生命周期管理器
+	// 
+	// 新的架构要求：
+	// 1. StreamProcessor 只负责解析和返回Token信息
+	// 2. Handler 调用生命周期管理器记录完成状态 
+	// 3. 不再有任何组件直接调用 usageTracker
 	
-	if sp.usageTracker != nil && sp.requestID != "" && !sp.completionRecorded {
-		// 如果还没有记录完成状态，使用fallback方式记录
-		duration := time.Since(sp.startTime)
-		
-		// 尝试从TokenParser获取最终使用统计
-		finalUsage := sp.tokenParser.GetFinalUsage()
-		modelName := sp.tokenParser.GetModelName()
-		
-		if finalUsage != nil && modelName != "" {
-			// 有完整的token和模型信息
-			sp.usageTracker.RecordRequestComplete(sp.requestID, modelName, finalUsage, duration)
-			slog.Info(fmt.Sprintf("🪙 [Token使用统计] [%s] 从TokenParser获取最终令牌使用情况 - 模型: %s, 输入: %d, 输出: %d", 
-				sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
-		} else {
-			// 没有token信息，使用默认值记录完成状态
-			emptyTokens := &tracking.TokenUsage{
-				InputTokens: 0, OutputTokens: 0, 
-				CacheCreationTokens: 0, CacheReadTokens: 0,
-			}
-			defaultModel := "default"
-			if modelName != "" {
-				defaultModel = modelName
-			}
-			
-			sp.usageTracker.RecordRequestComplete(sp.requestID, defaultModel, emptyTokens, duration)
-			slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应不包含token信息，标记为完成，模型: %s", 
-				sp.requestID, defaultModel))
-		}
-		
-		sp.usageTracker.RecordRequestUpdate(sp.requestID, sp.endpoint, "", "completed", 0, 0)
-		sp.completionRecorded = true
-	}
+	slog.Debug(fmt.Sprintf("⚠️ [已弃用] [%s] ensureRequestCompletion已弃用，请使用getFinalTokenUsage", sp.requestID))
 }
 
 // handlePartialStream 处理部分数据流中断情况（修复版本）
+// 🚫 DEPRECATED: 已被 handlePartialStreamV2() 替代，此方法已完全移除违规调用
 // 当网络中断或其他错误发生时，不再进行错误分类，让上层统一处理
 func (sp *StreamProcessor) handlePartialStream(err error) error {
-	// 仅记录流处理中断，不再进行错误分类
+	// ⚠️ 此方法已弃用，请使用 handlePartialStreamV2() 方法
+	// 原因：违反生命周期管理器架构，直接调用 usageTracker 而非返回Token信息
+	
+	// 记录流处理中断但不做任何usageTracker调用
 	slog.Warn(fmt.Sprintf("⚠️ [流式中断] [%s] 流处理中断: %v, 已处理 %d 字节. 错误将由上层统一处理.", 
 		sp.requestID, err, sp.bytesProcessed))
 	
@@ -277,31 +265,15 @@ func (sp *StreamProcessor) handlePartialStream(err error) error {
 		sp.errorRecovery.RecoverFromPartialData(sp.requestID, sp.partialData, time.Since(sp.startTime))
 	}
 	
-	// 检查是否有有效的Token数据，并记录部分完成
-	if sp.usageTracker != nil && sp.requestID != "" {
-		duration := time.Since(sp.startTime)
-		emptyTokens := &tracking.TokenUsage{
-			InputTokens: 0, OutputTokens: 0, 
-			CacheCreationTokens: 0, CacheReadTokens: 0,
-		}
-		modelName := "partial_stream"
-		if sp.tokenParser.modelName != "" {
-			modelName = sp.tokenParser.modelName + "_partial"
-		}
-		sp.usageTracker.RecordRequestComplete(sp.requestID, modelName, emptyTokens, duration)
-		sp.usageTracker.RecordRequestUpdate(sp.requestID, sp.endpoint, "", "partial_complete", 0, 0)
-		
-		slog.Info(fmt.Sprintf("💾 [部分保存] [%s] 部分流式数据已保存，模型: %s", 
-			sp.requestID, modelName))
-	}
-	
-	// 直接返回错误，让调用者(handler)来分类和处理最终失败
+	// 直接返回错误，让调用者(handler)通过生命周期管理器来分类和处理最终失败
 	return err
 }
 
 // ProcessStreamWithRetry 支持网络中断恢复的流式处理（增强版本）
 // 在网络不稳定环境下提供智能重试机制
-func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) error {
+// 返回值：(finalTokenUsage *tracking.TokenUsage, modelName string, err error)
+// 修改为返回 Token 使用信息和模型名称而非直接记录到 usageTracker
+func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error) {
 	const maxRetries = 3
 	
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -316,24 +288,35 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 			if !sp.errorRecovery.ShouldRetry(errorCtx) {
 				slog.Info(fmt.Sprintf("🛑 [重试停止] [%s] 错误恢复管理器建议停止重试", sp.requestID))
 				sp.errorRecovery.HandleFinalFailure(errorCtx)
-				return lastErr
+				return nil, "", lastErr
 			}
 			
 			// 执行重试延迟
 			if retryErr := sp.errorRecovery.ExecuteRetry(ctx, errorCtx); retryErr != nil {
-				return retryErr
+				return nil, "", retryErr
 			}
 		}
 		
 		// 尝试流式处理
-		err := sp.ProcessStream(ctx, resp)
+		finalTokenUsage, err := sp.ProcessStream(ctx, resp)
 		
 		if err == nil {
-			// 处理成功
+			// ✅ 检查是否在处理过程中遇到了API错误
+			if sp.lastAPIError != nil {
+				// 流式处理成功，但遇到了API错误（如SSE错误事件）
+				return nil, "", sp.lastAPIError
+			}
+			
+			// 处理成功，获取模型名称
+			modelName := sp.tokenParser.GetModelName()
+			if modelName == "" {
+				modelName = "default"
+			}
+			
 			if attempt > 0 {
 				slog.Info(fmt.Sprintf("✅ [重试成功] [%s] 第 %d 次重试成功", sp.requestID, attempt))
 			}
-			return nil
+			return finalTokenUsage, modelName, nil
 		}
 		
 		lastErr = err
@@ -358,10 +341,10 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 			continue
 		}
 		
-		// 不可重试错误或重试次数已满，直接返回让上层处理
+	// 不可重试错误或重试次数已满，直接返回让上层处理
 		slog.Info(fmt.Sprintf("🛑 [重试停止] [%s] %d 次重试后停止，错误将由上层处理: %v", 
 			sp.requestID, attempt, err))
-		return err
+		return nil, "", err
 	}
 	
 	// 创建最终失败的错误上下文
@@ -374,7 +357,7 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 	}
 	sp.errorRecovery.HandleFinalFailure(finalErrorCtx)
 	
-	return fmt.Errorf("stream processing failed after %d retries", maxRetries)
+	return nil, "", fmt.Errorf("stream processing failed after %d retries", maxRetries)
 }
 
 // waitForBackgroundParsing 等待所有后台解析完成
@@ -450,16 +433,24 @@ func (sp *StreamProcessor) Reset() {
 }
 
 // handleCancellation 处理客户端取消请求 - Phase 2 优雅取消处理器
+// 🚫 DEPRECATED: 已被 handleCancellationV2() 替代，不再直接调用 usageTracker
 func (sp *StreamProcessor) handleCancellation(ctx context.Context, cancelErr error) error {
+	// ⚠️ 此方法已弃用，请使用 handleCancellationV2() 方法
+	// 原因：违反生命周期管理器架构，通过 collectAvailableInfo 间接调用 usageTracker
+	
 	slog.Info(fmt.Sprintf("🚫 [客户端取消] [%s] 检测到客户端取消: %v", sp.requestID, cancelErr))
 	
 	// 等待后台解析完成，但不超过超时时间
 	if finished := sp.waitForParsingWithTimeout(2 * time.Second); finished {
-		// 成功等待解析完成，收集可用信息
-		return sp.collectAvailableInfo(cancelErr, "cancelled_with_data")
+		// 成功等待解析完成，调用新版本方法获取Token信息
+		tokenUsage, err := sp.collectAvailableInfoV2(cancelErr, "cancelled_with_data")
+		_ = tokenUsage // 忽略Token信息，保持原接口兼容
+		return err
 	} else {
-		// 超时未完成，收集部分信息
-		return sp.collectAvailableInfo(cancelErr, "cancelled_timeout")
+		// 超时未完成，调用新版本方法获取Token信息
+		tokenUsage, err := sp.collectAvailableInfoV2(cancelErr, "cancelled_timeout")
+		_ = tokenUsage // 忽略Token信息，保持原接口兼容
+		return err
 	}
 }
 
@@ -482,47 +473,137 @@ func (sp *StreamProcessor) waitForParsingWithTimeout(timeout time.Duration) bool
 	}
 }
 
-// collectAvailableInfo 智能信息收集 - Phase 2 分阶段保存逻辑  
+// collectAvailableInfo 智能信息收集 - Phase 2 分阶段保存逻辑
+// 🚫 DEPRECATED: 已被 collectAvailableInfoV2() 替代，此方法已完全移除违规调用
 func (sp *StreamProcessor) collectAvailableInfo(cancelErr error, status string) error {
+	// ⚠️ 此方法已完全弃用，请使用 collectAvailableInfoV2() 方法
+	// 原因：违反生命周期管理器架构，直接调用 usageTracker 而非返回Token信息
+	// 
+	// 新的架构要求：
+	// 1. StreamProcessor 只负责收集Token信息
+	// 2. Handler 调用生命周期管理器记录状态
+	// 3. 不再有任何组件直接调用 usageTracker
+	
+	slog.Debug(fmt.Sprintf("⚠️ [已弃用] [%s] collectAvailableInfo已弃用，请使用collectAvailableInfoV2", sp.requestID))
+	return cancelErr
+}
+
+// getFinalTokenUsage 获取最终的Token使用信息
+// 这个方法替代了原有的ensureRequestCompletion中的直接记录逻辑
+func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 	sp.parseMutex.Lock()
 	defer sp.parseMutex.Unlock()
 	
-	// 记录取消时间
-	duration := time.Since(sp.startTime)
+	// 尝试从TokenParser获取最终使用统计
+	finalUsage := sp.tokenParser.GetFinalUsage()
+	
+	if finalUsage != nil {
+		// 有完整的token信息，记录详细日志
+		modelName := sp.tokenParser.GetModelName()
+		if modelName == "" {
+			modelName = "default"
+		}
+		slog.Info(fmt.Sprintf("🪙 [Token最终统计] [%s] 流式处理完成 - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d", 
+			sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.CacheCreationTokens, finalUsage.CacheReadTokens))
+		return finalUsage
+	} else {
+		// 没有token信息，返回空的token使用统计
+		slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应不包含token信息", sp.requestID))
+		return &tracking.TokenUsage{
+			InputTokens: 0, OutputTokens: 0, 
+			CacheCreationTokens: 0, CacheReadTokens: 0,
+		}
+	}
+}
+
+// handlePartialStreamV2 处理部分数据流中断情况（返回Token信息版本）
+// 当网络中断或其他错误发生时，收集已解析的Token信息并返回
+func (sp *StreamProcessor) handlePartialStreamV2(err error) (*tracking.TokenUsage, error) {
+	// 记录流处理中断
+	slog.Warn(fmt.Sprintf("⚠️ [流式中断] [%s] 流处理中断: %v, 已处理 %d 字节. 错误将由上层统一处理.", 
+		sp.requestID, err, sp.bytesProcessed))
+	
+	// 等待所有后台解析完成
+	sp.waitForBackgroundParsing()
+	
+	// 尝试从部分数据中恢复有用信息
+	if len(sp.partialData) > 0 {
+		sp.errorRecovery.RecoverFromPartialData(sp.requestID, sp.partialData, time.Since(sp.startTime))
+	}
+	
+	// 尝试获取已解析的Token信息
+	var partialTokenUsage *tracking.TokenUsage
+	finalUsage := sp.tokenParser.GetFinalUsage()
+	modelName := "partial_stream"
+	
+	if finalUsage != nil {
+		// 有部分Token信息，使用已解析的数据
+		partialTokenUsage = finalUsage
+		if sp.tokenParser.modelName != "" {
+			modelName = sp.tokenParser.modelName + "_partial"
+		}
+		slog.Info(fmt.Sprintf("💾 [部分保存] [%s] 部分流式数据已解析Token，模型: %s, 输入: %d, 输出: %d", 
+			sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
+	} else {
+		// 没有Token信息，返回空统计
+		partialTokenUsage = &tracking.TokenUsage{
+			InputTokens: 0, OutputTokens: 0, 
+			CacheCreationTokens: 0, CacheReadTokens: 0,
+		}
+		slog.Info(fmt.Sprintf("💾 [部分保存] [%s] 部分流式数据无Token信息，模型: %s", 
+			sp.requestID, modelName))
+	}
+	
+	// 返回Token信息和错误，让上层处理
+	return partialTokenUsage, err
+}
+
+// handleCancellationV2 处理客户端取消请求（返回Token信息版本）
+func (sp *StreamProcessor) handleCancellationV2(ctx context.Context, cancelErr error) (*tracking.TokenUsage, error) {
+	slog.Info(fmt.Sprintf("🚫 [客户端取消] [%s] 检测到客户端取消: %v", sp.requestID, cancelErr))
+	
+	// 等待后台解析完成，但不超过超时时间
+	if finished := sp.waitForParsingWithTimeout(2 * time.Second); finished {
+		// 成功等待解析完成，收集可用信息
+		return sp.collectAvailableInfoV2(cancelErr, "cancelled_with_data")
+	} else {
+		// 超时未完成，收集部分信息
+		return sp.collectAvailableInfoV2(cancelErr, "cancelled_timeout")
+	}
+}
+
+// collectAvailableInfoV2 智能信息收集（返回Token信息版本）
+func (sp *StreamProcessor) collectAvailableInfoV2(cancelErr error, status string) (*tracking.TokenUsage, error) {
+	sp.parseMutex.Lock()
+	defer sp.parseMutex.Unlock()
 	
 	// 尝试获取已解析的信息
 	modelName := sp.tokenParser.GetModelName()
 	finalUsage := sp.tokenParser.GetFinalUsage()
 	
-	if sp.usageTracker != nil && sp.requestID != "" && !sp.completionRecorded {
-		if finalUsage != nil && modelName != "" {
-			// 有完整Token信息的取消
-			sp.usageTracker.RecordRequestComplete(sp.requestID, modelName, finalUsage, duration)
-			slog.Info(fmt.Sprintf("💾 [完整取消] [%s] 保存完整Token信息 - 模型: %s, 输入: %d, 输出: %d", 
-				sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
-		} else if modelName != "" {
-			// 有模型信息但无Token的取消
-			emptyTokens := &tracking.TokenUsage{
-				InputTokens: 0, OutputTokens: 0, 
-				CacheCreationTokens: 0, CacheReadTokens: 0,
-			}
-			sp.usageTracker.RecordRequestComplete(sp.requestID, modelName+"_cancelled", emptyTokens, duration)
-			slog.Info(fmt.Sprintf("📝 [部分取消] [%s] 保存模型信息 - 模型: %s (已取消)", 
-				sp.requestID, modelName))
-		} else {
-			// 无任何信息的取消
-			emptyTokens := &tracking.TokenUsage{
-				InputTokens: 0, OutputTokens: 0, 
-				CacheCreationTokens: 0, CacheReadTokens: 0,
-			}
-			sp.usageTracker.RecordRequestComplete(sp.requestID, "cancelled", emptyTokens, duration)
-			slog.Info(fmt.Sprintf("🚫 [纯取消] [%s] 客户端在连接建立后取消", sp.requestID))
+	var tokenUsage *tracking.TokenUsage
+	
+	if finalUsage != nil && modelName != "" {
+		// 有完整Token信息的取消
+		tokenUsage = finalUsage
+		slog.Info(fmt.Sprintf("💾 [完整取消] [%s] 保存完整Token信息 - 模型: %s, 输入: %d, 输出: %d", 
+			sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
+	} else if modelName != "" {
+		// 有模型信息但无Token的取消
+		tokenUsage = &tracking.TokenUsage{
+			InputTokens: 0, OutputTokens: 0, 
+			CacheCreationTokens: 0, CacheReadTokens: 0,
 		}
-		
-		// 更新请求状态为取消
-		sp.usageTracker.RecordRequestUpdate(sp.requestID, sp.endpoint, "", status, 0, 0)
-		sp.completionRecorded = true
+		slog.Info(fmt.Sprintf("📝 [部分取消] [%s] 保存模型信息 - 模型: %s (已取消)", 
+			sp.requestID, modelName))
+	} else {
+		// 无任何信息的取消
+		tokenUsage = &tracking.TokenUsage{
+			InputTokens: 0, OutputTokens: 0, 
+			CacheCreationTokens: 0, CacheReadTokens: 0,
+		}
+		slog.Info(fmt.Sprintf("🚫 [纯取消] [%s] 客户端在连接建立后取消", sp.requestID))
 	}
 	
-	return cancelErr
+	return tokenUsage, cancelErr
 }

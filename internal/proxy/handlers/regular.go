@@ -173,14 +173,27 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		return
 	}
 
-	// 对于常规请求，尝试解析Token信息（如果存在）
-	rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, selectedEndpointName, lifecycleManager)
-
-	// 完成请求
-	lifecycleManager.UpdateStatus("completed", 0, finalResp.StatusCode)
-	
-	slog.Info(fmt.Sprintf("✅ [常规请求完成] [%s] 端点: %s, 状态码: %d, 响应大小: %d字节", 
-		connID, selectedEndpointName, finalResp.StatusCode, len(responseBytes)))
+	// ✅ 异步Token解析优化：不阻塞连接关闭
+	go func() {
+		slog.Debug(fmt.Sprintf("🔄 [异步Token解析] [%s] 开始后台Token解析", connID))
+		
+		// 对于常规请求，异步解析Token信息（如果存在）
+		tokenUsage, modelName := rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, selectedEndpointName)
+		
+		// 使用生命周期管理器完成请求
+		if tokenUsage != nil {
+			// 设置模型名称并完成请求
+			lifecycleManager.SetModel(modelName)
+			lifecycleManager.CompleteRequest(tokenUsage)
+			slog.Info(fmt.Sprintf("✅ [常规请求Token完成] [%s] 端点: %s, 模型: %s, 输入: %d, 输出: %d", 
+				connID, selectedEndpointName, modelName, tokenUsage.InputTokens, tokenUsage.OutputTokens))
+		} else {
+			// 处理非Token响应
+			lifecycleManager.HandleNonTokenResponse(string(responseBytes))
+			slog.Info(fmt.Sprintf("✅ [常规请求完成] [%s] 端点: %s, 响应类型: %s", 
+				connID, selectedEndpointName, modelName))
+		}
+	}()
 }
 
 

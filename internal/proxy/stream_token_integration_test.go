@@ -65,7 +65,7 @@ data: {"type":"message_stop"}
 	t.Logf("   message_delta后的token: %v", finalAfterDelta)
 	
 	// 执行流式处理
-	err := processor.ProcessStream(context.Background(), resp)
+	_, err := processor.ProcessStream(context.Background(), resp)
 	if err != nil {
 		t.Fatalf("ProcessStream failed: %v", err)
 	}
@@ -133,7 +133,7 @@ data: {"type":"message_delta","delta":{"type":"text","text":"Hello"},"usage":{"i
 	t.Logf("🧪 测试开始：流式处理器与UsageTracker集成测试")
 	
 	// 执行流式处理
-	err := processor.ProcessStream(context.Background(), resp)
+	_, err := processor.ProcessStream(context.Background(), resp)
 	if err != nil {
 		t.Fatalf("ProcessStream failed: %v", err)
 	}

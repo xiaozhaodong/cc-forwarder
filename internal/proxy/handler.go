@@ -9,6 +9,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/response"
 	"cc-forwarder/internal/tracking"
@@ -52,7 +53,7 @@ type TokenParserAdapter struct {
 	innerParser *TokenParser
 }
 
-func (ta *TokenParserAdapter) ParseSSELine(line string) interface{} {
+func (ta *TokenParserAdapter) ParseSSELine(line string) *monitor.TokenUsage {
 	return ta.innerParser.ParseSSELine(line)
 }
 
@@ -65,7 +66,7 @@ type StreamProcessorAdapter struct {
 	innerProcessor *StreamProcessor
 }
 
-func (spa *StreamProcessorAdapter) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) error {
+func (spa *StreamProcessorAdapter) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error) {
 	return spa.innerProcessor.ProcessStreamWithRetry(ctx, resp)
 }
 
@@ -115,10 +116,11 @@ func (taa *TokenAnalyzerAdapter) AnalyzeResponseForTokens(ctx context.Context, r
 	taa.innerAnalyzer.AnalyzeResponseForTokens(ctx, responseBody, endpointName, r)
 }
 
-func (taa *TokenAnalyzerAdapter) AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string, lifecycleManager handlers.RequestLifecycleManager) {
-	// 创建适配器将handlers.RequestLifecycleManager转换为response.RequestLifecycleManager
-	adapter := &RequestLifecycleManagerAdapter{innerManager: lifecycleManager}
-	taa.innerAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName, adapter)
+func (taa *TokenAnalyzerAdapter) AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string) (*tracking.TokenUsage, string) {
+	// 使用新的方法签名获取Token信息
+	tokenUsage, modelName := taa.innerAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
+	
+	return tokenUsage, modelName
 }
 
 // RequestLifecycleManagerAdapter 适配handlers.RequestLifecycleManager到response.RequestLifecycleManager
@@ -373,6 +375,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 流式请求处理 - 使用StreamingHandler
 		if h.streamingHandler != nil {
 			h.streamingHandler.HandleStreamingRequest(ctx, w, r, bodyBytes, lifecycleManager)
+			// h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
 		} else {
 			// 备用方案：如果streamingHandler不可用，使用regularHandler
 			h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)

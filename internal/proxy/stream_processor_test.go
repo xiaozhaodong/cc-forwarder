@@ -79,7 +79,7 @@ func TestStreamProcessor_ProcessStream_SimpleData(t *testing.T) {
 	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-123", "endpoint")
 
 	// 执行流处理
-	err := processor.ProcessStream(context.Background(), resp)
+	_, err := processor.ProcessStream(context.Background(), resp)
 	
 	// 验证结果
 	if err != nil {

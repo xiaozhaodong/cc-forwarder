@@ -6,15 +6,21 @@ import (
 	"time"
 
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
 )
 
 // RequestLifecycleManager 请求生命周期管理器接口
+// 修改版本：添加CompleteRequest和HandleNonTokenResponse方法以支持生命周期管理器架构
 type RequestLifecycleManager interface {
 	GetRequestID() string
 	SetEndpoint(name, group string)
+	SetModel(modelName string) // 新增：设置模型名称
 	UpdateStatus(status string, endpointIndex, statusCode int)
 	HandleError(err error)
+	// 新增方法：统一的请求完成入口
+	CompleteRequest(tokens *tracking.TokenUsage)
+	HandleNonTokenResponse(responseContent string)
 }
 
 // ErrorRecoveryManager 错误恢复管理器接口
@@ -53,13 +59,14 @@ const (
 
 // TokenParser Token解析器接口
 type TokenParser interface {
-	ParseSSELine(line string) interface{} // 返回TokenUsage类型
+	ParseSSELine(line string) *monitor.TokenUsage // 返回TokenUsage类型
 	SetModelName(model string)
 }
 
 // StreamProcessor 流式处理器接口
+// 修改版本：返回Token使用信息和模型名称而非直接记录到usageTracker
 type StreamProcessor interface {
-	ProcessStreamWithRetry(ctx context.Context, resp *http.Response) error
+	ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error)
 }
 
 // RetryHandler 重试处理器接口  
@@ -95,7 +102,7 @@ type RetryHandlerFactory interface {
 // TokenAnalyzer Token分析器接口
 type TokenAnalyzer interface {
 	AnalyzeResponseForTokens(ctx context.Context, responseBody, endpointName string, r *http.Request)
-	AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string, lifecycleManager RequestLifecycleManager)
+	AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string) (*tracking.TokenUsage, string)
 }
 
 // ResponseProcessor 响应处理器接口
