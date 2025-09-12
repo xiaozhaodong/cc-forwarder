@@ -265,122 +265,17 @@ go test ./internal/middleware
 ./cc-forwarder -version
 ```
 
-## 📝 更新日志
+## 📚 版本信息
 
-### v1.0.3 (2025-09-09)
+**当前版本**: v2.1.0 (2025-09-12)
 
-#### 🔧 Token统计重复计费问题修复
+**主要特性**: 
+- 🏗️ 模块化架构重构，提升代码可维护性
+- 🚀 高性能智能转发，支持流式和常规请求处理
+- 🎯 完整的请求生命周期追踪系统
+- 📊 现代化Web管理界面与实时监控
 
-- **严重Bug修复**: 解决Token解析重复处理导致成本计算错误的严重bug
-- **架构重构**: 重构Token Parser架构，确保事件职责分离
-  - `message_start`事件: 只提取模型信息
-  - `message_delta`事件: 处理完整token使用统计
-- **状态流转完善**: 修复数据库状态更新逻辑，支持完整状态流转
-  - 解决`processing`状态无法更新为`completed`的问题
-  - SQL修复: `status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END`
-
-#### 🔄 重试机制增强
-
-- **重试状态跟踪**: 同端点重试也正确更新为`retry`状态，提升监控可见性
-- **状态流转**: `pending → forwarding → retry → processing → completed`
-- **兼容性增强**: 增强非Claude端点兼容性，添加fallback机制
-
-#### ✨ 代码架构改进
-
-- **日志分离**: 清晰的日志分离和错误处理
-  - 🎯 `[模型提取]`: message_start事件的模型信息提取
-  - 🪙 `[Token使用统计]`: message_delta事件的完整token统计
-- **架构清理**: 移除重复状态更新调用，提升代码可维护性
-- **事件架构**: 明确`RecordRequestStart` → `RecordRequestUpdate` → `RecordRequestComplete`流程
-
-#### 🎯 影响范围
-
-- **准确的成本计算**: 不再重复计费，确保Token统计准确性
-- **完整的生命周期跟踪**: 支持suspended状态和完整重试流转
-- **生产环境推荐**: 强烈建议从v1.0.2及以下版本升级
-
-### v1.0.2 (2025-09-08)
-
-#### 🪟 Windows平台SQLite兼容性重大修复
-
-- **解决关键问题**: 修复Windows平台"Binary was compiled with 'CGO_ENABLED=0', go-sqlite3 requires cgo"错误
-- **SQLite驱动升级**: 从`mattn/go-sqlite3` (CGO依赖)升级为`modernc.org/sqlite` (纯Go实现)
-- **跨平台兼容**: 完美支持Windows/Linux/macOS所有架构，无需C编译器
-- **构建优化**: 统一使用`CGO_ENABLED=0`纯Go编译，构建更快更稳定
-
-#### 📦 发布包优化
-
-- **文件清理**: 移除发布包中的`CLAUDE.md`开发配置文件
-- **Docker优化**: 镜像体积减少约50MB，移除build-base等CGO依赖
-- **构建简化**: GitHub Actions移除复杂的交叉编译工具配置
-
-#### 🎯 用户体验改进
-
-- **Windows用户**: 可直接启用usage_tracking功能，无需额外配置
-- **部署简化**: 单一二进制文件，零外部依赖
-- **性能保证**: SQLite功能完全保持不变，性能优化
-
-### v1.0.1 (2025-09-08)
-
-#### 🔧 Token解析兼容性修复
-
-- **修复关键问题**: 解决标准Claude API格式Token解析失败问题
-- **格式兼容性**: 增强SSE事件格式兼容性，支持`event:`和`event: `两种格式
-- **数据行解析**: 修复`data:`和`data: `格式兼容性问题  
-- **Token提取增强**: 改进`parseMessageStart`函数，支持从`message_start`事件中提取token使用信息
-- **调试日志改进**: 提供更详细的Token解析状态和错误信息
-
-#### 🎯 解决的问题
-
-- **nonocode端点兼容性**: 修复nonocode等使用标准Claude API格式的端点Token信息无法解析的问题
-- **成本统计准确性**: 确保cache token费用能够正确计算和统计
-- **使用统计完整性**: 防止Token使用数据丢失，确保统计数据的准确性
-
-#### ⚡ 改进效果
-
-- **API兼容性**: 支持更多不同格式的Claude API端点
-- **数据准确性**: Token使用统计更加准确和完整
-- **调试友好**: 提供清晰的Token解析过程日志
-
-### v1.0.0 (2025-09-05)
-
-#### 🚀 重大功能更新
-
-- **Web管理界面**: 现代化Web界面，支持实时监控和组管理
-- **请求ID追踪**: 完整的请求生命周期追踪系统 (`req-xxxxxxxx`格式)
-- **Token解析器**: Claude API SSE流中的模型信息和Token使用量提取  
-- **请求挂起系统**: 智能请求挂起和恢复机制
-- **手动组切换**: 支持手动暂停/恢复/激活组操作
-- **实时数据流**: Server-Sent Events (SSE) 实时更新
-- **使用情况追踪**: SQLite数据库使用统计和成本分析
-
-#### 🔄 架构重构
-
-- **模块化重构**: 将巨大的 `handlers.go` 文件（2475行）重构为11个专门模块
-- **单一职责原则**: 每个模块专注特定功能领域，提升代码质量
-- **团队协作优化**: 支持多人并行开发不同功能模块
-
-#### 📁 Web处理器模块化
-
-- `basic_handlers.go` (233行) - 基础API处理器：状态、端点、连接等
-- `sse_handlers.go` (249行) - Server-Sent Events实时通信处理
-- `broadcast_handlers.go` (62行) - 事件广播系统
-- `metrics_handlers.go` (79行) - 性能指标统计处理
-- `chart_handlers.go` (173行) - 数据可视化图表处理
-- `group_handlers.go` (140行) - 端点组管理操作
-- `suspended_handlers.go` (86行) - 请求挂起处理
-- `usage_handlers.go` (183行) - 使用情况追踪API
-- `utils.go` (50行) - 格式化工具函数
-- `templates.go` (1272行) - Web界面HTML模板
-
-#### 🚀 前端JavaScript模块化
-
-- `endpointsManager.js` (429行) - 端点管理功能
-- `groupsManager.js` (358行) - 组管理操作  
-- `requestsManager.js` (546行) - 请求追踪功能
-- `sseManager.js` (431行) - SSE连接管理
-- `utils.js` (301行) - 工具函数和格式化
-- `webInterface.js` (800行) - 核心Web界面类
+**详细更新历史**: 请查看 [CHANGELOG.md](./CHANGELOG.md)
 
 ## 🤝 贡献
 

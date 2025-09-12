@@ -105,7 +105,7 @@ func (h *Handler) streamFromEndpoint(ctx context.Context, w http.ResponseWriter,
 	}
 
 	// Copy headers
-	h.copyHeaders(r, req, ep)
+	h.forwarder.CopyHeaders(r, req, ep)
 
 	// Create HTTP client optimized for real-time streaming with proxy support
 	httpTransport, err := transport.CreateTransport(h.config)

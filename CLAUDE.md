@@ -4,15 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v2.0 Architecture (2025-09-11)  
-**Major Update**: Complete proxy architecture redesign with enhanced streaming and error recovery
+**Current Version**: v2.1 Architecture (2025-09-12)  
+**Major Update**: Handler.go modular refactoring with enhanced maintainability
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v2.0**:
-- **Dual Architecture**: Streaming v2 and Unified v2 request processing
+**Key Features v2.1**:
+- **Modular Architecture**: Complete handler.go refactoring with single responsibility principle
+- **Dual Processing**: Streaming v2 and Unified v2 request processing
 - **Intelligent Error Recovery**: Smart error classification and recovery strategies  
 - **Complete Lifecycle Tracking**: End-to-end request monitoring and analytics
 - **Advanced Streaming**: Real-time SSE processing with cancellation support
@@ -37,21 +38,31 @@ go test ./...
 ## Core Architecture
 
 ### Main Components
-- **`internal/proxy/`**: Request forwarding with v2 architecture
-  - `handler.go`: Unified request processing
-  - `stream_processor.go`: Advanced streaming processor v2 ⭐ NEW
-  - `error_recovery.go`: Intelligent error handling ⭐ NEW
-  - `lifecycle_manager.go`: Complete request lifecycle tracking ⭐ NEW
+- **`internal/proxy/`**: Modular request forwarding with v2.1 architecture
+  - `handler.go`: Core HTTP request coordinator (~430 lines)
+  - **`handlers/`**: Specialized request processing modules ⭐ NEW
+    - `streaming.go`: Streaming request handler (~310 lines) ⭐ NEW
+    - `regular.go`: Regular request handler (~311 lines) ⭐ NEW
+    - `forwarder.go`: HTTP request forwarder (~144 lines) ⭐ NEW
+    - `interfaces.go`: Component interfaces (~115 lines) ⭐ NEW
+  - **`response/`**: Response processing modules ⭐ NEW
+    - `processor.go`: Response processing and decompression (~173 lines) ⭐ NEW
+    - `analyzer.go`: Token analysis and parsing (~346 lines) ⭐ NEW
+    - `utils.go`: Response utility functions (~21 lines) ⭐ NEW
+  - `stream_processor.go`: Advanced streaming processor v2
+  - `error_recovery.go`: Intelligent error handling
+  - `lifecycle_manager.go`: Complete request lifecycle tracking
 - **`internal/endpoint/`**: Endpoint management and health checking
 - **`internal/web/`**: Web interface with real-time monitoring
 - **`internal/tracking/`**: Usage tracking and analytics
 - **`config/`**: Configuration management with hot-reloading
 
-### Request Flow v2
+### Request Flow v2.1
 ```
 1. Request Reception → Architecture Detection → Lifecycle Init
-2. Endpoint Selection → Request Processing (Streaming v2 or Unified v2)  
-3. Error Handling → Status Tracking → Response Delivery
+2. Handler Coordination → Specialized Processing (Streaming/Regular)
+3. Response Analysis → Token Extraction → Client Delivery
+4. Error Recovery → Retry Logic → Status Tracking
 ```
 
 ### Status Lifecycle
@@ -209,6 +220,13 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-09-12**: Major v2.1 modular refactoring
+- Complete handler.go modular architecture with single responsibility principle
+- Dedicated modules: handlers/ (streaming, regular, forwarder) and response/ (processor, analyzer, utils)
+- Enhanced maintainability with 1,568 lines split across 7 specialized modules
+- Full functional compatibility with improved code organization
+- All 25+ test files continue to pass with identical behavior
 
 **2025-09-11**: Major v2.0 architecture upgrade
 - Stream Processor v2 with advanced streaming capabilities

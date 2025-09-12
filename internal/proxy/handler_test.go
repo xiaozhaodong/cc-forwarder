@@ -49,7 +49,7 @@ func TestSensitiveHeaderRemoval(t *testing.T) {
 	}
 
 	ep := endpointManager.GetAllEndpoints()[0]
-	handler.copyHeaders(req, targetReq, ep)
+	handler.forwarder.CopyHeaders(req, targetReq, ep)
 
 	// Verify sensitive headers are removed
 	if targetReq.Header.Get("X-API-Key") != "" {
@@ -121,7 +121,7 @@ func TestHostHeaderOverride(t *testing.T) {
 	}
 
 	ep := endpointManager.GetAllEndpoints()[0]
-	handler.copyHeaders(req, targetReq, ep)
+	handler.forwarder.CopyHeaders(req, targetReq, ep)
 
 	// Verify Host header is set to target endpoint's host
 	expectedHost := "api.example.com"
@@ -194,7 +194,7 @@ func TestHostHeaderWithDifferentPorts(t *testing.T) {
 			targetReq, _ := http.NewRequest("GET", tc.endpointURL+"/test", nil)
 
 			ep := endpointManager.GetAllEndpoints()[0]
-			handler.copyHeaders(req, targetReq, ep)
+			handler.forwarder.CopyHeaders(req, targetReq, ep)
 
 			if targetReq.Header.Get("Host") != tc.expectedHost {
 				t.Errorf("Expected Host header '%s', got '%s'", tc.expectedHost, targetReq.Header.Get("Host"))
