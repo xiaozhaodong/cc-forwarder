@@ -412,44 +412,79 @@ jobs:
           # 获取版本信息
           VERSION=${GITHUB_REF#refs/tags/}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          VERSION_NUMBER=${VERSION#v}  # 移除 v 前缀用于匹配CHANGELOG
           
-          # 生成简单的发布说明
-          cat > release_notes.md << EOF
-          ## CC-Forwarder $VERSION
+          # 检查CHANGELOG.md是否存在
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "⚠️ CHANGELOG.md 文件不存在，使用默认发布说明"
+            CHANGELOG_CONTENT="🚀 **新版本发布！**"
+          else
+            # 从CHANGELOG.md提取当前版本的内容
+            echo "📝 从CHANGELOG.md提取版本 $VERSION_NUMBER 的变更内容..."
+            
+            # 使用awk提取当前版本的changelog内容
+            CHANGELOG_CONTENT=$(awk '
+              BEGIN { found=0; content="" }
+              /^## \[/ {
+                if (found) exit
+                if (index($0, "['$VERSION_NUMBER']") > 0) {
+                  found=1
+                  next
+                }
+              }
+              found && !/^## \[/ { 
+                content = content $0 "\n" 
+              }
+              END { print content }
+            ' CHANGELOG.md)
+            
+            # 如果没有找到对应版本内容，使用默认说明
+            if [ -z "$CHANGELOG_CONTENT" ]; then
+              echo "⚠️ 在CHANGELOG.md中未找到版本 $VERSION_NUMBER 的变更记录"
+              CHANGELOG_CONTENT="🚀 **新版本发布！**\n\n查看完整变更历史请参考 [CHANGELOG.md](./CHANGELOG.md)"
+            else
+              echo "✅ 成功提取版本 $VERSION_NUMBER 的变更内容"
+            fi
+          fi
           
-          🎉 **新版本发布！**
-          
-          ### 📥 下载说明
-          
-          选择适合你系统的版本：
-          
-          - **Linux x64**: \`cc-forwarder-linux-amd64.tar.gz\`
-          - **Linux ARM64**: \`cc-forwarder-linux-arm64.tar.gz\`  
-          - **Linux ARMv7**: \`cc-forwarder-linux-armv7.tar.gz\`
-          - **Windows x64**: \`cc-forwarder-windows-amd64.zip\`
-          - **Windows ARM64**: \`cc-forwarder-windows-arm64.zip\`
-          - **macOS Intel**: \`cc-forwarder-darwin-amd64.tar.gz\`
-          - **macOS Apple Silicon**: \`cc-forwarder-darwin-arm64.tar.gz\`
-          
-          ### 🚀 快速开始
-          
-          1. 下载对应平台的压缩包
-          2. 解压到目标目录
-          3. 复制 \`config/example.yaml\` 到 \`config/config.yaml\` 并修改配置
-          4. 运行 \`./start.sh\` (Linux/macOS) 或 \`start.bat\` (Windows)
-          
-          ### 🔐 文件完整性验证
-          
-          使用 \`checksums.txt\` 验证下载文件的完整性：
-          \`\`\`bash
-          sha256sum -c checksums.txt
-          \`\`\`
-          
-          ### 📚 更多信息
-          
-          - [完整文档](README.md)
-          - [问题反馈](https://github.com/${{ github.repository }}/issues)
-          EOF
+          # 生成完整的发布说明，使用临时文件处理换行符
+          echo "## CC-Forwarder $VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          echo "$CHANGELOG_CONTENT" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## 📥 下载说明" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "选择适合你系统的版本：" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- **Linux x64**: \`cc-forwarder-linux-amd64.tar.gz\`" >> release_notes.md
+          echo "- **Linux ARM64**: \`cc-forwarder-linux-arm64.tar.gz\`" >> release_notes.md  
+          echo "- **Linux ARMv7**: \`cc-forwarder-linux-armv7.tar.gz\`" >> release_notes.md
+          echo "- **Windows x64**: \`cc-forwarder-windows-amd64.zip\`" >> release_notes.md
+          echo "- **Windows ARM64**: \`cc-forwarder-windows-arm64.zip\`" >> release_notes.md
+          echo "- **macOS Intel**: \`cc-forwarder-darwin-amd64.tar.gz\`" >> release_notes.md
+          echo "- **macOS Apple Silicon**: \`cc-forwarder-darwin-arm64.tar.gz\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## 🚀 快速开始" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "1. 下载对应平台的压缩包" >> release_notes.md
+          echo "2. 解压到目标目录" >> release_notes.md
+          echo "3. 复制 \`config/example.yaml\` 到 \`config/config.yaml\` 并修改配置" >> release_notes.md
+          echo "4. 运行 \`./start.sh\` (Linux/macOS) 或 \`start.bat\` (Windows)" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## 🔐 文件完整性验证" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "使用 \`checksums.txt\` 验证下载文件的完整性：" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "sha256sum -c checksums.txt" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## 📚 更多信息" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- [完整文档](README.md)" >> release_notes.md
+          echo "- [变更历史](CHANGELOG.md)" >> release_notes.md
+          echo "- [问题反馈](https://github.com/${{ github.repository }}/issues)" >> release_notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
