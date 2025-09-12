@@ -44,7 +44,7 @@ func TestErrorRecoveryManager_ClassifyError(t *testing.T) {
 		{errors.New("connection refused"), ErrorTypeNetwork, "connection refused", true},
 		{errors.New("i/o timeout"), ErrorTypeTimeout, "i/o timeout", true},
 		{errors.New("context deadline exceeded"), ErrorTypeTimeout, "deadline exceeded", true},
-		{errors.New("HTTP 500 Internal Server Error"), ErrorTypeHTTP, "HTTP 5xx error", true},
+		{errors.New("HTTP 500 Internal Server Error"), ErrorTypeServerError, "HTTP 5xx error", true},
 		{errors.New("HTTP 404 Not Found"), ErrorTypeHTTP, "HTTP 4xx error", false},
 		{errors.New("unauthorized access"), ErrorTypeAuth, "auth error", false},
 		{errors.New("rate limit exceeded"), ErrorTypeRateLimit, "rate limit", true},

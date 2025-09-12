@@ -22,6 +22,7 @@ const (
 	ErrorTypeNetwork             // 网络错误
 	ErrorTypeTimeout             // 超时错误
 	ErrorTypeHTTP                // HTTP错误
+	ErrorTypeServerError         // 服务器错误（5xx）
 	ErrorTypeStream              // 流式处理错误
 	ErrorTypeAuth                // 认证错误
 	ErrorTypeRateLimit           // 限流错误
@@ -107,13 +108,23 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		return errorCtx
 	}
 
-	// HTTP错误分类
-	if strings.Contains(errStr, "http") || strings.Contains(errStr, "status") {
+	// 服务器错误分类（5xx）- 优先级高于通用HTTP错误
+	if strings.Contains(errStr, "endpoint returned error: 5") ||
+	   strings.Contains(errStr, "500") || strings.Contains(errStr, "501") ||
+	   strings.Contains(errStr, "502") || strings.Contains(errStr, "503") ||
+	   strings.Contains(errStr, "504") || strings.Contains(errStr, "505") {
+		errorCtx.ErrorType = ErrorTypeServerError
+		errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
+		slog.Warn(fmt.Sprintf("🚨 [服务器错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v", 
+			requestID, endpoint, attempt, err))
+		return errorCtx
+	}
+
+	// HTTP错误分类（非5xx）
+	if strings.Contains(errStr, "http") || strings.Contains(errStr, "status") ||
+	   strings.Contains(errStr, "endpoint returned error") {
 		errorCtx.ErrorType = ErrorTypeHTTP
-		// HTTP错误通常不可重试，除非是5xx错误
-		if strings.Contains(errStr, "50") {
-			errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
-		}
+		// 非5xx HTTP错误通常不可重试
 		slog.Error(fmt.Sprintf("🔗 [HTTP错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v", 
 			requestID, endpoint, attempt, err))
 		return errorCtx
@@ -181,19 +192,14 @@ func (erm *ErrorRecoveryManager) ShouldRetry(errorCtx *ErrorContext) bool {
 		slog.Info(fmt.Sprintf("🚫 [重试判断] [%s] 客户端取消错误不可重试", errorCtx.RequestID))
 		return false
 
-	case ErrorTypeNetwork, ErrorTypeTimeout, ErrorTypeStream:
-		// 网络、超时、流处理错误通常可重试
+	case ErrorTypeNetwork, ErrorTypeTimeout, ErrorTypeStream, ErrorTypeServerError:
+		// 网络、超时、流处理、服务器错误通常可重试
 		slog.Info(fmt.Sprintf("✅ [重试判断] [%s] %s错误可重试, 尝试: %d/%d", 
 			errorCtx.RequestID, erm.getErrorTypeName(errorCtx.ErrorType), errorCtx.AttemptCount, errorCtx.MaxRetries))
 		return true
 
 	case ErrorTypeHTTP:
-		// HTTP错误根据具体错误码判断
-		if strings.Contains(strings.ToLower(errorCtx.OriginalError.Error()), "50") {
-			slog.Info(fmt.Sprintf("✅ [重试判断] [%s] 5xx HTTP错误可重试, 尝试: %d/%d", 
-				errorCtx.RequestID, errorCtx.AttemptCount, errorCtx.MaxRetries))
-			return true
-		}
+		// 非5xx HTTP错误通常不可重试
 		slog.Info(fmt.Sprintf("❌ [重试判断] [%s] 非5xx HTTP错误不可重试", errorCtx.RequestID))
 		return false
 
@@ -263,6 +269,8 @@ func (erm *ErrorRecoveryManager) HandleFinalFailure(errorCtx *ErrorContext) {
 			status = "auth_error"
 		case ErrorTypeRateLimit:
 			status = "rate_limited"
+		case ErrorTypeServerError:
+			status = "server_error"
 		}
 
 		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, errorCtx.EndpointName, 
@@ -445,6 +453,8 @@ func (erm *ErrorRecoveryManager) getErrorTypeName(errorType ErrorType) string {
 		return "超时"
 	case ErrorTypeHTTP:
 		return "HTTP"
+	case ErrorTypeServerError:
+		return "服务器"
 	case ErrorTypeStream:
 		return "流处理"
 	case ErrorTypeAuth:
