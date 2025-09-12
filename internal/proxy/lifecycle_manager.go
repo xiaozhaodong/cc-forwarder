@@ -6,32 +6,40 @@ import (
 	"strings"
 	"time"
 
+	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
 )
+
+// MonitoringMiddlewareInterface 定义监控中间件接口
+type MonitoringMiddlewareInterface interface {
+	RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
+}
 
 // RequestLifecycleManager 请求生命周期管理器
 // 负责管理请求的完整生命周期，确保所有请求都有完整的跟踪记录
 type RequestLifecycleManager struct {
-	usageTracker  *tracking.UsageTracker // 使用跟踪器
-	errorRecovery *ErrorRecoveryManager  // 错误恢复管理器
-	requestID     string                  // 请求唯一标识符
-	startTime     time.Time               // 请求开始时间
-	modelName     string                  // 模型名称
-	endpointName  string                  // 端点名称
-	groupName     string                  // 组名称
-	retryCount    int                     // 重试计数
-	lastStatus    string                  // 最后状态
-	lastError     error                   // 最后一次错误
+	usageTracker        *tracking.UsageTracker        // 使用跟踪器
+	monitoringMiddleware MonitoringMiddlewareInterface // 监控中间件
+	errorRecovery       *ErrorRecoveryManager         // 错误恢复管理器
+	requestID           string                        // 请求唯一标识符
+	startTime           time.Time                     // 请求开始时间
+	modelName           string                        // 模型名称
+	endpointName        string                        // 端点名称
+	groupName           string                        // 组名称
+	retryCount          int                           // 重试计数
+	lastStatus          string                        // 最后状态
+	lastError           error                         // 最后一次错误
 }
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
-func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, requestID string) *RequestLifecycleManager {
+func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string) *RequestLifecycleManager {
 	return &RequestLifecycleManager{
-		usageTracker:  usageTracker,
-		errorRecovery: NewErrorRecoveryManager(usageTracker),
-		requestID:     requestID,
-		startTime:     time.Now(),
-		lastStatus:    "pending",
+		usageTracker:        usageTracker,
+		monitoringMiddleware: monitoringMiddleware,
+		errorRecovery:       NewErrorRecoveryManager(usageTracker),
+		requestID:           requestID,
+		startTime:           time.Now(),
+		lastStatus:          "pending",
 	}
 }
 
@@ -97,6 +105,17 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 		
 		// 记录请求完成信息到使用跟踪器
 		rlm.usageTracker.RecordRequestComplete(rlm.requestID, modelName, tokens, duration)
+		
+		// 同时记录到监控中间件（用于Web图表显示）
+		if rlm.monitoringMiddleware != nil && tokens != nil {
+			monitorTokens := &monitor.TokenUsage{
+				InputTokens:         tokens.InputTokens,
+				OutputTokens:        tokens.OutputTokens,
+				CacheCreationTokens: tokens.CacheCreationTokens,
+				CacheReadTokens:     tokens.CacheReadTokens,
+			}
+			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, rlm.endpointName, monitorTokens)
+		}
 		
 		// 同时更新状态为完成
 		rlm.UpdateStatus("completed", rlm.retryCount, 0)

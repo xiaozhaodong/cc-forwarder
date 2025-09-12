@@ -9,6 +9,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/response"
@@ -22,15 +23,16 @@ const EndpointContextKey = contextKey("endpoint")
 
 // Handler handles HTTP proxy requests
 type Handler struct {
-	endpointManager   *endpoint.Manager
-	config            *config.Config
-	retryHandler      *RetryHandler
-	usageTracker      *tracking.UsageTracker
-	responseProcessor *response.Processor
-	tokenAnalyzer     *response.TokenAnalyzer
-	forwarder         *handlers.Forwarder
-	regularHandler    *handlers.RegularHandler
-	streamingHandler  *handlers.StreamingHandler
+	endpointManager      *endpoint.Manager
+	config               *config.Config
+	retryHandler         *RetryHandler
+	usageTracker         *tracking.UsageTracker
+	monitoringMiddleware *middleware.MonitoringMiddleware
+	responseProcessor    *response.Processor
+	tokenAnalyzer        *response.TokenAnalyzer
+	forwarder            *handlers.Forwarder
+	regularHandler       *handlers.RegularHandler
+	streamingHandler     *handlers.StreamingHandler
 }
 
 // TokenParserProviderImpl 实现TokenParserProvider接口
@@ -267,10 +269,9 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	return h
 }
 
-// SetMonitoringMiddleware sets the monitoring middleware for retry tracking
-func (h *Handler) SetMonitoringMiddleware(mm interface{
-	RecordRetry(connID string, endpoint string)
-}) {
+// SetMonitoringMiddleware 设置监控中间件用于重试跟踪
+func (h *Handler) SetMonitoringMiddleware(mm *middleware.MonitoringMiddleware) {
+	h.monitoringMiddleware = mm
 	h.retryHandler.SetMonitoringMiddleware(mm)
 	
 	// 同时更新tokenAnalyzer的monitoringMiddleware
@@ -347,7 +348,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// 创建统一的请求生命周期管理器
-	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, connID)
+	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID)
 	
 	// 开始请求跟踪
 	clientIP := r.RemoteAddr

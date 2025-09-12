@@ -14,7 +14,7 @@ func TestRequestIDLogging(t *testing.T) {
 	requestID := "req-12345678"
 	
 	// 创建生命周期管理器（不传入usageTracker，重点测试日志格式）
-	lifecycleManager := NewRequestLifecycleManager(nil, requestID)
+	lifecycleManager := NewRequestLifecycleManager(nil, nil, requestID)
 	
 	t.Logf("🔍 测试完整的requestId日志追踪链路")
 	

@@ -8,7 +8,7 @@ import (
 func TestRequestLifecycleManager_NewRequestLifecycleManager(t *testing.T) {
 	requestID := "test-lifecycle-123"
 
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	if rlm.requestID != requestID {
 		t.Error("RequestID not set correctly")
@@ -20,7 +20,7 @@ func TestRequestLifecycleManager_NewRequestLifecycleManager(t *testing.T) {
 
 func TestRequestLifecycleManager_SettersAndGetters(t *testing.T) {
 	requestID := "test-getters-303"
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	// 测试设置方法
 	rlm.SetEndpoint("test-endpoint", "test-group")
@@ -46,7 +46,7 @@ func TestRequestLifecycleManager_SettersAndGetters(t *testing.T) {
 
 func TestRequestLifecycleManager_UpdateStatus(t *testing.T) {
 	requestID := "test-update-789"
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	// 设置端点信息
 	rlm.SetEndpoint("test-endpoint", "test-group")
@@ -65,7 +65,7 @@ func TestRequestLifecycleManager_UpdateStatus(t *testing.T) {
 
 func TestRequestLifecycleManager_Duration(t *testing.T) {
 	requestID := "test-duration-404"
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	// 等待一小段时间
 	time.Sleep(10 * time.Millisecond)
@@ -82,7 +82,7 @@ func TestRequestLifecycleManager_Duration(t *testing.T) {
 
 func TestRequestLifecycleManager_IsCompleted(t *testing.T) {
 	requestID := "test-completed-505"
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	// 初始状态不应该是完成
 	if rlm.IsCompleted() {
@@ -104,7 +104,7 @@ func TestRequestLifecycleManager_IsCompleted(t *testing.T) {
 
 func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	requestID := "test-stats-606"
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	// 设置一些状态
 	rlm.SetEndpoint("stats-endpoint", "stats-group")
@@ -144,7 +144,7 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 
 func TestRequestLifecycleManager_AnalyzeResponseType(t *testing.T) {
 	requestID := "test-analyze-707"
-	rlm := NewRequestLifecycleManager(nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID)
 
 	testCases := []struct {
 		response string
