@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v2.1 Architecture (2025-09-12)  
+**Current Version**: v3.0.0 Architecture (2025-09-12)  
 **Major Update**: Handler.go modular refactoring with enhanced maintainability
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v2.1**:
+**Key Features v3.0**:
 - **Modular Architecture**: Complete handler.go refactoring with single responsibility principle
 - **Dual Processing**: Streaming v2 and Unified v2 request processing
 - **Intelligent Error Recovery**: Smart error classification and recovery strategies  
@@ -221,11 +221,12 @@ For detailed technical information, see:
 
 ## Recent Updates
 
-**2025-09-12**: Major v2.1 modular refactoring
+**2025-09-12**: Major v3.0.0 modular refactoring
 - Complete handler.go modular architecture with single responsibility principle
 - Dedicated modules: handlers/ (streaming, regular, forwarder) and response/ (processor, analyzer, utils)
 - Enhanced maintainability with 1,568 lines split across 7 specialized modules
 - Full functional compatibility with improved code organization
+- Fixed streaming request endpoint logging issue (endpoint=unknown)
 - All 25+ test files continue to pass with identical behavior
 
 **2025-09-11**: Major v2.0 architecture upgrade
