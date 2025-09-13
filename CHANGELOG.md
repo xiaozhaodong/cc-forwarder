@@ -5,6 +5,30 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.1.2] - 2025-09-13
+
+### 🎯 用户体验优化 (UX Optimization)
+- **模型信息早期显示**: 解决用户在请求处理早期看到"unknown"模型的问题
+- **搭便车更新机制**: 通过状态更新"搭便车"实现模型信息早期显示
+- **渐进式优化**: 多次更新机会确保最终一致性，用户体验显著改善
+
+### 🛡️ 架构改进 (Architecture Improvements)
+- **零延迟转发**: 保持异步解析，主请求流程完全无阻塞
+- **线程安全设计**: 使用互斥锁保护更新标记，支持并发环境
+- **重复更新保护**: 模型信息仅在首次有效时写入数据库，避免重复操作
+- **幂等SQL设计**: UPDATE操作天然幂等，确保数据一致性
+
+### 📈 技术实现 (Technical Implementation)
+- **lifecycle_manager.go**: 添加搭便车机制和`modelUpdatedInDB`保护标记
+- **tracker.go**: 新增`RequestUpdateDataWithModel`结构和`RecordRequestUpdateWithModel`方法  
+- **database.go**: 实现`buildUpdateWithModelQuery`方法，支持`update_with_model`事件类型
+- **向后兼容**: 不影响现有功能，渐进式增强
+
+### ✨ 预期效果 (Expected Benefits)
+- **早期可见性**: 模型信息在请求处理早期阶段就能显示
+- **准确性保证**: 最终仍以SSE解析的权威模型为准
+- **性能保持**: 利用现有状态更新流程，最小化额外开销
+
 ## [3.1.1] - 2025-09-13
 
 ### 🎯 重大优化 (Major Optimization)
