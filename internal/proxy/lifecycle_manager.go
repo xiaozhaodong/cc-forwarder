@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"cc-forwarder/internal/monitor"
@@ -23,6 +24,7 @@ type RequestLifecycleManager struct {
 	errorRecovery       *ErrorRecoveryManager         // 错误恢复管理器
 	requestID           string                        // 请求唯一标识符
 	startTime           time.Time                     // 请求开始时间
+	modelMu             sync.RWMutex                  // 保护模型字段的读写锁
 	modelName           string                        // 模型名称
 	endpointName        string                        // 端点名称
 	groupName           string                        // 组名称
@@ -97,8 +99,8 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		duration := time.Since(rlm.startTime)
 		
-		// 使用Token中的模型信息，如果没有则使用默认值
-		modelName := rlm.modelName
+		// 使用线程安全的方式获取模型信息
+		modelName := rlm.GetModelName()
 		if modelName == "" {
 			modelName = "unknown"
 		}
@@ -193,21 +195,67 @@ func (rlm *RequestLifecycleManager) SetEndpoint(endpointName, groupName string) 
 	rlm.groupName = groupName
 }
 
-// SetModel 设置模型名称
+// SetModel 设置模型名称（线程安全）
+// 简单版本，只在模型为空或unknown时设置
 func (rlm *RequestLifecycleManager) SetModel(modelName string) {
-	rlm.modelName = modelName
+	rlm.modelMu.Lock()
+	defer rlm.modelMu.Unlock()
+	
+	// 只在当前模型为空或unknown时设置，避免覆盖更准确的模型信息
+	if rlm.modelName == "" || rlm.modelName == "unknown" {
+		rlm.modelName = modelName
+		slog.Debug(fmt.Sprintf("🏷️ [模型提取] [%s] 从请求中获取模型名称: %s", rlm.requestID, modelName))
+	}
 }
 
-// SetModelName 设置模型名称
+// SetModelWithComparison 设置模型名称并进行对比检查（线程安全）
+// 如果已有模型，会进行对比并在不一致时输出警告，最终以新模型为准
+func (rlm *RequestLifecycleManager) SetModelWithComparison(newModelName, source string) {
+	rlm.modelMu.Lock()
+	defer rlm.modelMu.Unlock()
+	
+	// 如果新模型为空或unknown，不进行设置
+	if newModelName == "" || newModelName == "unknown" {
+		return
+	}
+	
+	// 如果当前没有模型或为unknown，直接设置
+	if rlm.modelName == "" || rlm.modelName == "unknown" {
+		rlm.modelName = newModelName
+		slog.Debug(fmt.Sprintf("🏷️ [模型提取] [%s] 从%s设置模型名称: %s", rlm.requestID, source, newModelName))
+		return
+	}
+	
+	// 如果两个模型都有值，进行对比
+	if rlm.modelName != newModelName {
+		slog.Warn(fmt.Sprintf("⚠️ [模型不一致] [%s] 请求体模型: %s, %s模型: %s - 以%s为准", 
+			rlm.requestID, rlm.modelName, source, newModelName, source))
+		
+		// 以新模型（通常是message_start解析的）为准
+		rlm.modelName = newModelName
+	} else {
+		slog.Debug(fmt.Sprintf("✅ [模型一致] [%s] 请求体与%s模型一致: %s", rlm.requestID, source, newModelName))
+	}
+}
+
+// SetModelName 设置模型名称（兼容性方法，内部调用SetModel）
 // 用于在流处理中动态设置正确的模型信息
 func (rlm *RequestLifecycleManager) SetModelName(modelName string) {
-	rlm.modelName = modelName
-	slog.Debug(fmt.Sprintf("🏷️ [模型设置] [%s] 设置模型名称: %s", rlm.requestID, modelName))
+	rlm.SetModel(modelName)
 }
 
-// GetModelName 获取当前模型名称
+// GetModelName 获取当前模型名称（线程安全）
 func (rlm *RequestLifecycleManager) GetModelName() string {
+	rlm.modelMu.RLock()
+	defer rlm.modelMu.RUnlock()
 	return rlm.modelName
+}
+
+// HasModel 检查是否已有有效的模型名称（线程安全）
+func (rlm *RequestLifecycleManager) HasModel() bool {
+	rlm.modelMu.RLock()
+	defer rlm.modelMu.RUnlock()
+	return rlm.modelName != "" && rlm.modelName != "unknown"
 }
 
 // GetRequestID 获取请求ID
@@ -251,7 +299,7 @@ func (rlm *RequestLifecycleManager) GetStats() map[string]any {
 		"request_id":    rlm.requestID,
 		"endpoint":      rlm.endpointName,
 		"group":         rlm.groupName,
-		"model":         rlm.modelName,
+		"model":         rlm.GetModelName(), // 线程安全获取
 		"status":        rlm.lastStatus,
 		"retry_count":   rlm.retryCount,
 		"duration_ms":   time.Since(rlm.startTime).Milliseconds(),

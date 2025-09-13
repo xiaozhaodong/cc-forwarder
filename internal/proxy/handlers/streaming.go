@@ -180,8 +180,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 					}
 					
 					// ✅ 确保生命周期管理器获得正确的模型信息
+					// 使用对比方法，检测并警告模型不一致情况
 					if parsedModelName != "unknown" && parsedModelName != "" {
-						lifecycleManager.SetModel(parsedModelName)
+						lifecycleManager.SetModelWithComparison(parsedModelName, "message_start")
 					}
 					
 					// ✅ 使用正确的状态更新
@@ -208,7 +209,10 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				// ✅ 流式处理成功完成，使用生命周期管理器完成请求
 				if finalTokenUsage != nil {
 					// 设置模型名称并通过生命周期管理器完成请求
-					lifecycleManager.SetModel(modelName)
+					// 使用对比方法，检测并警告模型不一致情况
+					if modelName != "unknown" && modelName != "" {
+						lifecycleManager.SetModelWithComparison(modelName, "流式响应解析")
+					}
 					lifecycleManager.CompleteRequest(finalTokenUsage)
 				} else {
 					// 没有Token信息，使用HandleNonTokenResponse处理

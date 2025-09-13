@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -335,6 +336,30 @@ func (h *Handler) GetRetryHandler() *RetryHandler {
 	return h.retryHandler
 }
 
+// extractModelFromRequestBody 从请求体中提取模型名称
+// 仅对 /v1/messages 相关路径进行解析，避免不必要的JSON解析开销
+func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
+	// 仅对包含 messages 的路径尝试解析模型
+	if !strings.Contains(path, "/v1/messages") {
+		return ""
+	}
+	
+	// 避免解析空请求体
+	if len(bodyBytes) == 0 {
+		return ""
+	}
+	
+	var requestBody struct {
+		Model string `json:"model"`
+	}
+	
+	if err := json.Unmarshal(bodyBytes, &requestBody); err == nil && requestBody.Model != "" {
+		return requestBody.Model
+	}
+	
+	return ""
+}
+
 // ServeHTTP implements the http.Handler interface
 // 统一请求分发逻辑 - 整合流式处理、错误恢复和生命周期管理
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -362,6 +387,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body.Close()
 	}
+
+	// 异步解析请求体中的模型名称（不阻塞主转发流程）
+	go func(body []byte, path string) {
+		if modelName := h.extractModelFromRequestBody(body, path); modelName != "" {
+			lifecycleManager.SetModel(modelName)
+		}
+	}(append([]byte(nil), bodyBytes...), r.URL.Path) // 传递副本避免数据竞争
 
 	// 检测是否为SSE流式请求
 	isSSE := h.detectSSERequest(r, bodyBytes)

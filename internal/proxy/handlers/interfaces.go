@@ -15,7 +15,9 @@ import (
 type RequestLifecycleManager interface {
 	GetRequestID() string
 	SetEndpoint(name, group string)
-	SetModel(modelName string) // 新增：设置模型名称
+	SetModel(modelName string)                               // 简单设置模型
+	SetModelWithComparison(modelName, source string)        // 带对比的设置模型
+	HasModel() bool                                          // 检查是否已有模型
 	UpdateStatus(status string, endpointIndex, statusCode int)
 	HandleError(err error)
 	// 新增方法：统一的请求完成入口

@@ -183,7 +183,10 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		// 使用生命周期管理器完成请求
 		if tokenUsage != nil {
 			// 设置模型名称并完成请求
-			lifecycleManager.SetModel(modelName)
+			// 使用对比方法，检测并警告模型不一致情况
+			if modelName != "unknown" && modelName != "" {
+				lifecycleManager.SetModelWithComparison(modelName, "常规响应解析")
+			}
 			lifecycleManager.CompleteRequest(tokenUsage)
 			slog.Info(fmt.Sprintf("✅ [常规请求Token完成] [%s] 端点: %s, 模型: %s, 输入: %d, 输出: %d", 
 				connID, selectedEndpointName, modelName, tokenUsage.InputTokens, tokenUsage.OutputTokens))
