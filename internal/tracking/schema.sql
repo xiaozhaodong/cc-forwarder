@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     endpoint_name TEXT,                     -- 使用的端点名称
     group_name TEXT,                        -- 所属组名
     model_name TEXT,                        -- Claude模型名称
+    is_streaming BOOLEAN DEFAULT FALSE,     -- 是否为流式请求
     
     -- 状态信息
     status TEXT NOT NULL DEFAULT 'pending', -- pending/success/error/suspended/timeout

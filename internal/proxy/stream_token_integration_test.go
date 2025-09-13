@@ -153,7 +153,7 @@ type streamMockUsageTracker struct {
 	logs []string
 }
 
-func (m *streamMockUsageTracker) RecordRequestStart(requestID, clientIP, userAgent string) {
+func (m *streamMockUsageTracker) RecordRequestStart(requestID, clientIP, userAgent, method, path string, isStreaming bool) {
 	m.logs = append(m.logs, "RecordRequestStart: "+requestID)
 }
 

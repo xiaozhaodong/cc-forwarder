@@ -76,7 +76,7 @@ func TestAsyncEventProcessing(t *testing.T) {
 		requestID := time.Now().Format("req-test-20060102150405") + string(rune('0'+i))
 		
 		// Start event
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "test-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 		
 		// Update event
 		tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "processing", 0, 0)
@@ -128,7 +128,7 @@ func TestBatchProcessing(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		requestID := time.Now().Format("req-batch-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "batch-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "batch-agent", "POST", "/v1/messages", false)
 	}
 	
 	// Wait a bit for batch processing
@@ -166,7 +166,7 @@ func TestForceFlush(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		requestID := time.Now().Format("req-flush-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "flush-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "flush-agent", "POST", "/v1/messages", false)
 	}
 	
 	// Force flush
@@ -218,7 +218,7 @@ func TestEventChannelOverflow(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		requestID := time.Now().Format("req-overflow-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "overflow-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "overflow-agent", "POST", "/v1/messages", false)
 		successCount++ // Always succeeds since no error returned
 	}
 	
@@ -264,7 +264,7 @@ func TestConcurrentAccess(t *testing.T) {
 				requestID := time.Now().Format("req-concurrent-20060102150405") + string(rune('0'+goroutineID)) + string(rune('0'+j))
 				
 				// Start
-				tracker.RecordRequestStart(requestID, "127.0.0.1", "concurrent-agent")
+				tracker.RecordRequestStart(requestID, "127.0.0.1", "concurrent-agent", "POST", "/v1/messages", false)
 				
 				// Complete
 				tokens := &TokenUsage{
@@ -353,7 +353,7 @@ func TestPricingUpdate(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			requestID := time.Now().Format("req-pricing-20060102150405") + string(rune('0'+i))
 			
-			tracker.RecordRequestStart(requestID, "127.0.0.1", "pricing-agent")
+			tracker.RecordRequestStart(requestID, "127.0.0.1", "pricing-agent", "POST", "/v1/messages", false)
 			
 			// Add request update to ensure complete records
 			tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "success", 0, 200)

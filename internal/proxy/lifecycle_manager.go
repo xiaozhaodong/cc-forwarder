@@ -45,9 +45,9 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 
 // StartRequest 开始请求跟踪
 // 调用 RecordRequestStart 记录请求开始
-func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent string) {
+func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, path string, isStreaming bool) {
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestStart(rlm.requestID, clientIP, userAgent)
+		rlm.usageTracker.RecordRequestStart(rlm.requestID, clientIP, userAgent, method, path, isStreaming)
 		slog.Info(fmt.Sprintf("🚀 Request started [%s]", rlm.requestID))
 	}
 }

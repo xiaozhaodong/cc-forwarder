@@ -57,6 +57,7 @@ type RequestDetail struct {
 	EndpointName string    `json:"endpoint_name"`
 	GroupName    string    `json:"group_name"`
 	ModelName    string    `json:"model_name"`
+	IsStreaming  bool      `json:"is_streaming"` // 是否为流式请求
 	
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code"`
@@ -182,6 +183,7 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		COALESCE(endpoint_name, '') as endpoint_name,
 		COALESCE(group_name, '') as group_name,
 		COALESCE(model_name, '') as model_name,
+		COALESCE(is_streaming, false) as is_streaming,
 		status, http_status_code, retry_count,
 		input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 		input_cost_usd, output_cost_usd, cache_creation_cost_usd, 
@@ -240,7 +242,7 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 			&detail.ID, &detail.RequestID, 
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
 			&detail.StartTime, &detail.EndTime, &detail.DurationMs,
-			&detail.EndpointName, &detail.GroupName, &detail.ModelName,
+			&detail.EndpointName, &detail.GroupName, &detail.ModelName, &detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.InputTokens, &detail.OutputTokens, 
 			&detail.CacheCreationTokens, &detail.CacheReadTokens,

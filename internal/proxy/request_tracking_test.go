@@ -20,7 +20,7 @@ func TestRequestIDLogging(t *testing.T) {
 	
 	// 1. 请求开始
 	t.Logf("1️⃣ 测试请求开始日志")
-	lifecycleManager.StartRequest("127.0.0.1", "test-agent")
+	lifecycleManager.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 	
 	// 2. 设置端点信息
 	lifecycleManager.SetEndpoint("test-endpoint", "test-group")
@@ -100,7 +100,7 @@ type mockUsageTracker struct {
 	logs []string
 }
 
-func (m *mockUsageTracker) RecordRequestStart(requestID, clientIP, userAgent string) {
+func (m *mockUsageTracker) RecordRequestStart(requestID, clientIP, userAgent, method, path string, isStreaming bool) {
 	m.logs = append(m.logs, fmt.Sprintf("RecordRequestStart: %s", requestID))
 }
 

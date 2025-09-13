@@ -66,7 +66,7 @@ window.RequestsManager = class {
                 // 更新计数信息
                 this.updateRequestsCountInfo(data.total, this.state.currentPage);
             } else {
-                tbody.innerHTML = '<tr><td colspan="12" class="no-data">📄 暂无请求数据</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="12" class="no-data">🔄 暂无请求数据</td></tr>';
                 this.updateRequestsCountInfo(0, this.state.currentPage);
             }
             
@@ -120,7 +120,7 @@ window.RequestsManager = class {
     // 生成请求表格行内容（只生成tbody内的tr元素）
     generateRequestsRows(requests) {
         if (!requests || requests.length === 0) {
-            return '<tr><td colspan="12" class="no-data">📄 暂无请求数据</td></tr>';
+            return '<tr><td colspan="12" class="no-data">🔄 暂无请求数据</td></tr>';
         }
 
         let html = '';
@@ -130,9 +130,13 @@ window.RequestsManager = class {
             const cost = Utils.formatCost(request.total_cost_usd);
             const startTime = new Date(request.start_time).toLocaleString('zh-CN');
             
+            // 生成流式图标
+            const streamingIcon = request.is_streaming ? '🌊' : '🔄';
+            
             html += `
                 <tr>
                     <td>
+                        <span title="${request.is_streaming ? '流式请求' : '常规请求'}">${streamingIcon}</span>
                         <code class="request-id">${request.request_id}</code>
                     </td>
                     <td class="datetime">${startTime}</td>
@@ -443,16 +447,26 @@ window.RequestsManager = class {
                         <div class="detail-section-title">🌐 网络信息</div>
                         <div class="detail-grid">
                             <div class="detail-item">
+                                <label>请求方法:</label>
+                                <span class="detail-value method-badge">${request.method || 'POST'}</span>
+                            </div>
+                            <div class="detail-item">
+                                <label>请求路径:</label>
+                                <code class="detail-value request-path">${request.path || '/v1/messages'}</code>
+                            </div>
+                            <div class="detail-item">
+                                <label>请求类型:</label>
+                                <span class="detail-value" title="${request.is_streaming ? '流式请求 - 实时响应' : '常规请求 - 完整响应'}">
+                                    ${request.is_streaming ? '🌊 流式请求' : '🔄 常规请求'}
+                                </span>
+                            </div>
+                            <div class="detail-item">
                                 <label>客户端IP:</label>
                                 <span class="detail-value">${request.client_ip || '-'}</span>
                             </div>
                             <div class="detail-item">
                                 <label>用户代理:</label>
                                 <span class="detail-value user-agent">${request.user_agent || '-'}</span>
-                            </div>
-                            <div class="detail-item">
-                                <label>HTTP状态码:</label>
-                                <span class="detail-value">${request.http_status_code || '-'}</span>
                             </div>
                             <div class="detail-item">
                                 <label>重试次数:</label>

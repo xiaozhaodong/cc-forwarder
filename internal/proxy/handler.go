@@ -350,11 +350,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 创建统一的请求生命周期管理器
 	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID)
 	
-	// 开始请求跟踪
-	clientIP := r.RemoteAddr
-	userAgent := r.Header.Get("User-Agent")
-	lifecycleManager.StartRequest(clientIP, userAgent)
-	
 	// 克隆请求体用于重试
 	var bodyBytes []byte
 	if r.Body != nil {
@@ -370,6 +365,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 检测是否为SSE流式请求
 	isSSE := h.detectSSERequest(r, bodyBytes)
+	
+	// 开始请求跟踪（传递流式标记）
+	clientIP := r.RemoteAddr
+	userAgent := r.Header.Get("User-Agent")
+	lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isSSE)
 	
 	// 统一请求处理
 	if isSSE {

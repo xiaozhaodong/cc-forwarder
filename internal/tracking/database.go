@@ -202,14 +202,15 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 	}
 
 	query := `INSERT INTO request_logs (
-		request_id, client_ip, user_agent, method, path, start_time, status
-	) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+		request_id, client_ip, user_agent, method, path, start_time, status, is_streaming
+	) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
 	ON CONFLICT(request_id) DO UPDATE SET
 		client_ip = excluded.client_ip,
 		user_agent = excluded.user_agent,
 		method = excluded.method,
 		path = excluded.path,
 		start_time = excluded.start_time,
+		is_streaming = excluded.is_streaming,
 		updated_at = datetime('now', 'localtime')`
 
 	_, err := tx.ExecContext(ctx, query, 
@@ -218,7 +219,8 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 		data.UserAgent, 
 		data.Method, 
 		data.Path, 
-		event.Timestamp)
+		event.Timestamp,
+		data.IsStreaming)
 	
 	return err
 }
@@ -262,10 +264,11 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 				RequestID: event.RequestID,
 				Timestamp: event.Timestamp,
 				Data: RequestStartData{
-					ClientIP:  "unknown",
-					UserAgent: "unknown", 
-					Method:    "unknown",
-					Path:      "unknown",
+					ClientIP:    "unknown",
+					UserAgent:   "unknown", 
+					Method:      "unknown",
+					Path:        "unknown",
+					IsStreaming: false, // 默认为非流式
 				},
 			})
 		}

@@ -71,11 +71,6 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 			connID = lm.monitoringMiddleware.RecordRequest("unknown", clientIP, userAgent, r.Method, r.URL.Path)
 		}
 		
-		// Record request start in usage tracking
-		if lm.usageTracker != nil && connID != "" {
-			lm.usageTracker.RecordRequestStart(connID, clientIP, userAgent)
-		}
-		
 		// Store connection ID in request context for use by proxy handler
 		r = r.WithContext(context.WithValue(r.Context(), "conn_id", connID))
 		
