@@ -127,23 +127,10 @@ func (ut *UsageTracker) flushBatch(events []RequestEvent) {
 		"max_retry", ut.config.MaxRetry)
 }
 
-// processBatch 处理一批事件
+// processBatch 处理一批事件（重构为使用写队列）
 func (ut *UsageTracker) processBatch(events []RequestEvent) error {
-	// 增加超时时间以处理高并发场景
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	tx, err := ut.db.BeginTx(ctx, nil)
-	if err != nil {
-		slog.Error("Failed to begin database transaction", 
-			"error", err, 
-			"batch_size", len(events),
-			"context_deadline", ctx.Err())
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
 	successCount := 0
+	
 	for _, event := range events {
 		// 特殊处理flush事件
 		if event.Type == "flush" {
@@ -152,37 +139,40 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 			continue
 		}
 		
-		switch event.Type {
-		case "start":
-			err = ut.insertRequestStart(ctx, tx, event)
-		case "update":
-			err = ut.updateRequestStatus(ctx, tx, event)
-		case "complete":
-			err = ut.completeRequest(ctx, tx, event)
-		default:
-			slog.Warn("Unknown event type", "type", event.Type, "request_id", event.RequestID)
-			continue
-		}
-
+		// 构建写操作请求
+		query, args, err := ut.buildWriteQuery(event)
 		if err != nil {
-			slog.Error("Failed to process tracking event", 
+			slog.Error("Failed to build write query", 
 				"error", err, 
 				"event_type", event.Type, 
-				"request_id", event.RequestID,
-				"event_timestamp", event.Timestamp,
-				"data_type", fmt.Sprintf("%T", event.Data))
-			continue // 继续处理其他事件
+				"request_id", event.RequestID)
+			continue
 		}
-		successCount++
-	}
-
-	if err := tx.Commit(); err != nil {
-		slog.Error("Failed to commit database transaction", 
-			"error", err, 
-			"batch_size", len(events),
-			"success_count", successCount,
-			"context_deadline", ctx.Err())
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		
+		writeReq := WriteRequest{
+			Query:     query,
+			Args:      args,
+			Response:  make(chan error, 1),
+			Context:   context.Background(),
+			EventType: event.Type,
+		}
+		
+		// 通过队列发送写操作
+		select {
+		case ut.writeQueue <- writeReq:
+			err := <-writeReq.Response
+			if err != nil {
+				slog.Error("Write operation failed", 
+					"error", err, 
+					"event_type", event.Type, 
+					"request_id", event.RequestID)
+				continue
+			}
+			successCount++
+			
+		case <-ut.ctx.Done():
+			return ut.ctx.Err()
+		}
 	}
 
 	if successCount < len(events) {
@@ -192,6 +182,226 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 	}
 
 	return nil
+}
+
+// buildWriteQuery 构建写操作查询和参数
+func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface{}, error) {
+	switch event.Type {
+	case "start":
+		return ut.buildStartQuery(event)
+	case "update":
+		return ut.buildUpdateQuery(event)
+	case "complete":
+		// 对于complete事件，直接使用传入的持续时间，不需要查询数据库
+		data, ok := event.Data.(RequestCompleteData)
+		if !ok {
+			return "", nil, fmt.Errorf("invalid complete event data type")
+		}
+		
+		// 计算成本
+		tokens := &TokenUsage{
+			InputTokens:         data.InputTokens,
+			OutputTokens:        data.OutputTokens,
+			CacheCreationTokens: data.CacheCreationTokens,
+			CacheReadTokens:     data.CacheReadTokens,
+		}
+		
+		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+		
+		query := `UPDATE request_logs SET
+			end_time = ?,
+			duration_ms = ?,
+			model_name = ?,
+			input_tokens = ?,
+			output_tokens = ?,
+			cache_creation_tokens = ?,
+			cache_read_tokens = ?,
+			input_cost_usd = ?,
+			output_cost_usd = ?,
+			cache_creation_cost_usd = ?,
+			cache_read_cost_usd = ?,
+			total_cost_usd = ?,
+			status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
+			updated_at = datetime('now', 'localtime')
+		WHERE request_id = ?`
+		
+		args := []interface{}{
+			event.Timestamp,
+			data.Duration.Milliseconds(), // 直接使用生命周期管理器计算的持续时间
+			data.ModelName,
+			data.InputTokens,
+			data.OutputTokens,
+			data.CacheCreationTokens,
+			data.CacheReadTokens,
+			inputCost,
+			outputCost,
+			cacheCost,
+			readCost,
+			totalCost,
+			event.RequestID,
+		}
+		
+		return query, args, nil
+	default:
+		return "", nil, fmt.Errorf("unknown event type: %s", event.Type)
+	}
+}
+
+// buildStartQuery 构建开始事件查询
+func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(RequestStartData)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid start event data type")
+	}
+
+	query := `INSERT INTO request_logs (
+		request_id, client_ip, user_agent, method, path, start_time, status, is_streaming
+	) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+	ON CONFLICT(request_id) DO UPDATE SET
+		client_ip = excluded.client_ip,
+		user_agent = excluded.user_agent,
+		method = excluded.method,
+		path = excluded.path,
+		start_time = excluded.start_time,
+		is_streaming = excluded.is_streaming,
+		updated_at = datetime('now', 'localtime')`
+
+	args := []interface{}{
+		event.RequestID,
+		data.ClientIP,
+		data.UserAgent,
+		data.Method,
+		data.Path,
+		event.Timestamp,
+		data.IsStreaming,
+	}
+
+	return query, args, nil
+}
+
+// buildUpdateQuery 构建更新事件查询  
+func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(RequestUpdateData)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid update event data type")
+	}
+
+	// 如果端点名和组名都为空，只更新状态相关字段
+	if data.EndpointName == "" && data.GroupName == "" {
+		query := `UPDATE request_logs SET
+			status = ?,
+			retry_count = ?,
+			http_status_code = ?,
+			updated_at = datetime('now', 'localtime')
+		WHERE request_id = ?`
+
+		args := []interface{}{
+			data.Status,
+			data.RetryCount,
+			data.HTTPStatus,
+			event.RequestID,
+		}
+
+		return query, args, nil
+	}
+
+	// 正常更新所有字段
+	query := `INSERT INTO request_logs (
+		request_id, endpoint_name, group_name, status, retry_count, 
+		http_status_code, start_time
+	) VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(request_id) DO UPDATE SET
+		endpoint_name = excluded.endpoint_name,
+		group_name = excluded.group_name,
+		status = excluded.status,
+		retry_count = excluded.retry_count,
+		http_status_code = excluded.http_status_code,
+		updated_at = datetime('now', 'localtime')`
+
+	args := []interface{}{
+		event.RequestID,
+		data.EndpointName,
+		data.GroupName,
+		data.Status,
+		data.RetryCount,
+		data.HTTPStatus,
+		event.Timestamp,
+	}
+
+	return query, args, nil
+}
+
+// buildCompleteQueryWithTx 在事务中构建完成事件查询，可以查询start_time计算准确持续时间
+func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx, event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(RequestCompleteData)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid complete event data type")
+	}
+
+	// 首先获取请求的开始时间来计算正确的持续时间
+	var startTime time.Time
+	var durationMs int64
+	
+	queryStartTime := `SELECT start_time FROM request_logs WHERE request_id = ?`
+	err := tx.QueryRowContext(ctx, queryStartTime, event.RequestID).Scan(&startTime)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// 记录不存在，使用估算的开始时间
+			startTime = event.Timestamp.Add(-data.Duration)
+			durationMs = data.Duration.Milliseconds()
+		} else {
+			return "", nil, fmt.Errorf("failed to get start time for duration calculation: %w", err)
+		}
+	} else {
+		// 计算正确的持续时间：end_time - start_time
+		durationMs = event.Timestamp.Sub(startTime).Milliseconds()
+	}
+
+	// 计算成本
+	tokens := &TokenUsage{
+		InputTokens:         data.InputTokens,
+		OutputTokens:        data.OutputTokens,
+		CacheCreationTokens: data.CacheCreationTokens,
+		CacheReadTokens:     data.CacheReadTokens,
+	}
+
+	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+
+	// 使用计算出的准确持续时间
+	query := `UPDATE request_logs SET
+		end_time = ?,
+		duration_ms = ?,
+		model_name = ?,
+		input_tokens = ?,
+		output_tokens = ?,
+		cache_creation_tokens = ?,
+		cache_read_tokens = ?,
+		input_cost_usd = ?,
+		output_cost_usd = ?,
+		cache_creation_cost_usd = ?,
+		cache_read_cost_usd = ?,
+		total_cost_usd = ?,
+		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
+		updated_at = datetime('now', 'localtime')
+	WHERE request_id = ?`
+
+	args := []interface{}{
+		event.Timestamp,
+		durationMs, // 使用计算出的准确持续时间
+		data.ModelName,
+		data.InputTokens,
+		data.OutputTokens,
+		data.CacheCreationTokens,
+		data.CacheReadTokens,
+		inputCost,
+		outputCost,
+		cacheCost,
+		readCost,
+		totalCost,
+		event.RequestID,
+	}
+
+	return query, args, nil
 }
 
 // insertRequestStart 插入请求开始记录
@@ -475,72 +685,80 @@ func (ut *UsageTracker) periodicCleanup() {
 	}
 }
 
-// cleanupOldRecords 清理过期记录
+// cleanupOldRecords 清理过期记录（使用写队列）
 func (ut *UsageTracker) cleanupOldRecords() error {
 	if ut.config.RetentionDays <= 0 {
 		return nil // 永久保留
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
 	cutoffTime := time.Now().AddDate(0, 0, -ut.config.RetentionDays)
 	
-	// 开始事务以确保数据一致性
-	tx, err := ut.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin cleanup transaction: %w", err)
-	}
-	defer tx.Rollback()
-	
-	// 删除过期的请求记录
+	// 删除过期的请求记录（通过写队列）
 	requestQuery := "DELETE FROM request_logs WHERE start_time < ?"
-	requestResult, err := tx.ExecContext(ctx, requestQuery, cutoffTime)
-	if err != nil {
-		return fmt.Errorf("failed to delete old request logs: %w", err)
+	requestWriteReq := WriteRequest{
+		Query:     requestQuery,
+		Args:      []interface{}{cutoffTime},
+		Response:  make(chan error, 1),
+		Context:   context.Background(),
+		EventType: "cleanup_requests",
 	}
-
-	requestDeletedCount, _ := requestResult.RowsAffected()
 	
-	// 清理过期的汇总数据
+	select {
+	case ut.writeQueue <- requestWriteReq:
+		err := <-requestWriteReq.Response
+		if err != nil {
+			return fmt.Errorf("failed to delete old request logs: %w", err)
+		}
+	case <-ut.ctx.Done():
+		return ut.ctx.Err()
+	}
+	
+	// 清理过期的汇总数据（通过写队列）
 	summaryQuery := "DELETE FROM usage_summary WHERE date < ?"
-	summaryResult, err := tx.ExecContext(ctx, summaryQuery, cutoffTime.Format("2006-01-02"))
-	if err != nil {
-		return fmt.Errorf("failed to delete old usage summary: %w", err)
-	}
-
-	summaryDeletedCount, _ := summaryResult.RowsAffected()
-	
-	// 提交事务
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit cleanup transaction: %w", err)
+	summaryWriteReq := WriteRequest{
+		Query:     summaryQuery,
+		Args:      []interface{}{cutoffTime.Format("2006-01-02")},
+		Response:  make(chan error, 1),
+		Context:   context.Background(),
+		EventType: "cleanup_summaries",
 	}
 	
-	// 运行VACUUM以回收空间（仅在删除了数据时）
-	if requestDeletedCount > 0 || summaryDeletedCount > 0 {
-		if err := ut.vacuumDatabase(ctx); err != nil {
+	select {
+	case ut.writeQueue <- summaryWriteReq:
+		err := <-summaryWriteReq.Response
+		if err != nil {
+			return fmt.Errorf("failed to delete old usage summary: %w", err)
+		}
+	case <-ut.ctx.Done():
+		return ut.ctx.Err()
+	}
+	
+	// 运行VACUUM以回收空间（通过写队列）
+	vacuumWriteReq := WriteRequest{
+		Query:     "VACUUM",
+		Args:      []interface{}{},
+		Response:  make(chan error, 1),
+		Context:   context.Background(),
+		EventType: "vacuum",
+	}
+	
+	select {
+	case ut.writeQueue <- vacuumWriteReq:
+		err := <-vacuumWriteReq.Response
+		if err != nil {
 			slog.Warn("Failed to vacuum database after cleanup", "error", err)
 		}
+	case <-ut.ctx.Done():
+		return ut.ctx.Err()
 	}
 
 	// 记录清理结果
-	if requestDeletedCount > 0 {
-		slog.Info("Cleaned up old request records", 
-			"deleted_count", requestDeletedCount, 
-			"cutoff_date", cutoffTime.Format("2006-01-02"),
-			"retention_days", ut.config.RetentionDays)
-	}
+	slog.Info("Cleaned up old records", 
+		"cutoff_date", cutoffTime.Format("2006-01-02"),
+		"retention_days", ut.config.RetentionDays)
 	
-	if summaryDeletedCount > 0 {
-		slog.Info("Cleaned up old summary records", 
-			"deleted_count", summaryDeletedCount,
-			"retention_days", ut.config.RetentionDays)
-	}
-	
-	// 更新汇总统计（如果有数据变化）
-	if requestDeletedCount > 0 {
-		go ut.updateUsageSummary() // 异步更新汇总数据
-	}
+	// 更新汇总统计（异步）
+	go ut.updateUsageSummary()
 
 	return nil
 }
@@ -559,11 +777,8 @@ func (ut *UsageTracker) vacuumDatabase(ctx context.Context) error {
 	return nil
 }
 
-// updateUsageSummary 更新使用汇总数据
+// updateUsageSummary 更新使用汇总数据（使用写队列）
 func (ut *UsageTracker) updateUsageSummary() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	
 	// 获取需要更新汇总的日期范围（最近7天）
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -7)
@@ -599,41 +814,50 @@ func (ut *UsageTracker) updateUsageSummary() {
 	GROUP BY DATE(start_time), model_name, endpoint_name, group_name
 	`
 	
-	result, err := ut.db.ExecContext(ctx, query, startDate, endDate.AddDate(0, 0, 1))
-	if err != nil {
-		slog.Error("Failed to update usage summary", "error", err)
-		return
+	summaryWriteReq := WriteRequest{
+		Query:     query,
+		Args:      []interface{}{startDate, endDate.AddDate(0, 0, 1)},
+		Response:  make(chan error, 1),
+		Context:   context.Background(),
+		EventType: "update_summary",
 	}
 	
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected > 0 {
-		slog.Info("Usage summary updated", "rows_updated", rowsAffected)
+	select {
+	case ut.writeQueue <- summaryWriteReq:
+		err := <-summaryWriteReq.Response
+		if err != nil {
+			slog.Error("Failed to update usage summary", "error", err)
+		} else {
+			slog.Info("Usage summary updated successfully")
+		}
+	case <-ut.ctx.Done():
+		slog.Debug("Usage summary update cancelled due to context cancellation")
 	}
 }
 
-// GetDatabaseStats 获取数据库统计信息
+// GetDatabaseStats 获取数据库统计信息（使用读连接）
 func (ut *UsageTracker) getDatabaseStatsInternal(ctx context.Context) (*DatabaseStats, error) {
-	if ut.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
 	}
 
 	stats := &DatabaseStats{}
 	
-	// 获取请求记录总数
-	err := ut.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM request_logs").Scan(&stats.TotalRequests)
+	// 获取请求记录总数（使用读连接）
+	err := ut.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM request_logs").Scan(&stats.TotalRequests)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get total requests count: %w", err)
 	}
 	
-	// 获取汇总记录总数
-	err = ut.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_summary").Scan(&stats.TotalSummaries)
+	// 获取汇总记录总数（使用读连接）
+	err = ut.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_summary").Scan(&stats.TotalSummaries)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get total summaries count: %w", err)
 	}
 	
-	// 获取最早和最新的记录时间
+	// 获取最早和最新的记录时间（使用读连接）
 	var earliestStr, latestStr sql.NullString
-	err = ut.db.QueryRowContext(ctx, "SELECT MIN(start_time), MAX(start_time) FROM request_logs").Scan(&earliestStr, &latestStr)
+	err = ut.readDB.QueryRowContext(ctx, "SELECT MIN(start_time), MAX(start_time) FROM request_logs").Scan(&earliestStr, &latestStr)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to get record time range: %w", err)
 	}
@@ -649,18 +873,18 @@ func (ut *UsageTracker) getDatabaseStatsInternal(ctx context.Context) (*Database
 		}
 	}
 	
-	// 获取数据库文件大小（SQLite特有）
+	// 获取数据库文件大小（SQLite特有，使用读连接）
 	var pageCount, pageSize int64
-	err = ut.db.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount)
+	err = ut.readDB.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount)
 	if err == nil {
-		err = ut.db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize)
+		err = ut.readDB.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize)
 		if err == nil {
 			stats.DatabaseSize = pageCount * pageSize
 		}
 	}
 	
-	// 获取总成本
-	err = ut.db.QueryRowContext(ctx, "SELECT COALESCE(SUM(total_cost_usd), 0) FROM request_logs WHERE total_cost_usd > 0").Scan(&stats.TotalCostUSD)
+	// 获取总成本（使用读连接）
+	err = ut.readDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(total_cost_usd), 0) FROM request_logs WHERE total_cost_usd > 0").Scan(&stats.TotalCostUSD)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to get total cost: %w", err)
 	}

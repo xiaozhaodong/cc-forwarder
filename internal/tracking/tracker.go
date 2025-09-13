@@ -114,8 +114,18 @@ type Config struct {
 	DefaultPricing  ModelPricing             `yaml:"default_pricing"`
 }
 
+// WriteRequest 写操作请求
+type WriteRequest struct {
+	Query     string
+	Args      []interface{}
+	Response  chan error
+	Context   context.Context
+	EventType string  // 用于调试和监控
+}
+
 // UsageTracker 使用跟踪器
 type UsageTracker struct {
+	// 原有字段（兼容性）
 	db           *sql.DB
 	eventChan    chan RequestEvent
 	config       *Config
@@ -125,6 +135,13 @@ type UsageTracker struct {
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	errorHandler *ErrorHandler
+	
+	// 新增：读写分离组件
+	readDB     *sql.DB           // 读连接池 (多连接)
+	writeDB    *sql.DB           // 写连接 (单连接)
+	writeQueue chan WriteRequest // 写操作队列
+	writeMu    sync.Mutex        // 写操作保护锁
+	writeWg    sync.WaitGroup    // 写处理器等待组
 }
 
 // NewUsageTracker 创建新的使用跟踪器
@@ -155,37 +172,84 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 		}
 	}
 
-	// 打开数据库 - 本地使用优化配置 (NORMAL模式平衡性能和安全性)
-	db, err := sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=30000")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	// 针对:memory:数据库的特殊处理
+	var readDB, writeDB *sql.DB
+	var err error
+	
+	if config.DatabasePath == ":memory:" {
+		// 内存数据库：使用同一个连接（但配置为读写分离模式）
+		db, err := sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000")
+		if err != nil {
+			return nil, fmt.Errorf("failed to open memory database: %w", err)
+		}
+		
+		// 使用同一个连接，但逻辑上分离读写
+		readDB = db
+		writeDB = db
+		
+		// 配置连接池参数
+		db.SetMaxOpenConns(8)    // 内存数据库可以支持更多连接
+		db.SetMaxIdleConns(4)
+		db.SetConnMaxLifetime(2 * time.Hour)
+	} else {
+		// 文件数据库：真正的读写分离
+		// 打开读数据库连接 - 读性能优化配置 (支持多并发查询)
+		readDB, err = sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000")
+		if err != nil {
+			return nil, fmt.Errorf("failed to open read database: %w", err)
+		}
+
+		// 打开写数据库连接 - 写稳定性优化配置 (单连接避免锁竞争)
+		writeDB, err = sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000")
+		if err != nil {
+			readDB.Close()
+			return nil, fmt.Errorf("failed to open write database: %w", err)
+		}
+
+		// 配置读连接池参数 - 支持高并发查询
+		readDB.SetMaxOpenConns(8)    // 8个读连接，支持高并发查询
+		readDB.SetMaxIdleConns(4)    // 保持4个空闲连接
+		readDB.SetConnMaxLifetime(2 * time.Hour)
+
+		// 配置写连接参数 - 单连接避免锁竞争
+		writeDB.SetMaxOpenConns(1)   // 关键：只有1个写连接
+		writeDB.SetMaxIdleConns(1)   // 保持连接活跃
+		writeDB.SetConnMaxLifetime(4 * time.Hour)
 	}
 
-	// 设置连接池参数
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(time.Hour)
+	// 保持原有db字段兼容性（用于向后兼容和初始化）
+	db := readDB
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ut := &UsageTracker{
-		db:        db,
+		// 原有字段（兼容性）
+		db:        db,        // 兼容性：指向readDB
 		eventChan: make(chan RequestEvent, config.BufferSize),
 		config:    config,
 		pricing:   config.ModelPricing,
 		ctx:       ctx,
 		cancel:    cancel,
+		
+		// 新增：读写分离组件
+		readDB:     readDB,
+		writeDB:    writeDB,
+		writeQueue: make(chan WriteRequest, config.BufferSize), // 与事件队列容量一致
 	}
 
 	// 初始化错误处理器
 	ut.errorHandler = NewErrorHandler(ut, slog.Default())
 
-	// 初始化数据库
-	if err := ut.initDatabase(); err != nil {
+	// 初始化数据库（使用写连接以确保表创建）
+	if err := ut.initDatabaseWithWriteDB(); err != nil {
 		cancel()
-		db.Close()
+		readDB.Close()
+		writeDB.Close()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
+
+	// 启动写操作处理器
+	ut.startWriteProcessor()
 
 	// 启动事件处理协程
 	ut.wg.Add(1)
@@ -228,8 +292,9 @@ func (ut *UsageTracker) Close() error {
 	// 取消上下文（不需要持有锁）
 	ut.cancel()
 
-	// 等待所有协程完成（不持有锁，避免死锁）
+	// 等待所有协程完成（包括写处理器）
 	ut.wg.Wait()
+	ut.writeWg.Wait() // 等待写处理器完成
 
 	// 现在可以安全地持有写锁进行清理
 	ut.mu.Lock()
@@ -242,12 +307,38 @@ func (ut *UsageTracker) Close() error {
 		close(ut.eventChan)
 		ut.eventChan = nil
 	}
+	
+	// 关闭写操作队列
+	if ut.writeQueue != nil {
+		close(ut.writeQueue)
+		ut.writeQueue = nil
+	}
 
-	// 关闭数据库
+	// 关闭数据库连接
+	var errors []error
+	if ut.readDB != nil {
+		if err := ut.readDB.Close(); err != nil {
+			errors = append(errors, fmt.Errorf("failed to close read database: %w", err))
+		}
+		ut.readDB = nil
+	}
+	
+	if ut.writeDB != nil {
+		if err := ut.writeDB.Close(); err != nil {
+			errors = append(errors, fmt.Errorf("failed to close write database: %w", err))
+		}
+		ut.writeDB = nil
+	}
+	
+	// 关闭原有数据库连接（兼容性）
 	if ut.db != nil {
-		err := ut.db.Close()
+		// 由于db指向readDB，避免重复关闭
 		ut.db = nil
-		return err
+	}
+	
+	// 返回第一个错误（如果有）
+	if len(errors) > 0 {
+		return errors[0]
 	}
 
 	return nil
@@ -359,24 +450,31 @@ func (ut *UsageTracker) GetDatabaseStats(ctx context.Context) (*DatabaseStats, e
 	return ut.getDatabaseStatsInternal(ctx)
 }
 
-// HealthCheck 检查数据库连接状态和基本功能
+// HealthCheck 检查数据库连接状态和基本功能（使用读连接）
 func (ut *UsageTracker) HealthCheck(ctx context.Context) error {
 	if ut.config == nil || !ut.config.Enabled {
 		return nil // 如果未启用，认为是健康的
 	}
 	
-	if ut.db == nil {
-		return fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return fmt.Errorf("read database not initialized")
 	}
 	
-	// 测试数据库连接
-	if err := ut.db.PingContext(ctx); err != nil {
-		return fmt.Errorf("database ping failed: %w", err)
+	// 测试读数据库连接
+	if err := ut.readDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("read database ping failed: %w", err)
 	}
 	
-	// 测试基本查询
+	// 测试写数据库连接
+	if ut.writeDB != nil {
+		if err := ut.writeDB.PingContext(ctx); err != nil {
+			return fmt.Errorf("write database ping failed: %w", err)
+		}
+	}
+	
+	// 测试基本查询（使用读连接）
 	var count int
-	err := ut.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&count)
+	err := ut.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&count)
 	if err != nil {
 		return fmt.Errorf("database query test failed: %w", err)
 	}
@@ -395,9 +493,19 @@ func (ut *UsageTracker) HealthCheck(ctx context.Context) error {
 	}
 	
 	// 检查事件通道容量
-	channelLoad := float64(len(ut.eventChan)) / float64(cap(ut.eventChan)) * 100
-	if channelLoad > 90 {
-		return fmt.Errorf("event channel overloaded: %.1f%% capacity used", channelLoad)
+	if ut.eventChan != nil {
+		channelLoad := float64(len(ut.eventChan)) / float64(cap(ut.eventChan)) * 100
+		if channelLoad > 90 {
+			return fmt.Errorf("event channel overloaded: %.1f%% capacity used", channelLoad)
+		}
+	}
+	
+	// 检查写队列容量
+	if ut.writeQueue != nil {
+		writeQueueLoad := float64(len(ut.writeQueue)) / float64(cap(ut.writeQueue)) * 100
+		if writeQueueLoad > 90 {
+			return fmt.Errorf("write queue overloaded: %.1f%% capacity used", writeQueueLoad)
+		}
 	}
 	
 	return nil
@@ -474,10 +582,10 @@ func (ut *UsageTracker) GetRequestLogs(ctx context.Context, startTime, endTime t
 	return ut.QueryRequestDetails(ctx, opts)
 }
 
-// GetUsageStats 获取使用统计（便利方法）
+// GetUsageStats 获取使用统计（便利方法，使用读连接）
 func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime time.Time) (*UsageStatsDetailed, error) {
-	if ut.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
 	}
 
 	query := `SELECT 
@@ -490,7 +598,7 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		WHERE start_time >= ? AND start_time <= ?`
 	
 	var stats UsageStatsDetailed
-	err := ut.db.QueryRowContext(ctx, query, startTime, endTime).Scan(
+	err := ut.readDB.QueryRowContext(ctx, query, startTime, endTime).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRequests,
 		&stats.ErrorRequests,
@@ -501,13 +609,13 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		return nil, fmt.Errorf("failed to query detailed usage stats: %w", err)
 	}
 	
-	// 获取模型统计
+	// 获取模型统计（使用读连接）
 	modelQuery := `SELECT model_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ? AND model_name IS NOT NULL AND model_name != ''
 		GROUP BY model_name`
 	
-	rows, err := ut.db.QueryContext(ctx, modelQuery, startTime, endTime)
+	rows, err := ut.readDB.QueryContext(ctx, modelQuery, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query model stats: %w", err)
 	}
@@ -527,13 +635,13 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		}
 	}
 	
-	// 获取端点统计
+	// 获取端点统计（使用读连接）
 	endpointQuery := `SELECT endpoint_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ? AND endpoint_name IS NOT NULL AND endpoint_name != ''
 		GROUP BY endpoint_name`
 	
-	rows2, err := ut.db.QueryContext(ctx, endpointQuery, startTime, endTime)
+	rows2, err := ut.readDB.QueryContext(ctx, endpointQuery, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query endpoint stats: %w", err)
 	}
@@ -553,13 +661,13 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		}
 	}
 	
-	// 获取组统计
+	// 获取组统计（使用读连接）
 	groupQuery := `SELECT group_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ? AND group_name IS NOT NULL AND group_name != ''
 		GROUP BY group_name`
 	
-	rows3, err := ut.db.QueryContext(ctx, groupQuery, startTime, endTime)
+	rows3, err := ut.readDB.QueryContext(ctx, groupQuery, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query group stats: %w", err)
 	}
@@ -637,4 +745,128 @@ func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime tim
 	}
 	
 	return jsonBytes, nil
+}
+
+// startWriteProcessor 启动写操作队列处理器（简化版，确保稳定性）
+func (ut *UsageTracker) startWriteProcessor() {
+	ut.writeWg.Add(1)
+	go func() {
+		defer ut.writeWg.Done()
+		slog.Debug("Write processor started")
+		
+		for {
+			select {
+			case writeReq := <-ut.writeQueue:
+				err := ut.executeWriteSimple(writeReq)
+				writeReq.Response <- err
+				
+			case <-ut.ctx.Done():
+				slog.Debug("Write processor stopped")
+				return
+			}
+		}
+	}()
+}
+
+// executeWriteSimple 执行简单写操作（避免复杂的批处理）
+func (ut *UsageTracker) executeWriteSimple(req WriteRequest) error {
+	ut.writeMu.Lock()
+	defer ut.writeMu.Unlock()
+	
+	ctx, cancel := context.WithTimeout(req.Context, 30*time.Second)
+	defer cancel()
+	
+	// 直接执行，不使用事务（对于简单INSERT/UPDATE，不一定需要事务）
+	if req.EventType == "vacuum" {
+		// VACUUM不能在事务中执行
+		_, err := ut.writeDB.ExecContext(ctx, req.Query, req.Args...)
+		return err
+	}
+	
+	// 其他操作使用短事务
+	tx, err := ut.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	
+	committed := false
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				slog.Debug("Failed to rollback transaction", "error", rbErr, "event_type", req.EventType)
+			}
+		}
+	}()
+	
+	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	if err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+	
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	
+	committed = true
+	return nil
+}
+
+// executeWrite 执行单个写操作
+func (ut *UsageTracker) executeWrite(req WriteRequest) error {
+	ut.writeMu.Lock()
+	defer ut.writeMu.Unlock()
+	
+	ctx, cancel := context.WithTimeout(req.Context, 60*time.Second)
+	defer cancel()
+	
+	// 安全的事务处理
+	return ut.executeWriteTransaction(ctx, req)
+}
+
+// executeWriteTransaction 执行写事务（修复defer tx.Rollback()问题）
+func (ut *UsageTracker) executeWriteTransaction(ctx context.Context, req WriteRequest) error {
+	tx, err := ut.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	
+	committed := false
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				slog.Error("Failed to rollback transaction", "error", rbErr, "event_type", req.EventType)
+			}
+		}
+	}()
+	
+	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	if err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+	
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	
+	committed = true  // 标记已提交，避免重复Rollback
+	return nil
+}
+
+// initDatabaseWithWriteDB 使用写连接初始化数据库（同步等待完成）
+func (ut *UsageTracker) initDatabaseWithWriteDB() error {
+	// 读取并执行 schema SQL
+	schemaSQL, err := schemaFS.ReadFile("schema.sql")
+	if err != nil {
+		return fmt.Errorf("failed to read schema.sql: %w", err)
+	}
+
+	// 使用写连接直接执行 schema（同步方式，确保表创建完成）
+	if _, err := ut.writeDB.Exec(string(schemaSQL)); err != nil {
+		return fmt.Errorf("failed to execute schema: %w", err)
+	}
+
+	slog.Debug("Database schema initialized successfully with write connection")
+	return nil
 }

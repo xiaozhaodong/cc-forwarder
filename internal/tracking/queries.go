@@ -87,15 +87,25 @@ type UsageStats struct {
 	TotalCost     float64 `json:"total_cost_usd"`
 }
 
-// GetDB returns the database connection for external queries
+// GetDB returns the read database connection for external queries (读写分离：返回读连接)
 func (ut *UsageTracker) GetDB() *sql.DB {
-	return ut.db
+	return ut.readDB
+}
+
+// GetReadDB returns the read database connection
+func (ut *UsageTracker) GetReadDB() *sql.DB {
+	return ut.readDB
+}
+
+// GetWriteDB returns the write database connection (仅用于特殊情况)
+func (ut *UsageTracker) GetWriteDB() *sql.DB {
+	return ut.writeDB
 }
 
 // QueryUsageSummary queries usage summary data
 func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOptions) ([]UsageSummary, error) {
-	if ut.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
 	}
 
 	query := `SELECT date, model_name, endpoint_name, 
@@ -140,7 +150,7 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		args = append(args, opts.Offset)
 	}
 	
-	rows, err := ut.db.QueryContext(ctx, query, args...)
+	rows, err := ut.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query usage summary: %w", err)
 	}
@@ -172,8 +182,8 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 
 // QueryRequestDetails queries detailed request records
 func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOptions) ([]RequestDetail, error) {
-	if ut.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
 	}
 
 	query := `SELECT id, request_id, 
@@ -229,7 +239,7 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		args = append(args, opts.Offset)
 	}
 	
-	rows, err := ut.db.QueryContext(ctx, query, args...)
+	rows, err := ut.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query request details: %w", err)
 	}
@@ -265,8 +275,8 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 
 // QueryUsageStats queries aggregated usage statistics
 func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*UsageStats, error) {
-	if ut.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
 	}
 
 	// Calculate date range based on period
@@ -297,7 +307,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	var stats UsageStats
 	stats.Period = period
 	
-	err := ut.db.QueryRowContext(ctx, query, startDate, endDate).Scan(
+	err := ut.readDB.QueryRowContext(ctx, query, startDate, endDate).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRate,
 		&stats.AvgDuration,
@@ -320,8 +330,8 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 
 // CountRequestDetails returns the total count of request details matching the query options
 func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOptions) (int, error) {
-	if ut.db == nil {
-		return 0, fmt.Errorf("database not initialized")
+	if ut.readDB == nil {
+		return 0, fmt.Errorf("read database not initialized")
 	}
 
 	query := "SELECT COUNT(*) FROM request_logs WHERE 1=1"
@@ -353,7 +363,7 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 	}
 	
 	var count int
-	err := ut.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count request details: %w", err)
 	}
