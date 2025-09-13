@@ -65,10 +65,11 @@ type RequestEvent struct {
 
 // RequestStartData 请求开始事件数据
 type RequestStartData struct {
-	ClientIP  string `json:"client_ip"`
-	UserAgent string `json:"user_agent"`
-	Method    string `json:"method"`
-	Path      string `json:"path"`
+	ClientIP    string `json:"client_ip"`
+	UserAgent   string `json:"user_agent"`
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+	IsStreaming bool   `json:"is_streaming"` // 是否为流式请求
 }
 
 // RequestUpdateData 请求更新事件数据
@@ -269,7 +270,7 @@ func (ut *UsageTracker) Close() error {
 }
 
 // RecordRequestStart 记录请求开始
-func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent string) {
+func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, method, path string, isStreaming bool) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
@@ -279,10 +280,11 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent string
 		RequestID: requestID,
 		Timestamp: time.Now(),
 		Data: RequestStartData{
-			ClientIP:  clientIP,
-			UserAgent: userAgent,
-			Method:    "POST",
-			Path:      "/v1/messages",
+			ClientIP:    clientIP,
+			UserAgent:   userAgent,
+			Method:      method,
+			Path:        path,
+			IsStreaming: isStreaming,
 		},
 	}
 

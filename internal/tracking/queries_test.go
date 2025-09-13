@@ -55,7 +55,7 @@ func TestQueryOperations(t *testing.T) {
 	
 	// Insert test data
 	for _, data := range testData {
-		tracker.RecordRequestStart(data.requestID, "127.0.0.1", "test-agent")
+		tracker.RecordRequestStart(data.requestID, "127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 		
 		status := "success"
 		httpStatus := 200
@@ -270,7 +270,7 @@ func TestExportOperations(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		requestID := time.Now().Format("req-export-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "export-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "export-agent", "POST", "/v1/messages", false)
 		
 		tracker.RecordRequestUpdate(requestID, "export-endpoint", "export-group", "success", 0, 200)
 		
@@ -376,7 +376,7 @@ func TestCleanupOperations(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		requestID := time.Now().Format("req-cleanup-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "cleanup-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "cleanup-agent", "POST", "/v1/messages", false)
 	}
 	
 	// Wait for processing

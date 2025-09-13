@@ -1321,12 +1321,11 @@ const indexHTML = `<!DOCTYPE html>
                                         <th class="sortable" data-sort="cache_creation_tokens">缓存创建</th>
                                         <th class="sortable" data-sort="cache_read_tokens">缓存读取</th>
                                         <th class="sortable" data-sort="cost">成本</th>
-                                        <th>操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="requests-table-body">
                                     <tr>
-                                        <td colspan="13" class="loading-row">
+                                        <td colspan="11" class="loading-row">
                                             <div class="loading-spinner"></div>
                                             正在加载请求数据...
                                         </td>

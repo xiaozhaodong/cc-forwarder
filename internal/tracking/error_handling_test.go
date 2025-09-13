@@ -51,7 +51,7 @@ func TestErrorHandler(t *testing.T) {
 	// Test recovery from backup
 	t.Run("RestoreFromBackup", func(t *testing.T) {
 		// First create some data
-		tracker.RecordRequestStart("req-error-test", "127.0.0.1", "error-agent")
+		tracker.RecordRequestStart("req-error-test", "127.0.0.1", "error-agent", "POST", "/v1/messages", false)
 		
 		// Wait for processing
 		time.Sleep(100 * time.Millisecond)
@@ -201,7 +201,7 @@ func TestGracefulShutdown(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		requestID := time.Now().Format("req-shutdown-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "shutdown-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "shutdown-agent", "POST", "/v1/messages", false)
 	}
 	
 	// Close tracker (should process remaining events)
@@ -237,7 +237,7 @@ func TestDatabaseLocking(t *testing.T) {
 	}
 	
 	// Record some data with first tracker
-	tracker1.RecordRequestStart("req-lock-test", "127.0.0.1", "lock-agent")
+	tracker1.RecordRequestStart("req-lock-test", "127.0.0.1", "lock-agent", "POST", "/v1/messages", false)
 	
 	// Wait for processing
 	time.Sleep(100 * time.Millisecond)
@@ -399,7 +399,7 @@ func TestMemoryPressure(t *testing.T) {
 	for i := 0; i < eventCount; i++ {
 		requestID := time.Now().Format("req-memory-20060102150405") + fmt.Sprintf("%03d", i)
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "memory-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "memory-agent", "POST", "/v1/messages", false)
 		successCount++ // 对于没有返回错误的方法，总是成功
 		
 		// Small delay to allow some processing

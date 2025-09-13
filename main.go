@@ -472,6 +472,18 @@ func (h *SimpleHandler) Enabled(_ context.Context, level slog.Level) bool {
 func (h *SimpleHandler) Handle(_ context.Context, r slog.Record) error {
 	message := r.Message
 	
+	// ✅ 添加结构化日志参数处理
+	var attrs []string
+	r.Attrs(func(a slog.Attr) bool {
+		attrs = append(attrs, fmt.Sprintf("%s=%v", a.Key, a.Value))
+		return true
+	})
+	
+	// 如果有参数，将它们添加到消息中
+	if len(attrs) > 0 {
+		message = message + " " + strings.Join(attrs, " ")
+	}
+	
 	// Format log message with enhanced timestamp and process info
 	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
 	pid := os.Getpid()

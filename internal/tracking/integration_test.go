@@ -176,7 +176,7 @@ func TestWebIntegration(t *testing.T) {
 	
 	// Insert test data
 	for _, req := range testRequests {
-		tracker.RecordRequestStart(req.requestID, "192.168.1.100", "web-test-agent")
+		tracker.RecordRequestStart(req.requestID, "192.168.1.100", "web-test-agent", "POST", "/v1/messages", false)
 		
 		status := "success"
 		httpStatus := 200
@@ -442,7 +442,7 @@ func TestConcurrentWebRequests(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		requestID := time.Now().Format("req-concurrent-web-20060102150405") + string(rune('0'+i))
 		
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "concurrent-web-agent")
+		tracker.RecordRequestStart(requestID, "127.0.0.1", "concurrent-web-agent", "POST", "/v1/messages", false)
 		
 		// Add request update to ensure complete records
 		tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "success", 0, 200)

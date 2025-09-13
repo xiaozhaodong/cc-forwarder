@@ -119,15 +119,26 @@ func (ws *WebServer) handleResponseTimes(c *gin.Context) {
 
 // handleEndpointHealth处理端点健康状态图表API
 func (ws *WebServer) handleEndpointHealth(c *gin.Context) {
-	metrics := ws.monitoringMiddleware.GetMetrics()
-	healthDistribution := metrics.GetEndpointHealthDistribution()
+	// ✅ 直接从端点管理器获取实时健康状态，避免监控数据不同步问题
+	endpoints := ws.endpointManager.GetAllEndpoints()
+	
+	healthyCount := 0
+	unhealthyCount := 0
+	
+	for _, endpoint := range endpoints {
+		if endpoint.IsHealthy() {
+			healthyCount++
+		} else {
+			unhealthyCount++
+		}
+	}
 	
 	// 转换为Chart.js饼图格式
 	c.JSON(http.StatusOK, map[string]interface{}{
 		"labels": []string{"健康端点", "不健康端点"},
 		"datasets": []map[string]interface{}{
 			{
-				"data":            []int{healthDistribution["healthy"], healthDistribution["unhealthy"]},
+				"data":            []int{healthyCount, unhealthyCount},
 				"backgroundColor": []string{"#10b981", "#ef4444"},
 				"borderColor":     []string{"#059669", "#dc2626"},
 				"borderWidth":     2,

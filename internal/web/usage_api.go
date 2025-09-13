@@ -61,6 +61,7 @@ type RequestDetailResponse struct {
 	EndpointName string    `json:"endpoint_name,omitempty"`
 	GroupName    string    `json:"group_name,omitempty"`
 	ModelName    string    `json:"model_name,omitempty"`
+	IsStreaming  bool      `json:"is_streaming"`
 	
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code,omitempty"`
@@ -309,6 +310,7 @@ func (ua *UsageAPI) HandleUsageRequests(w http.ResponseWriter, r *http.Request) 
 			EndpointName:        detail.EndpointName,
 			GroupName:           detail.GroupName,
 			ModelName:           detail.ModelName,
+			IsStreaming:         detail.IsStreaming,
 			Status:              detail.Status,
 			HTTPStatusCode:      detail.HTTPStatusCode,
 			RetryCount:          detail.RetryCount,

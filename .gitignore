@@ -52,3 +52,6 @@ config/config.yaml
 *_test_example.go
 /docs
 /data
+docs/TECHNICAL_ARCHITECTURE.md
+docs/REFACTOR_PLAN.md
+cc-forwarder
