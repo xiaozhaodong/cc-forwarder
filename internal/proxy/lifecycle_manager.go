@@ -198,6 +198,18 @@ func (rlm *RequestLifecycleManager) SetModel(modelName string) {
 	rlm.modelName = modelName
 }
 
+// SetModelName 设置模型名称
+// 用于在流处理中动态设置正确的模型信息
+func (rlm *RequestLifecycleManager) SetModelName(modelName string) {
+	rlm.modelName = modelName
+	slog.Debug(fmt.Sprintf("🏷️ [模型设置] [%s] 设置模型名称: %s", rlm.requestID, modelName))
+}
+
+// GetModelName 获取当前模型名称
+func (rlm *RequestLifecycleManager) GetModelName() string {
+	return rlm.modelName
+}
+
 // GetRequestID 获取请求ID
 func (rlm *RequestLifecycleManager) GetRequestID() string {
 	return rlm.requestID
@@ -234,8 +246,8 @@ func (rlm *RequestLifecycleManager) IsCompleted() bool {
 }
 
 // GetStats 获取生命周期统计信息
-func (rlm *RequestLifecycleManager) GetStats() map[string]interface{} {
-	stats := map[string]interface{}{
+func (rlm *RequestLifecycleManager) GetStats() map[string]any {
+	stats := map[string]any{
 		"request_id":    rlm.requestID,
 		"endpoint":      rlm.endpointName,
 		"group":         rlm.groupName,

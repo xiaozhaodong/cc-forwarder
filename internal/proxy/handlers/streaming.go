@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"cc-forwarder/config"
@@ -165,12 +166,41 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				// 执行流式处理并获取Token信息和模型名称
 				finalTokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
 				if err != nil {
-					slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 错误: %v", 
-						connID, ep.Config.Name, err))
+					var status, parsedModelName string = "error", "unknown"
 					
-					// 流式处理失败，但HTTP连接已成功建立，记录为processing状态
-					lifecycleManager.UpdateStatus("error", i+1, resp.StatusCode)
-					fmt.Fprintf(w, "data: error: 流式处理失败: %v\n\n", err)
+					// ✅ 从错误信息中提取状态和模型信息
+					if strings.HasPrefix(err.Error(), "stream_status:") {
+						parts := strings.SplitN(err.Error(), ":", 5)
+						if len(parts) >= 4 {
+							status = parts[1]      // 状态：cancelled, timeout, error
+							if parts[2] == "model" && len(parts) > 3 && parts[3] != "" {
+								parsedModelName = parts[3]  // 模型：claude-sonnet-4-20250514
+							}
+						}
+					}
+					
+					// ✅ 确保生命周期管理器获得正确的模型信息
+					if parsedModelName != "unknown" && parsedModelName != "" {
+						lifecycleManager.SetModel(parsedModelName)
+					}
+					
+					// ✅ 使用正确的状态更新
+					lifecycleManager.UpdateStatus(status, i+1, resp.StatusCode)
+					
+					// 如果有token信息，完成记录
+					if finalTokenUsage != nil {
+						lifecycleManager.CompleteRequest(finalTokenUsage)
+					}
+					
+					slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 状态: %s, 模型: %s, 错误: %v", 
+						connID, ep.Config.Name, status, parsedModelName, err))
+					
+					// 根据状态决定是否发送错误信息
+					if status == "cancelled" {
+						fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
+					} else {
+						fmt.Fprintf(w, "data: error: 流式处理失败: %v\n\n", err)
+					}
 					flusher.Flush()
 					return
 				}
@@ -300,7 +330,6 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	lifecycleManager.UpdateStatus("error", len(endpoints), http.StatusBadGateway)
 	fmt.Fprintf(w, "data: error: All endpoints failed, last error: %v\n\n", lastErr)
 	flusher.Flush()
-	return
 }
 
 // calculateRetryDelay 计算重试延迟（指数退避算法）
@@ -314,9 +343,7 @@ func (sh *StreamingHandler) calculateRetryDelay(attempt int) time.Duration {
 	delay := time.Duration(float64(baseDelay) * float64(attempt) * multiplier)
 	
 	// 限制在最大延迟范围内
-	if delay > maxDelay {
-		delay = maxDelay
-	}
+	delay = min(delay, maxDelay)
 	
 	return delay
 }
