@@ -66,7 +66,7 @@ window.RequestsManager = class {
                 // 更新计数信息
                 this.updateRequestsCountInfo(data.total, this.state.currentPage);
             } else {
-                tbody.innerHTML = '<tr><td colspan="12" class="no-data">🔄 暂无请求数据</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="no-data">🔄 暂无请求数据</td></tr>';
                 this.updateRequestsCountInfo(0, this.state.currentPage);
             }
             
@@ -120,7 +120,7 @@ window.RequestsManager = class {
     // 生成请求表格行内容（只生成tbody内的tr元素）
     generateRequestsRows(requests) {
         if (!requests || requests.length === 0) {
-            return '<tr><td colspan="12" class="no-data">🔄 暂无请求数据</td></tr>';
+            return '<tr><td colspan="11" class="no-data">🔄 暂无请求数据</td></tr>';
         }
 
         let html = '';
@@ -134,7 +134,7 @@ window.RequestsManager = class {
             const streamingIcon = request.is_streaming ? '🌊' : '🔄';
             
             html += `
-                <tr>
+                <tr class="request-row" data-request-id="${request.request_id}" style="cursor: pointer;" title="点击查看详情">
                     <td>
                         <span title="${request.is_streaming ? '流式请求' : '常规请求'}">${streamingIcon}</span>
                         <code class="request-id">${request.request_id}</code>
@@ -152,11 +152,6 @@ window.RequestsManager = class {
                     <td class="cache-creation-tokens">${request.cache_creation_tokens || 0}</td>
                     <td class="cache-read-tokens">${request.cache_read_tokens || 0}</td>
                     <td class="cost">${cost}</td>
-                    <td class="actions">
-                        <button class="btn btn-sm" onclick="window.webInterface.requestsManager.showRequestDetail('${request.request_id}')">
-                            查看
-                        </button>
-                    </td>
                 </tr>
             `;
         });
@@ -270,7 +265,6 @@ window.RequestsManager = class {
                             成本
                             ${Utils.getSortIcon('total_cost_usd', this.state.sortBy, this.state.sortOrder)}
                         </th>
-                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody id="requests-table-body">
@@ -315,6 +309,16 @@ window.RequestsManager = class {
     bindRequestsEvents() {
         // 加载模型选项
         this.loadModelOptions();
+        
+        // 绑定行点击事件
+        document.querySelectorAll('.request-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const requestId = row.dataset.requestId;
+                if (requestId) {
+                    this.showRequestDetail(requestId);
+                }
+            });
+        });
         
         // 筛选表单事件 - 先移除之前的事件监听器，避免重复绑定
         const filterForm = document.getElementById('requests-filter-form');

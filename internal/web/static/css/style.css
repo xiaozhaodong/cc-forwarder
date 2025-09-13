@@ -414,6 +414,17 @@ tr:hover {
     background: #f8fafc;
 }
 
+/* 请求行样式 */
+.request-row {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.request-row:hover {
+    background: #e0f2fe !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
 .status-indicator {
     display: inline-block;
     width: 10px;
