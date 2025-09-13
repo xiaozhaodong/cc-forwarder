@@ -5,6 +5,35 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.1.1] - 2025-09-13
+
+### 🎯 重大优化 (Major Optimization)
+- **SQLite读写分离架构**: 专为本地使用设计的数据库并发处理架构
+- **写操作队列化**: 实现单写连接 + 队列串行化，彻底消除SQLite锁竞争
+- **8读+1写连接模式**: 最大化读性能，完全避免写冲突
+
+### 🔧 关键修复 (Critical Fixes)  
+- **SQLITE_BUSY错误**: 彻底解决"database is locked"并发问题
+- **事务嵌套问题**: 修复"cannot start a transaction within a transaction"错误
+- **持续时间存储**: 确保request duration_ms字段正确保存
+- **安全事务处理**: 重构defer rollback逻辑，避免重复回滚
+
+### 📊 架构改进 (Architecture Improvements)
+- **读写分离设计**: readDB处理查询，writeDB处理修改，完全适配SQLite单写者特性  
+- **队列化写入**: 所有写操作通过队列串行处理，保证数据一致性
+- **连接池优化**: 针对SQLite调整连接数配置，避免过度并发
+- **完整向后兼容**: 所有现有API保持不变，零配置升级
+
+### 🎯 性能提升 (Performance Gains)
+- **消除锁竞争**: 写操作不再竞争，稳定性大幅提升
+- **高并发读取**: 8个读连接支持高并发查询操作
+- **本地优化**: 专门为本地SQLite使用场景优化
+
+### 📝 技术细节 (Technical Details)
+- **文件修改**: tracker.go、database.go、queries.go大幅重构
+- **新增结构**: WriteRequest队列，读写分离连接管理
+- **事务安全**: committed标志位确保事务正确提交
+
 ## [3.1.0] - 2025-09-13
 
 ### 🚀 新增 (Added)
