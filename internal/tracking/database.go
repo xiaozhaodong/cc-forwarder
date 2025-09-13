@@ -191,6 +191,8 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		return ut.buildStartQuery(event)
 	case "update":
 		return ut.buildUpdateQuery(event)
+	case "update_with_model": // 新增：带模型信息的更新
+		return ut.buildUpdateWithModelQuery(event)
 	case "complete":
 		// 对于complete事件，直接使用传入的持续时间，不需要查询数据库
 		data, ok := event.Data.(RequestCompleteData)
@@ -326,6 +328,37 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		data.RetryCount,
 		data.HTTPStatus,
 		event.Timestamp,
+	}
+
+	return query, args, nil
+}
+
+// buildUpdateWithModelQuery 构建包含模型信息的更新查询
+func (ut *UsageTracker) buildUpdateWithModelQuery(event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(RequestUpdateDataWithModel)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid update_with_model event data type")
+	}
+
+	// 同时更新状态和模型信息
+	query := `UPDATE request_logs SET
+		endpoint_name = ?,
+		group_name = ?,
+		status = ?,
+		retry_count = ?,
+		http_status_code = ?,
+		model_name = ?, -- 关键：同时更新模型信息
+		updated_at = datetime('now', 'localtime')
+	WHERE request_id = ?`
+
+	args := []interface{}{
+		data.EndpointName,
+		data.GroupName,
+		data.Status,
+		data.RetryCount,
+		data.HTTPStatus,
+		data.ModelName, // 模型信息
+		event.RequestID,
 	}
 
 	return query, args, nil

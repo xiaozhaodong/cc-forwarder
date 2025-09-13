@@ -74,6 +74,16 @@ type RequestUpdateData struct {
 	HTTPStatus   int    `json:"http_status"`
 }
 
+// RequestUpdateDataWithModel 包含模型信息的状态更新数据
+type RequestUpdateDataWithModel struct {
+	EndpointName string `json:"endpoint_name"`
+	GroupName    string `json:"group_name"`
+	Status       string `json:"status"`
+	RetryCount   int    `json:"retry_count"`
+	HTTPStatus   int    `json:"http_status"`
+	ModelName    string `json:"model_name"` // 新增：模型信息
+}
+
 // RequestCompleteData 请求完成事件数据
 type RequestCompleteData struct {
 	ModelName           string        `json:"model_name"`
@@ -397,6 +407,35 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID, endpoint, group, status s
 		// 成功发送事件
 	default:
 		slog.Warn("Usage tracking event buffer full, dropping update event", 
+			"request_id", requestID)
+	}
+}
+
+// RecordRequestUpdateWithModel 记录包含模型信息的状态更新
+func (ut *UsageTracker) RecordRequestUpdateWithModel(requestID, endpoint, group, status string, retryCount, httpStatus int, modelName string) {
+	if ut.config == nil || !ut.config.Enabled {
+		return
+	}
+
+	event := RequestEvent{
+		Type:      "update_with_model",
+		RequestID: requestID,
+		Timestamp: time.Now(),
+		Data: RequestUpdateDataWithModel{
+			EndpointName: endpoint,
+			GroupName:    group,
+			Status:       status,
+			RetryCount:   retryCount,
+			HTTPStatus:   httpStatus,
+			ModelName:    modelName, // 包含模型信息
+		},
+	}
+
+	select {
+	case ut.eventChan <- event:
+		// 成功发送事件
+	default:
+		slog.Warn("Usage tracking event buffer full, dropping update_with_model event", 
 			"request_id", requestID)
 	}
 }

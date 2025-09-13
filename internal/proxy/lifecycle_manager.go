@@ -31,6 +31,8 @@ type RequestLifecycleManager struct {
 	retryCount          int                           // 重试计数
 	lastStatus          string                        // 最后状态
 	lastError           error                         // 最后一次错误
+	modelUpdatedInDB    bool                          // 标记是否已在数据库中更新过模型
+	modelUpdateMu       sync.Mutex                    // 保护模型更新标记
 }
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
@@ -55,15 +57,36 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 }
 
 // UpdateStatus 更新请求状态
-// 调用 RecordRequestUpdate 记录状态变化
+// 调用 RecordRequestUpdate 记录状态变化，并实现模型信息搭便车更新机制
 func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, httpStatus int) {
 	// 更新内部状态 (总是更新，不管usageTracker是否为nil)
 	rlm.retryCount = retryCount
 	rlm.lastStatus = status
 	
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName, 
-			rlm.groupName, status, retryCount, httpStatus)
+		// 获取当前的模型信息（线程安全）
+		currentModel := rlm.GetModelName()
+		
+		// 搭便车机制：检查是否需要更新模型到数据库
+		rlm.modelUpdateMu.Lock()
+		shouldUpdateModel := currentModel != "" && 
+							currentModel != "unknown" && 
+							!rlm.modelUpdatedInDB
+		if shouldUpdateModel {
+			rlm.modelUpdatedInDB = true // 标记为已更新，避免重复
+		}
+		rlm.modelUpdateMu.Unlock()
+		
+		if shouldUpdateModel {
+			// 第一次有模型信息时，执行带模型的更新
+			rlm.usageTracker.RecordRequestUpdateWithModel(
+				rlm.requestID, rlm.endpointName, rlm.groupName, 
+				status, retryCount, httpStatus, currentModel)
+		} else {
+			// 正常状态更新（模型已更新过或尚未就绪）
+			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName, 
+				rlm.groupName, status, retryCount, httpStatus)
+		}
 	}
 	
 	// 记录状态变更日志
