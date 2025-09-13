@@ -4,14 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v3.0.0 Architecture (2025-09-12)  
-**Major Update**: Handler.go modular refactoring with enhanced maintainability
+**Current Version**: v3.1.0 (2025-09-13)  
+**Major Update**: 异步模型解析与智能UI优化
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v3.0**:
+**Key Features v3.1**:
+- **异步模型解析**: 从请求体异步提取模型名称，零延迟转发
+- **智能模型对比**: 检测并警告请求体与响应模型不一致
+- **优化的Web界面**: 简化请求追踪UI，支持点击行查看详情
+- **完整流式识别**: 多模式检测流式请求，精确标记处理方式
 - **Modular Architecture**: Complete handler.go refactoring with single responsibility principle
 - **Dual Processing**: Streaming v2 and Unified v2 request processing
 - **Intelligent Error Recovery**: Smart error classification and recovery strategies  
@@ -220,6 +224,14 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-09-13**: Major v3.1.0 功能增强版本
+- 异步模型解析：从请求体中零延迟提取模型名称，解决count_tokens端点显示"unknown"问题
+- 智能模型对比：检测请求体与响应模型不一致并警告，以响应模型为准
+- 优化Web界面：简化请求追踪列表，支持点击行查看详情
+- 完整流式识别：多模式检测流式请求，精确标记处理方式
+- 线程安全模型管理：RWMutex保护，支持并发访问
+- 多项图表修复：端点健康状态、Token分布等图表显示问题
 
 **2025-09-12**: Major v3.0.0 modular refactoring
 - Complete handler.go modular architecture with single responsibility principle
