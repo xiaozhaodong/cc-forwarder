@@ -17,6 +17,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/tracking"
@@ -257,8 +258,9 @@ func (suite *PerformanceTestSuite) SetupPerformanceComponents() error {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// 创建空的UsageTracker用于测试
 	usageTracker, _ := tracking.NewUsageTracker(&tracking.Config{Enabled: false})
-	suite.webServer = web.NewWebServer(suite.config, suite.endpointManager, suite.monitoring, usageTracker, logger, time.Now(), "performance-test.yaml")
-	suite.endpointManager.SetWebNotifier(suite.webServer)
+	// 创建EventBus
+	eventBus := events.NewEventBus(logger)
+	suite.webServer = web.NewWebServer(suite.config, suite.endpointManager, suite.monitoring, usageTracker, logger, time.Now(), "performance-test.yaml", eventBus)
 
 	// 等待组件初始化
 	time.Sleep(3 * time.Second)

@@ -41,17 +41,10 @@ type Manager struct {
 	wg           sync.WaitGroup
 	fastTester   *FastTester
 	groupManager *GroupManager
-	// Web interface callback for real-time notifications
-	webNotifier  WebNotifier
 	// EventBus for decoupled event publishing
 	eventBus     events.EventBus
 }
 
-// WebNotifier interface for Web interface notifications
-type WebNotifier interface {
-	BroadcastEndpointUpdate(data map[string]interface{})
-	IsEventManagerActive() bool
-}
 
 // NewManager creates a new endpoint manager
 func NewManager(cfg *config.Config) *Manager {
@@ -427,10 +420,6 @@ func (m *Manager) GetGroupManager() *GroupManager {
 	return m.groupManager
 }
 
-// SetWebNotifier sets the web notifier for real-time updates
-func (m *Manager) SetWebNotifier(notifier WebNotifier) {
-	m.webNotifier = notifier
-}
 
 // SetEventBus 设置EventBus事件总线
 func (m *Manager) SetEventBus(eventBus events.EventBus) {
@@ -481,9 +470,7 @@ func (m *Manager) ManualActivateGroup(groupName string) error {
 	}
 	
 	// Notify web interface about group change
-	if m.webNotifier != nil {
-		go m.notifyWebGroupChange("group_manually_activated", groupName)
-	}
+	go m.notifyWebGroupChange("group_manually_activated", groupName)
 	
 	return nil
 }
@@ -496,9 +483,7 @@ func (m *Manager) ManualPauseGroup(groupName string, duration time.Duration) err
 	}
 	
 	// Notify web interface about group change
-	if m.webNotifier != nil {
-		go m.notifyWebGroupChange("group_manually_paused", groupName)
-	}
+	go m.notifyWebGroupChange("group_manually_paused", groupName)
 	
 	return nil
 }
@@ -511,9 +496,7 @@ func (m *Manager) ManualResumeGroup(groupName string) error {
 	}
 	
 	// Notify web interface about group change
-	if m.webNotifier != nil {
-		go m.notifyWebGroupChange("group_manually_resumed", groupName)
-	}
+	go m.notifyWebGroupChange("group_manually_resumed", groupName)
 	
 	return nil
 }
@@ -525,24 +508,33 @@ func (m *Manager) GetGroupDetails() map[string]interface{} {
 
 // notifyWebGroupChange notifies the web interface about group management changes
 func (m *Manager) notifyWebGroupChange(eventType, groupName string) {
-	if m.webNotifier == nil {
+	// 检查EventBus是否可用
+	if m.eventBus == nil {
+		slog.Debug("[组管理] EventBus未设置，跳过组状态变化通知")
 		return
 	}
-	
-	// 检查EventManager是否仍在活跃状态
-	if !m.webNotifier.IsEventManagerActive() {
-		// EventManager已关闭，不发送通知
-		return
-	}
-	
+
+	// 获取组详细信息
+	groupDetails := m.GetGroupDetails()
+
+	// 构建事件数据
 	data := map[string]interface{}{
 		"event":     eventType,
 		"group":     groupName,
 		"timestamp": time.Now().Format("2006-01-02 15:04:05"),
-		"details":   m.GetGroupDetails(),
+		"details":   groupDetails,
 	}
-	
-	m.webNotifier.BroadcastEndpointUpdate(data)
+
+	// 使用EventBus发布组状态变化事件
+	m.eventBus.Publish(events.Event{
+		Type:      events.EventGroupStatusChanged,
+		Source:    "endpoint_manager",
+		Timestamp: time.Now(),
+		Priority:  events.PriorityHigh,
+		Data:      data,
+	})
+
+	slog.Debug(fmt.Sprintf("📢 [组管理] 发布组状态变化事件: %s (组: %s)", eventType, groupName))
 }
 
 // healthCheckLoop runs the health check routine
@@ -707,15 +699,13 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 			slog.Warn(fmt.Sprintf("❌ [健康检查] 端点标记为不可用: %s - 连续失败: %d次, 响应时间: %dms", 
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		} else {
-			slog.Debug(fmt.Sprintf("❌ [健康检查] 端点仍然不可用: %s - 连续失败: %d次, 响应时间: %dms", 
+			slog.Debug(fmt.Sprintf("❌ [健康检查] 端点仍然不可用: %s - 连续失败: %d次, 响应时间: %dms",
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		}
 	}
-	
-	// Notify web interface after every health check to update response time and last check time
-	if m.webNotifier != nil {
-		go m.notifyWebInterface(endpoint)
-	}
+
+	// 通知Web界面端点状态变化
+	go m.notifyWebInterface(endpoint)
 }
 
 // IsHealthy returns the health status of an endpoint

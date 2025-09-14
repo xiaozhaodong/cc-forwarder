@@ -19,6 +19,9 @@ const (
 	EventConnectionStats  EventType = "connection_stats"
 	EventResponseReceived EventType = "response_received"
 
+	// 组管理事件
+	EventGroupStatusChanged EventType = "group_status_changed"
+
 	// 系统级事件
 	EventSystemError   EventType = "system_error"
 	EventConfigChanged EventType = "config_changed"
@@ -46,13 +49,14 @@ type Event struct {
 
 // 前端事件类型映射
 var EventTypeMapping = map[EventType]string{
-	EventRequestStarted:    "request",
-	EventRequestUpdated:    "request",
-	EventRequestCompleted:  "request",
-	EventEndpointHealthy:   "endpoint",
-	EventEndpointUnhealthy: "endpoint",
-	EventConnectionStats:   "connection",
-	EventResponseReceived:  "connection",
-	EventSystemError:       "status",
-	EventConfigChanged:     "config",
+	EventRequestStarted:     "request",
+	EventRequestUpdated:     "request",
+	EventRequestCompleted:   "request",
+	EventEndpointHealthy:    "endpoint",
+	EventEndpointUnhealthy:  "endpoint",
+	EventConnectionStats:    "connection",
+	EventResponseReceived:   "connection",
+	EventGroupStatusChanged: "group",
+	EventSystemError:        "status",
+	EventConfigChanged:      "config",
 }

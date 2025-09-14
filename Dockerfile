@@ -60,7 +60,7 @@ EXPOSE 8088 8010
 
 # Health check - check application health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8010/health || exit 1
+    CMD curl -f http://localhost:8088/health || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/endpoint_forwarder"]

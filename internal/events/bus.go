@@ -178,6 +178,13 @@ func (eb *eventBus) setupDefaultFilters() {
 		RateLimit:       0, // 无限制
 	}
 
+	// 组状态变化事件过滤器 - 适度限制，避免频繁更新
+	eb.filters[EventGroupStatusChanged] = EventFilter{
+		ShouldBroadcast: func(event Event) bool { return true },
+		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
+		RateLimit:       100 * time.Millisecond, // 适度限制，避免频繁更新
+	}
+
 	// 初始化频率限制器
 	for eventType, filter := range eb.filters {
 		if filter.RateLimit > 0 {

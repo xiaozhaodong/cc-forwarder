@@ -7,7 +7,47 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/events"
 )
+
+// MockEventBus 用于测试的模拟EventBus
+type MockEventBus struct {
+	events      []events.Event
+	broadcaster events.SSEBroadcaster
+}
+
+// Event 类型别名以便测试使用
+type Event = events.Event
+type PriorityHigh = events.EventPriority
+
+const (
+	PriorityHighValue = events.PriorityHigh
+)
+
+// Publish 实现EventBus接口
+func (m *MockEventBus) Publish(event events.Event) {
+	m.events = append(m.events, event)
+}
+
+// SetSSEBroadcaster 实现EventBus接口
+func (m *MockEventBus) SetSSEBroadcaster(broadcaster events.SSEBroadcaster) {
+	m.broadcaster = broadcaster
+}
+
+// Start 实现EventBus接口
+func (m *MockEventBus) Start() error {
+	return nil
+}
+
+// Stop 实现EventBus接口
+func (m *MockEventBus) Stop() error {
+	return nil
+}
+
+// GetStats 实现EventBus接口
+func (m *MockEventBus) GetStats() events.BusStats {
+	return events.BusStats{}
+}
 
 func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 	testCases := []struct {
@@ -282,5 +322,282 @@ func TestGetEndpointByNameWithNoActiveGroups(t *testing.T) {
 	}
 	if endpointAny.Config.Name != "test-endpoint" {
 		t.Errorf("Expected test-endpoint, got: %s", endpointAny.Config.Name)
+	}
+}
+
+// TestGroupEventBusPublish 测试EventBus组事件发布功能
+func TestGroupEventBusPublish(t *testing.T) {
+	// 创建模拟EventBus
+	mockEventBus := &MockEventBus{
+		events: make([]Event, 0),
+	}
+
+	// 创建测试配置
+	cfg := &config.Config{
+		Health: config.HealthConfig{
+			CheckInterval: 30 * time.Second,
+			Timeout:       5 * time.Second,
+			HealthPath:    "/v1/models",
+		},
+		Group: config.GroupConfig{
+			Cooldown: 10 * time.Minute,
+			AutoSwitchBetweenGroups: true,
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:          "test-endpoint",
+				URL:           "https://test.example.com",
+				Group:         "testgroup",
+				GroupPriority: 1,
+				Priority:      1,
+				Token:         "test-token",
+				Timeout:       30 * time.Second,
+			},
+		},
+	}
+
+	// 创建Manager实例
+	manager := NewManager(cfg)
+
+	// 设置EventBus
+	manager.SetEventBus(mockEventBus)
+
+	// 调用notifyWebGroupChange方法
+	manager.notifyWebGroupChange("group_manually_activated", "testgroup")
+
+	// 验证EventBus是否收到正确的事件
+	if len(mockEventBus.events) != 1 {
+		t.Fatalf("Expected 1 event, got %d", len(mockEventBus.events))
+	}
+
+	event := mockEventBus.events[0]
+
+	// 验证事件类型
+	if event.Type != "group_status_changed" {
+		t.Errorf("Expected event type 'group_status_changed', got '%s'", event.Type)
+	}
+
+	// 验证事件来源
+	if event.Source != "endpoint_manager" {
+		t.Errorf("Expected event source 'endpoint_manager', got '%s'", event.Source)
+	}
+
+	// 验证事件优先级
+	if event.Priority != events.PriorityHigh {
+		t.Errorf("Expected event priority PriorityHigh (%d), got %d", events.PriorityHigh, event.Priority)
+	}
+
+	// 验证事件数据格式
+	data := event.Data
+	if data == nil {
+		t.Fatal("Expected event data, got nil")
+	}
+
+	// 验证必要字段存在
+	requiredFields := []string{"event", "group", "timestamp", "details"}
+	for _, field := range requiredFields {
+		if _, exists := data[field]; !exists {
+			t.Errorf("Expected field '%s' in event data", field)
+		}
+	}
+
+	// 验证事件字段值
+	if data["event"] != "group_manually_activated" {
+		t.Errorf("Expected event 'group_manually_activated', got '%v'", data["event"])
+	}
+
+	if data["group"] != "testgroup" {
+		t.Errorf("Expected group 'testgroup', got '%v'", data["group"])
+	}
+
+	// 验证timestamp是字符串格式
+	if _, ok := data["timestamp"].(string); !ok {
+		t.Errorf("Expected timestamp to be string, got %T", data["timestamp"])
+	}
+
+	// 验证details是map类型
+	if _, ok := data["details"].(map[string]interface{}); !ok {
+		t.Errorf("Expected details to be map[string]interface{}, got %T", data["details"])
+	}
+}
+
+// TestGroupEventBusPublishWithoutEventBus 测试没有EventBus时的处理
+func TestGroupEventBusPublishWithoutEventBus(t *testing.T) {
+	// 创建测试配置
+	cfg := &config.Config{
+		Health: config.HealthConfig{
+			CheckInterval: 30 * time.Second,
+			Timeout:       5 * time.Second,
+			HealthPath:    "/v1/models",
+		},
+		Group: config.GroupConfig{
+			Cooldown: 10 * time.Minute,
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:          "test-endpoint",
+				URL:           "https://test.example.com",
+				Group:         "testgroup",
+				GroupPriority: 1,
+				Priority:      1,
+				Token:         "test-token",
+				Timeout:       30 * time.Second,
+			},
+		},
+	}
+
+	// 创建Manager实例，但不设置EventBus
+	manager := NewManager(cfg)
+
+	// 调用notifyWebGroupChange方法应该不会panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("notifyWebGroupChange panicked when EventBus is nil: %v", r)
+		}
+	}()
+
+	manager.notifyWebGroupChange("group_manually_activated", "testgroup")
+}
+
+// TestGroupEventBusIntegration 测试组管理和EventBus的集成
+func TestGroupEventBusIntegration(t *testing.T) {
+	// 创建模拟EventBus
+	mockEventBus := &MockEventBus{
+		events: make([]Event, 0),
+	}
+
+	// 创建测试配置
+	cfg := &config.Config{
+		Health: config.HealthConfig{
+			CheckInterval: 30 * time.Second,
+			Timeout:       5 * time.Second,
+			HealthPath:    "/v1/models",
+		},
+		Group: config.GroupConfig{
+			Cooldown: 10 * time.Minute,
+			AutoSwitchBetweenGroups: true,
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:          "primary-endpoint",
+				URL:           "https://primary.example.com",
+				Group:         "main",
+				GroupPriority: 1,
+				Priority:      1,
+				Token:         "primary-token",
+				Timeout:       30 * time.Second,
+			},
+			{
+				Name:          "backup-endpoint",
+				URL:           "https://backup.example.com",
+				Group:         "backup",
+				GroupPriority: 2,
+				Priority:      1,
+				Token:         "backup-token",
+				Timeout:       30 * time.Second,
+			},
+		},
+	}
+
+	// 创建Manager实例
+	manager := NewManager(cfg)
+	manager.SetEventBus(mockEventBus)
+
+	// 手动设置端点为健康状态以便能够激活组
+	allEndpoints := manager.GetAllEndpoints()
+	for _, ep := range allEndpoints {
+		ep.mutex.Lock()
+		ep.Status.Healthy = true
+		ep.mutex.Unlock()
+	}
+
+	// 测试手动激活组
+	err := manager.ManualActivateGroup("backup")
+	if err != nil {
+		t.Fatalf("Failed to manually activate group: %v", err)
+	}
+
+	// 等待goroutine完成
+	time.Sleep(10 * time.Millisecond)
+
+	// 验证是否发布了事件
+	if len(mockEventBus.events) != 1 {
+		t.Errorf("Expected 1 event after manual activation, got %d", len(mockEventBus.events))
+	}
+
+	// 验证激活事件
+	if len(mockEventBus.events) > 0 {
+		event := mockEventBus.events[0]
+		if event.Type != "group_status_changed" {
+			t.Errorf("Expected group_status_changed event, got %s", event.Type)
+		}
+		if event.Data["event"] != "group_manually_activated" {
+			t.Errorf("Expected group_manually_activated event, got %v", event.Data["event"])
+		}
+		if event.Data["group"] != "backup" {
+			t.Errorf("Expected backup group, got %v", event.Data["group"])
+		}
+	}
+
+	// 清空事件记录
+	mockEventBus.events = mockEventBus.events[:0]
+
+	// 测试手动暂停组
+	err = manager.ManualPauseGroup("backup", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("Failed to manually pause group: %v", err)
+	}
+
+	// 等待goroutine完成
+	time.Sleep(10 * time.Millisecond)
+
+	// 验证是否发布了暂停事件
+	if len(mockEventBus.events) != 1 {
+		t.Errorf("Expected 1 event after manual pause, got %d", len(mockEventBus.events))
+	}
+
+	// 验证暂停事件
+	if len(mockEventBus.events) > 0 {
+		event := mockEventBus.events[0]
+		if event.Type != "group_status_changed" {
+			t.Errorf("Expected group_status_changed event, got %s", event.Type)
+		}
+		if event.Data["event"] != "group_manually_paused" {
+			t.Errorf("Expected group_manually_paused event, got %v", event.Data["event"])
+		}
+		if event.Data["group"] != "backup" {
+			t.Errorf("Expected backup group, got %v", event.Data["group"])
+		}
+	}
+
+	// 清空事件记录
+	mockEventBus.events = mockEventBus.events[:0]
+
+	// 测试手动恢复组
+	err = manager.ManualResumeGroup("backup")
+	if err != nil {
+		t.Fatalf("Failed to manually resume group: %v", err)
+	}
+
+	// 等待goroutine完成
+	time.Sleep(10 * time.Millisecond)
+
+	// 验证是否发布了恢复事件
+	if len(mockEventBus.events) != 1 {
+		t.Errorf("Expected 1 event after manual resume, got %d", len(mockEventBus.events))
+	}
+
+	// 验证恢复事件
+	if len(mockEventBus.events) > 0 {
+		event := mockEventBus.events[0]
+		if event.Type != "group_status_changed" {
+			t.Errorf("Expected group_status_changed event, got %s", event.Type)
+		}
+		if event.Data["event"] != "group_manually_resumed" {
+			t.Errorf("Expected group_manually_resumed event, got %v", event.Data["event"])
+		}
+		if event.Data["group"] != "backup" {
+			t.Errorf("Expected backup group, got %v", event.Data["group"])
+		}
 	}
 }

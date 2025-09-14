@@ -345,8 +345,6 @@ func main() {
 	// Start Web server if enabled
 	if cfg.Web.Enabled {
 		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, usageTracker, logger, startTime, *configPath, eventBus)
-		// Register web server as endpoint notifier for real-time updates
-		endpointManager.SetWebNotifier(webServer)
 		if err := webServer.Start(); err != nil {
 			logger.Error(fmt.Sprintf("❌ Web服务器启动失败: %v", err))
 		}
