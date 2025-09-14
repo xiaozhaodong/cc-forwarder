@@ -18,13 +18,6 @@ import (
 //go:embed schema.sql
 var schemaFS embed.FS
 
-// EventBroadcaster 事件广播器接口
-type EventBroadcaster interface {
-	BroadcastConnectionUpdateSmart(data interface{}, changeType string)
-	BroadcastStatusUpdateSmart(data interface{}, changeType string) 
-	BroadcastRequestUpdateSmart(data interface{}, changeType string)
-}
-
 // UsageStatsDetailed 详细的使用统计
 type UsageStatsDetailed struct {
 	TotalRequests    int64                      `json:"total_requests"`
@@ -152,7 +145,6 @@ type UsageTracker struct {
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	errorHandler *ErrorHandler
-	eventBroadcaster EventBroadcaster // 智能事件广播器
 	
 	// 新增：读写分离组件
 	readDB     *sql.DB           // 读连接池 (多连接)
@@ -291,14 +283,6 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 	return ut, nil
 }
 
-// SetEventBroadcaster 设置事件广播器
-func (ut *UsageTracker) SetEventBroadcaster(broadcaster EventBroadcaster) {
-	ut.mu.Lock()
-	defer ut.mu.Unlock()
-	ut.eventBroadcaster = broadcaster
-	slog.Info("事件广播器已设置")
-}
-
 // Close 关闭使用跟踪器
 func (ut *UsageTracker) Close() error {
 	if ut.config == nil || !ut.config.Enabled {
@@ -397,18 +381,6 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, metho
 		slog.Warn("Usage tracking event buffer full, dropping start event", 
 			"request_id", requestID)
 	}
-
-	// 新增：立即推送新请求事件
-	if ut.eventBroadcaster != nil {
-		ut.eventBroadcaster.BroadcastRequestUpdateSmart(map[string]interface{}{
-			"event_type":   "request_started",
-			"request_id":   requestID,
-			"client_ip":    clientIP,
-			"user_agent":   userAgent,
-			"timestamp":    time.Now().Format("2006-01-02 15:04:05"),
-			"change_type":  "request_started",
-		}, "request_started")
-	}
 }
 
 // RecordRequestUpdate 记录请求状态更新
@@ -436,38 +408,6 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID, endpoint, group, status s
 	default:
 		slog.Warn("Usage tracking event buffer full, dropping update event", 
 			"request_id", requestID)
-	}
-
-	// 新增：智能推送状态变更事件
-	if ut.eventBroadcaster != nil {
-		// 根据状态确定变更类型和优先级
-		var changeType string
-		switch status {
-		case "error", "timeout":
-			changeType = "error_response"
-		case "suspended":
-			changeType = "suspended_change"
-		case "retry":
-			changeType = "retry_attempt"
-		case "processing":
-			changeType = "request_processing"
-		case "completed":
-			changeType = "request_completed"
-		default:
-			changeType = "status_changed"
-		}
-
-		ut.eventBroadcaster.BroadcastConnectionUpdateSmart(map[string]interface{}{
-			"event_type":       "request_updated",
-			"request_id":       requestID,
-			"endpoint_name":    endpoint,
-			"group_name":       group,
-			"status":          status,
-			"retry_count":     retryCount,
-			"http_status":     httpStatus,
-			"timestamp":       time.Now().Format("2006-01-02 15:04:05"),
-			"change_type":     changeType,
-		}, changeType)
 	}
 }
 
@@ -526,32 +466,6 @@ func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, token
 	default:
 		slog.Warn("Usage tracking event buffer full, dropping complete event", 
 			"request_id", requestID)
-	}
-
-	// 新增：智能推送完成事件
-	if ut.eventBroadcaster != nil {
-		// 判断是否为慢请求
-		changeType := "request_completed"
-		if duration > 10*time.Second {
-			changeType = "slow_request_completed"
-		}
-
-		// 计算总成本
-		_, _, _, _, totalCost := ut.calculateCost(modelName, tokens)
-
-		ut.eventBroadcaster.BroadcastRequestUpdateSmart(map[string]interface{}{
-			"event_type":             "request_completed",
-			"request_id":             requestID,
-			"model_name":             modelName,
-			"duration_ms":            duration.Milliseconds(),
-			"input_tokens":           tokens.InputTokens,
-			"output_tokens":          tokens.OutputTokens,
-			"cache_creation_tokens":  tokens.CacheCreationTokens,
-			"cache_read_tokens":      tokens.CacheReadTokens,
-			"total_cost":             totalCost,
-			"timestamp":              time.Now().Format("2006-01-02 15:04:05"),
-			"change_type":            changeType,
-		}, changeType)
 	}
 }
 

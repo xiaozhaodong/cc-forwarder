@@ -12,6 +12,8 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/utils"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/tracking"
 
@@ -37,7 +39,7 @@ type WebServer struct {
 }
 
 // NewWebServer creates a new Web UI server
-func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitoringMiddleware *middleware.MonitoringMiddleware, usageTracker *tracking.UsageTracker, logger *slog.Logger, startTime time.Time, configPath string) *WebServer {
+func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitoringMiddleware *middleware.MonitoringMiddleware, usageTracker *tracking.UsageTracker, logger *slog.Logger, startTime time.Time, configPath string, eventBus events.EventBus) *WebServer {
 	// 设置gin为release模式以减少日志输出
 	gin.SetMode(gin.ReleaseMode)
 	
@@ -60,8 +62,14 @@ func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitor
 		configPath:          configPath,
 	}
 	
-	// 设置事件广播器，让监控中间件能够推送事件
-	monitoringMiddleware.SetEventBroadcaster(ws)
+	// 设置EventBus的SSE适配器
+	if eventBus != nil {
+		sseAdapter := events.NewSSEAdapter(ws, logger)
+		eventBus.SetSSEBroadcaster(sseAdapter)
+	}
+	
+	// 保持兼容性 - 不再设置监控中间件的事件广播器
+	// monitoringMiddleware.SetEventBroadcaster(ws)
 	
 	ws.setupRoutes()
 	
@@ -429,7 +437,7 @@ func (ws *WebServer) broadcastCurrentData() {
 			"group":          ep.Config.Group,
 			"group_priority": ep.Config.GroupPriority,
 			"healthy":        status.Healthy,
-			"response_time":  status.ResponseTime.String(),
+			"response_time":  utils.FormatResponseTime(status.ResponseTime),
 			"last_check":     status.LastCheck.Format("2006-01-02 15:04:05"),
 			"never_checked":  status.NeverChecked,
 			"error":          "", // 暂时设为空字符串
@@ -450,7 +458,7 @@ func (ws *WebServer) broadcastCurrentData() {
 		"active_connections":   len(stats.ActiveConnections),
 		"successful_requests":  stats.SuccessfulRequests,
 		"failed_requests":      stats.FailedRequests,
-		"average_response_time": stats.GetAverageResponseTime().String(),
+		"average_response_time": utils.FormatResponseTime(stats.GetAverageResponseTime()),
 		"success_rate":         stats.GetSuccessRate(),
 		"suspended":            suspendedStats,
 	})

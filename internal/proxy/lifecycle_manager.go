@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
 )
@@ -22,6 +23,7 @@ type RequestLifecycleManager struct {
 	usageTracker        *tracking.UsageTracker        // 使用跟踪器
 	monitoringMiddleware MonitoringMiddlewareInterface // 监控中间件
 	errorRecovery       *ErrorRecoveryManager         // 错误恢复管理器
+	eventBus            events.EventBus               // EventBus事件总线
 	requestID           string                        // 请求唯一标识符
 	startTime           time.Time                     // 请求开始时间
 	modelMu             sync.RWMutex                  // 保护模型字段的读写锁
@@ -36,11 +38,12 @@ type RequestLifecycleManager struct {
 }
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
-func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string) *RequestLifecycleManager {
+func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string, eventBus events.EventBus) *RequestLifecycleManager {
 	return &RequestLifecycleManager{
 		usageTracker:        usageTracker,
 		monitoringMiddleware: monitoringMiddleware,
 		errorRecovery:       NewErrorRecoveryManager(usageTracker),
+		eventBus:            eventBus,
 		requestID:           requestID,
 		startTime:           time.Now(),
 		lastStatus:          "pending",
@@ -48,11 +51,30 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 }
 
 // StartRequest 开始请求跟踪
-// 调用 RecordRequestStart 记录请求开始
+// 调用 RecordRequestStart 记录请求开始，并发布请求开始事件
 func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, path string, isStreaming bool) {
+	// 原有的数据记录逻辑
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		rlm.usageTracker.RecordRequestStart(rlm.requestID, clientIP, userAgent, method, path, isStreaming)
 		slog.Info(fmt.Sprintf("🚀 Request started [%s]", rlm.requestID))
+	}
+	
+	// 发布请求开始事件
+	if rlm.eventBus != nil {
+		rlm.eventBus.Publish(events.Event{
+			Type:     events.EventRequestStarted,
+			Source:   "lifecycle_manager",
+			Priority: events.PriorityNormal,
+			Data: map[string]interface{}{
+				"request_id":   rlm.requestID,
+				"client_ip":    clientIP,
+				"user_agent":   userAgent,
+				"method":       method,
+				"path":         path,
+				"is_streaming": isStreaming,
+				"change_type":  "request_started",
+			},
+		})
 	}
 }
 
@@ -87,6 +109,41 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName, 
 				rlm.groupName, status, retryCount, httpStatus)
 		}
+	}
+	
+	// 发布请求状态更新事件
+	if rlm.eventBus != nil {
+		// 根据状态确定优先级
+		priority := events.PriorityNormal
+		changeType := "status_changed"
+		
+		switch status {
+		case "error", "timeout":
+			priority = events.PriorityHigh
+			changeType = "error_response"
+		case "suspended":
+			changeType = "suspended_change"
+		case "retry":
+			changeType = "retry_attempt"
+		case "completed":
+			changeType = "request_completed"
+		}
+		
+		rlm.eventBus.Publish(events.Event{
+			Type:     events.EventRequestUpdated,
+			Source:   "lifecycle_manager",
+			Priority: priority,
+			Data: map[string]interface{}{
+				"request_id":     rlm.requestID,
+				"endpoint_name":  rlm.endpointName,
+				"group_name":     rlm.groupName,
+				"status":         status,
+				"retry_count":    retryCount,
+				"http_status":    httpStatus,
+				"model_name":     rlm.GetModelName(),
+				"change_type":    changeType,
+			},
+		})
 	}
 	
 	// 记录状态变更日志
@@ -158,6 +215,53 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 		} else {
 			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 模型: %s, 耗时: %dms (无Token统计)", 
 				rlm.requestID, rlm.endpointName, rlm.groupName, modelName, duration.Milliseconds()))
+		}
+		
+		// 发布请求完成事件
+		if rlm.eventBus != nil {
+			duration := time.Since(rlm.startTime)
+			modelName := rlm.GetModelName()
+			if modelName == "" {
+				modelName = "unknown"
+			}
+			
+			// 判断是否为慢请求
+			priority := events.PriorityNormal
+			changeType := "request_completed"
+			if duration > 10*time.Second {
+				priority = events.PriorityHigh
+				changeType = "slow_request_completed"
+			}
+			
+			data := map[string]interface{}{
+				"request_id":            rlm.requestID,
+				"model_name":            modelName,
+				"duration_ms":           duration.Milliseconds(),
+				"endpoint_name":         rlm.endpointName,
+				"group_name":            rlm.groupName,
+				"change_type":           changeType,
+			}
+			
+			if tokens != nil {
+				data["input_tokens"] = tokens.InputTokens
+				data["output_tokens"] = tokens.OutputTokens
+				data["cache_creation_tokens"] = tokens.CacheCreationTokens
+				data["cache_read_tokens"] = tokens.CacheReadTokens
+				
+				// 计算总成本（如果 tracker 有定价信息）
+				if rlm.usageTracker != nil {
+					pricing := rlm.usageTracker.GetPricing(modelName)
+					totalCost := rlm.calculateCost(tokens, pricing)
+					data["total_cost"] = totalCost
+				}
+			}
+			
+			rlm.eventBus.Publish(events.Event{
+				Type:     events.EventRequestCompleted,
+				Source:   "lifecycle_manager",
+				Priority: priority,
+				Data:     data,
+			})
 		}
 		
 		slog.Info(fmt.Sprintf("✅ Request completed [%s]", rlm.requestID))
@@ -394,4 +498,17 @@ func (rlm *RequestLifecycleManager) IncrementRetry() {
 // GetLastError 获取最后一次错误
 func (rlm *RequestLifecycleManager) GetLastError() error {
 	return rlm.lastError
+}
+
+// calculateCost 计算Token使用成本的辅助方法
+func (rlm *RequestLifecycleManager) calculateCost(tokens *tracking.TokenUsage, pricing tracking.ModelPricing) float64 {
+	if tokens == nil {
+		return 0.0
+	}
+	
+	inputCost := float64(tokens.InputTokens) * pricing.Input / 1000000
+	outputCost := float64(tokens.OutputTokens) * pricing.Output / 1000000
+	cacheCost := float64(tokens.CacheCreationTokens) * pricing.CacheCreation / 1000000
+	
+	return inputCost + outputCost + cacheCost
 }

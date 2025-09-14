@@ -7,22 +7,16 @@ import (
 	"time"
 
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/utils"
 )
-
-// EventBroadcaster 定义事件广播接口
-type EventBroadcaster interface {
-	BroadcastConnectionUpdate(data map[string]interface{})
-	BroadcastConnectionUpdateSmart(data map[string]interface{}, changeType string)
-	BroadcastEndpointUpdate(data map[string]interface{})
-	BroadcastLogEvent(data map[string]interface{})
-}
 
 // MonitoringMiddleware provides health and metrics endpoints
 type MonitoringMiddleware struct {
 	endpointManager *endpoint.Manager
 	metrics         *monitor.Metrics
-	eventBroadcaster EventBroadcaster
+	eventBus        events.EventBus
 	lastBroadcast   map[string]time.Time
 }
 
@@ -35,9 +29,9 @@ func NewMonitoringMiddleware(endpointManager *endpoint.Manager) *MonitoringMiddl
 	}
 }
 
-// SetEventBroadcaster 设置事件广播器
-func (mm *MonitoringMiddleware) SetEventBroadcaster(broadcaster EventBroadcaster) {
-	mm.eventBroadcaster = broadcaster
+// SetEventBus 设置EventBus事件总线
+func (mm *MonitoringMiddleware) SetEventBus(eventBus events.EventBus) {
+	mm.eventBus = eventBus
 }
 
 // HealthResponse represents the health check response
@@ -208,79 +202,16 @@ func (mm *MonitoringMiddleware) RecordRequest(endpoint, clientIP, userAgent, met
 	return mm.metrics.RecordRequest(endpoint, clientIP, userAgent, method, path)
 }
 
-// RecordResponse records a response in metrics
+// RecordResponse 记录响应数据 - 纯数据收集，不发布事件
+// 请求级事件由 lifecycle_manager 负责
 func (mm *MonitoringMiddleware) RecordResponse(connID string, statusCode int, responseTime time.Duration, bytesSent int64, endpoint string) {
+	// 只有原有的监控数据收集逻辑
 	mm.metrics.RecordResponse(connID, statusCode, responseTime, bytesSent, endpoint)
 	
-	// 使用智能推送系统
-	if mm.eventBroadcaster != nil {
-		stats := mm.metrics.GetMetrics()
-		suspendedStats := mm.metrics.GetSuspendedRequestStats()
-		
-		connectionData := map[string]interface{}{
-			"event":                       "connection_stats_updated",
-			"timestamp":                   time.Now().Format("2006-01-02 15:04:05"),
-			"total_requests":              stats.TotalRequests,
-			"active_connections":          len(stats.ActiveConnections),
-			"streaming_connections":       mm.getStreamingConnections(stats.ActiveConnections),
-			"successful_requests":         stats.SuccessfulRequests,
-			"failed_requests":             stats.FailedRequests,
-			"average_response_time":       stats.GetAverageResponseTime().String(),
-			"suspended_requests":          suspendedStats["suspended_requests"],
-			"total_suspended_requests":    suspendedStats["total_suspended_requests"],
-			"successful_suspended_requests": suspendedStats["successful_suspended_requests"],
-			"timeout_suspended_requests":  suspendedStats["timeout_suspended_requests"],
-			"suspended_success_rate":      suspendedStats["success_rate"],
-			"average_suspended_time":      suspendedStats["average_suspended_time"],
-			// 智能推送相关的元数据
-			"status_code":                 statusCode,
-			"response_time_ms":            float64(responseTime.Nanoseconds()) / 1000000,
-			"endpoint":                    endpoint,
-			"bytes_sent":                  bytesSent,
-		}
-		
-		// 根据响应特征确定变化类型和优先级
-		changeType := mm.determineChangeType(statusCode, responseTime, endpoint)
-		mm.eventBroadcaster.BroadcastConnectionUpdateSmart(connectionData, changeType)
+	// 发布系统级统计事件（低优先级，批量处理）
+	if mm.eventBus != nil && mm.shouldBroadcast("system_stats", 5*time.Second) {
+		mm.broadcastSystemStats()
 	}
-}
-
-// determineChangeType 智能确定变化类型和优先级
-func (mm *MonitoringMiddleware) determineChangeType(statusCode int, responseTime time.Duration, endpoint string) string {
-	responseTimeMs := float64(responseTime.Nanoseconds()) / 1000000
-	
-	// 错误响应 - 高优先级
-	if statusCode >= 500 {
-		return "error_response"
-	}
-	
-	// 客户端错误 - 中等优先级
-	if statusCode >= 400 {
-		return "client_error_response"
-	}
-	
-	// 极慢响应 - 高优先级告警
-	if responseTimeMs > 10000 { // 10秒
-		return "critical_slow_response"
-	}
-	
-	// 慢响应 - 中等优先级
-	if responseTimeMs > 5000 { // 5秒
-		return "slow_response"
-	}
-	
-	// 正常响应但略慢 - 低优先级
-	if responseTimeMs > 2000 { // 2秒
-		return "normal_slow_response"
-	}
-	
-	// 快速响应 - 低优先级
-	if responseTimeMs < 100 { // 100ms以下
-		return "fast_response"
-	}
-	
-	// 常规响应 - 低优先级
-	return "request_completed"
 }
 
 // RecordRetry records a retry attempt
@@ -288,7 +219,8 @@ func (mm *MonitoringMiddleware) RecordRetry(connID string, endpoint string) {
 	mm.metrics.RecordRetry(connID, endpoint)
 }
 
-// UpdateEndpointHealthStatus updates endpoint health in metrics
+// UpdateEndpointHealthStatus 更新端点健康状态 - 专注数据更新
+// 端点健康事件由 endpoint_manager 直接发布
 func (mm *MonitoringMiddleware) UpdateEndpointHealthStatus() {
 	endpoints := mm.endpointManager.GetAllEndpoints()
 	for _, ep := range endpoints {
@@ -299,29 +231,7 @@ func (mm *MonitoringMiddleware) UpdateEndpointHealthStatus() {
 			ep.Config.Priority,
 		)
 	}
-	
-	// 广播端点状态更新（立即推送，移除频率限制）
-	if mm.eventBroadcaster != nil {
-		endpointData := make([]map[string]interface{}, 0, len(endpoints))
-		for _, ep := range endpoints {
-			status := ep.GetStatus()
-			endpointData = append(endpointData, map[string]interface{}{
-				"name":           ep.Config.Name,
-				"url":            ep.Config.URL,
-				"priority":       ep.Config.Priority,
-				"group":          ep.Config.Group,
-				"group_priority": ep.Config.GroupPriority,
-				"healthy":        status.Healthy,
-				"response_time":  status.ResponseTime.String(),
-				"last_check":     status.LastCheck.Format("2006-01-02 15:04:05"),
-				"error":          "", // 暂时设为空字符串，后续可以根据需要添加错误信息
-			})
-		}
-		mm.eventBroadcaster.BroadcastEndpointUpdate(map[string]interface{}{
-			"endpoints": endpointData,
-			"total":     len(endpointData),
-		})
-	}
+	// 不再广播端点事件 - 由 endpoint_manager 负责
 }
 
 // UpdateConnectionEndpoint updates the endpoint name for an active connection
@@ -334,59 +244,28 @@ func (mm *MonitoringMiddleware) RecordTokenUsage(connID string, endpoint string,
 	mm.metrics.RecordTokenUsage(connID, endpoint, tokens)
 }
 
-// MarkStreamingConnection marks a connection as streaming
+// MarkStreamingConnection 标记连接为流式连接 - 纯数据记录
 func (mm *MonitoringMiddleware) MarkStreamingConnection(connID string) {
 	mm.metrics.MarkStreamingConnection(connID)
-	
-	// 广播连接状态更新
-	if mm.eventBroadcaster != nil {
-		stats := mm.metrics.GetMetrics()
-		connectionData := map[string]interface{}{
-			"total_requests":     stats.TotalRequests,
-			"active_connections": len(stats.ActiveConnections),
-			"streaming_connections": mm.getStreamingConnections(stats.ActiveConnections),
-		}
-		mm.eventBroadcaster.BroadcastConnectionUpdate(connectionData)
-	}
+	// 不再发布事件 - 流式连接状态由系统统计事件统一处理
 }
 
-// RecordRequestSuspended records a request being suspended
+// RecordRequestSuspended 记录请求挂起 - 纯数据记录
 func (mm *MonitoringMiddleware) RecordRequestSuspended(connID string) {
 	mm.metrics.RecordRequestSuspended(connID)
-	
-	// 广播挂起请求状态更新
-	if mm.eventBroadcaster != nil {
-		stats := mm.metrics.GetSuspendedRequestStats()
-		stats["event_type"] = "request_suspended"
-		stats["connection_id"] = connID
-		mm.eventBroadcaster.BroadcastConnectionUpdate(stats)
-	}
+	// 不再发布事件 - 请求级事件由 lifecycle_manager 负责
 }
 
-// RecordRequestResumed records a suspended request being resumed
+// RecordRequestResumed 记录挂起请求恢复 - 纯数据记录
 func (mm *MonitoringMiddleware) RecordRequestResumed(connID string) {
 	mm.metrics.RecordRequestResumed(connID)
-	
-	// 广播请求恢复状态更新
-	if mm.eventBroadcaster != nil {
-		stats := mm.metrics.GetSuspendedRequestStats()
-		stats["event_type"] = "request_resumed"
-		stats["connection_id"] = connID
-		mm.eventBroadcaster.BroadcastConnectionUpdate(stats)
-	}
+	// 不再发布事件 - 请求级事件由 lifecycle_manager 负责
 }
 
-// RecordRequestSuspendTimeout records a suspended request timing out
+// RecordRequestSuspendTimeout 记录挂起请求超时 - 纯数据记录
 func (mm *MonitoringMiddleware) RecordRequestSuspendTimeout(connID string) {
 	mm.metrics.RecordRequestSuspendTimeout(connID)
-	
-	// 广播挂起超时状态更新
-	if mm.eventBroadcaster != nil {
-		stats := mm.metrics.GetSuspendedRequestStats()
-		stats["event_type"] = "request_suspend_timeout"
-		stats["connection_id"] = connID
-		mm.eventBroadcaster.BroadcastConnectionUpdate(stats)
-	}
+	// 不再发布事件 - 请求级事件由 lifecycle_manager 负责
 }
 
 // GetSuspendedRequestStats returns suspended request statistics
@@ -407,6 +286,35 @@ func (mm *MonitoringMiddleware) shouldBroadcast(eventType string, interval time.
 		return true
 	}
 	return false
+}
+
+// broadcastSystemStats 广播系统级统计事件
+func (mm *MonitoringMiddleware) broadcastSystemStats() {
+	if mm.eventBus == nil {
+		return
+	}
+	
+	stats := mm.metrics.GetMetrics()
+	suspendedStats := mm.metrics.GetSuspendedRequestStats()
+	
+	// 只发布系统级统计事件（低优先级，批量处理）
+	mm.eventBus.Publish(events.Event{
+		Type:     events.EventConnectionStats,
+		Source:   "monitoring",
+		Priority: events.PriorityLow,
+		Data: map[string]interface{}{
+			"total_requests":              stats.TotalRequests,
+			"active_connections":          len(stats.ActiveConnections),
+			"successful_requests":         stats.SuccessfulRequests,
+			"failed_requests":             stats.FailedRequests,
+			"average_response_time":       utils.FormatResponseTime(stats.GetAverageResponseTime()),
+			"total_suspended_requests":    suspendedStats["total_suspended_requests"],
+			"error_suspended_requests":    suspendedStats["error_suspended_requests"],
+			"timeout_suspended_requests":  suspendedStats["timeout_suspended_requests"],
+			"suspended_success_rate":      suspendedStats["success_rate"],
+			"change_type":                 "system_stats_updated",
+		},
+	})
 }
 
 // getStreamingConnections 计算流式连接数量

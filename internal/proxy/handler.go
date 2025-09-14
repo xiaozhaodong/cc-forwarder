@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy/handlers"
@@ -21,12 +22,6 @@ import (
 type contextKey string
 
 const EndpointContextKey = contextKey("endpoint")
-
-// WebNotifier interface for Web interface notifications
-type WebNotifier interface {
-	BroadcastConnectionUpdateSmart(data map[string]interface{}, changeType string)
-	IsEventManagerActive() bool
-}
 
 // Handler handles HTTP proxy requests
 type Handler struct {
@@ -40,7 +35,7 @@ type Handler struct {
 	forwarder            *handlers.Forwarder
 	regularHandler       *handlers.RegularHandler
 	streamingHandler     *handlers.StreamingHandler
-	webNotifier          WebNotifier // Web界面通知器
+	eventBus             events.EventBus  // EventBus事件总线
 }
 
 // TokenParserProviderImpl 实现TokenParserProvider接口
@@ -338,14 +333,14 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	// 注意：h.tokenAnalyzer 已经在方法开头更新
 }
 
-// SetWebNotifier sets the web notifier for real-time connection updates
-func (h *Handler) SetWebNotifier(notifier WebNotifier) {
-	h.webNotifier = notifier
-}
-
 // GetRetryHandler returns the retry handler for accessing suspended request counts
 func (h *Handler) GetRetryHandler() *RetryHandler {
 	return h.retryHandler
+}
+
+// SetEventBus 设置EventBus事件总线
+func (h *Handler) SetEventBus(eventBus events.EventBus) {
+	h.eventBus = eventBus
 }
 
 // extractModelFromRequestBody 从请求体中提取模型名称
@@ -385,7 +380,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// 创建统一的请求生命周期管理器
-	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID)
+	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
 	
 	// 克隆请求体用于重试
 	var bodyBytes []byte

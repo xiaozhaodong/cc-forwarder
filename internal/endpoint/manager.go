@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/transport"
+	"cc-forwarder/internal/utils"
 )
 
 // EndpointStatus represents the health status of an endpoint
@@ -41,15 +43,13 @@ type Manager struct {
 	groupManager *GroupManager
 	// Web interface callback for real-time notifications
 	webNotifier  WebNotifier
-	// 状态缓存，用于检测变化
-	statusCache  map[string]EndpointStatus
-	cacheMutex   sync.RWMutex
+	// EventBus for decoupled event publishing
+	eventBus     events.EventBus
 }
 
 // WebNotifier interface for Web interface notifications
 type WebNotifier interface {
 	BroadcastEndpointUpdate(data map[string]interface{})
-	BroadcastEndpointUpdateSmart(data map[string]interface{}, changeType string)
 	IsEventManagerActive() bool
 }
 
@@ -76,7 +76,6 @@ func NewManager(cfg *config.Config) *Manager {
 		cancel:       cancel,
 		fastTester:   NewFastTester(cfg),
 		groupManager: NewGroupManager(cfg),
-		statusCache:  make(map[string]EndpointStatus),
 	}
 
 	// Initialize endpoints
@@ -433,109 +432,45 @@ func (m *Manager) SetWebNotifier(notifier WebNotifier) {
 	m.webNotifier = notifier
 }
 
-// notifyWebInterface notifies the web interface about endpoint status changes
+// SetEventBus 设置EventBus事件总线
+func (m *Manager) SetEventBus(eventBus events.EventBus) {
+	m.eventBus = eventBus
+}
+
+// notifyWebInterface 通过EventBus发布端点状态变化事件
 func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
-	if m.webNotifier == nil {
-		return
-	}
-	
-	// 检查EventManager是否仍在活跃状态
-	if !m.webNotifier.IsEventManagerActive() {
-		// EventManager已关闭，不发送通知
+	if m.eventBus == nil {
 		return
 	}
 	
 	endpoint.mutex.RLock()
-	currentStatus := endpoint.Status
+	status := endpoint.Status
 	endpoint.mutex.RUnlock()
 	
-	// 检查状态缓存，判断变化类型
-	m.cacheMutex.Lock()
-	previousStatus, exists := m.statusCache[endpoint.Config.Name]
-	m.statusCache[endpoint.Config.Name] = currentStatus
-	m.cacheMutex.Unlock()
+	// 确定事件类型和优先级
+	eventType := events.EventEndpointHealthy
+	priority := events.PriorityHigh
+	changeType := "status_changed"
 	
-	// 构建基础数据
-	data := map[string]interface{}{
-		"event":             "endpoint_status_changed",
-		"endpoint":          endpoint.Config.Name,
-		"healthy":           currentStatus.Healthy,
-		"response_time":     formatResponseTime(currentStatus.ResponseTime),
-		"response_time_ms":  float64(currentStatus.ResponseTime.Nanoseconds()) / 1000000,
-		"last_check":        currentStatus.LastCheck.Format("2006-01-02 15:04:05"),
-		"consecutive_fails": currentStatus.ConsecutiveFails,
-		"timestamp":         time.Now().Format("2006-01-02 15:04:05"),
-		"never_checked":     currentStatus.NeverChecked,
+	if !status.Healthy {
+		eventType = events.EventEndpointUnhealthy
+		priority = events.PriorityCritical
+		changeType = "health_changed"
 	}
 	
-	if !exists {
-		// 首次状态更新，使用常规推送
-		data["first_check"] = true
-		m.webNotifier.BroadcastEndpointUpdateSmart(data, "first_check")
-		return
-	}
-	
-	// 检测具体的变化类型
-	changeType := m.detectChangeType(previousStatus, currentStatus, endpoint.Config.Name)
-	
-	// 添加变化相关的元数据
-	if changeType == "health_changed" {
-		data["health_changed"] = true
-		data["previous_healthy"] = previousStatus.Healthy
-		data["health_improvement"] = !previousStatus.Healthy && currentStatus.Healthy
-	} else if changeType == "performance_changed" {
-		data["performance_changed"] = true
-		data["previous_response_time_ms"] = float64(previousStatus.ResponseTime.Nanoseconds()) / 1000000
-		data["performance_degraded"] = currentStatus.ResponseTime > previousStatus.ResponseTime
-	}
-	
-	// 使用智能推送
-	m.webNotifier.BroadcastEndpointUpdateSmart(data, changeType)
-}
-
-// detectChangeType 检测变化类型
-func (m *Manager) detectChangeType(oldStatus, newStatus EndpointStatus, endpointName string) string {
-	// 健康状态改变是最高优先级
-	if oldStatus.Healthy != newStatus.Healthy {
-		if newStatus.Healthy {
-			slog.Debug("端点健康状态恢复", "endpoint", endpointName, "healthy", newStatus.Healthy)
-		} else {
-			slog.Info("端点健康状态异常", "endpoint", endpointName, "healthy", newStatus.Healthy, "fails", newStatus.ConsecutiveFails)
-		}
-		return "health_changed"
-	}
-	
-	// 连续失败次数显著变化
-	failsDiff := newStatus.ConsecutiveFails - oldStatus.ConsecutiveFails
-	if failsDiff < 0 {
-		failsDiff = -failsDiff
-	}
-	if failsDiff >= 2 {
-		return "error_pattern_changed"
-	}
-	
-	// 响应时间显著变化（超过2秒差异或变化超过50%）
-	oldTime := oldStatus.ResponseTime.Seconds()
-	newTime := newStatus.ResponseTime.Seconds()
-	timeDiff := abs(newTime - oldTime)
-	
-	if timeDiff > 2.0 {
-		return "performance_changed"
-	}
-	
-	if oldTime > 0 && (timeDiff/oldTime) > 0.5 {
-		return "performance_changed"
-	}
-	
-	return "metrics_updated"
-}
-
-// abs 返回两个浮点数差的绝对值
-func abs(a float64) float64 {
-	if a < 0 {
-		return -a
-	}
-	return a
+	m.eventBus.Publish(events.Event{
+		Type:     eventType,
+		Source:   "endpoint_manager",
+		Priority: priority,
+		Data: map[string]interface{}{
+			"endpoint":        endpoint.Config.Name,
+			"healthy":         status.Healthy,
+			"response_time":   utils.FormatResponseTime(status.ResponseTime),
+			"last_check":      status.LastCheck.Format("2006-01-02 15:04:05"),
+			"consecutive_fails": status.ConsecutiveFails,
+			"change_type":     changeType,
+		},
+	})
 }
 
 // ManualActivateGroup manually activates a specific group via web interface
@@ -889,37 +824,7 @@ func (m *Manager) ManualHealthCheck(endpointName string) error {
 	}
 	
 	slog.Info(fmt.Sprintf("🔍 [手动检查] 检查完成: %s - 状态: %s, 响应时间: %s", 
-		endpointName, healthStatus, formatResponseTime(status.ResponseTime)))
+		endpointName, healthStatus, utils.FormatResponseTime(status.ResponseTime)))
 	
 	return nil
-}
-
-// formatResponseTime 格式化响应时间为人性化显示
-func formatResponseTime(d time.Duration) string {
-	if d == 0 {
-		return "0ms"
-	}
-	
-	ms := d.Milliseconds()
-	if ms >= 10000 { // 10秒以上
-		seconds := float64(ms) / 1000
-		return fmt.Sprintf("%.1fs", seconds)
-	} else if ms >= 1000 { // 1-10秒
-		seconds := float64(ms) / 1000
-		return fmt.Sprintf("%.2fs", seconds)
-	} else if ms >= 100 { // 100-999毫秒
-		return fmt.Sprintf("%.0fms", float64(ms))
-	} else if ms >= 10 { // 10-99毫秒
-		return fmt.Sprintf("%.1fms", float64(ms))
-	} else if ms >= 1 { // 1-9毫秒
-		return fmt.Sprintf("%.0fms", float64(ms))
-	} else {
-		// 小于1毫秒的情况，显示微秒
-		us := d.Microseconds()
-		if us >= 100 {
-			return fmt.Sprintf("%.0fμs", float64(us))
-		} else {
-			return fmt.Sprintf("%.1fμs", float64(us))
-		}
-	}
 }

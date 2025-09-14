@@ -479,7 +479,7 @@ window.SSEManager = class {
         }
         
         // 处理单个端点状态更新（健康检查后的实时更新）
-        if (data.endpoint && data.event === 'endpoint_status_changed') {
+        if (data.endpoint && (data.change_type === 'status_changed' || data.change_type === 'health_changed')) {
             // 更新缓存中的特定端点数据
             if (this.webInterface.cachedData.endpoints && this.webInterface.cachedData.endpoints.endpoints) {
                 const endpoints = this.webInterface.cachedData.endpoints.endpoints;

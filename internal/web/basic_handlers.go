@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"time"
+	"cc-forwarder/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -227,7 +228,7 @@ func (ws *WebServer) handleManualHealthCheck(c *gin.Context) {
 		"success":       true,
 		"message":       "手动健康检测完成",
 		"healthy":       status.Healthy,
-		"response_time": status.ResponseTime.String(),
+		"response_time": utils.FormatResponseTime(status.ResponseTime),
 		"last_check":    status.LastCheck.Format("2006-01-02 15:04:05"),
 		"never_checked": status.NeverChecked,
 	})

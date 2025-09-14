@@ -27,6 +27,32 @@ func (ws *WebServer) IsEventManagerActive() bool {
 	return atomic.LoadInt64(&ws.eventManager.EventManager.closed) == 0
 }
 
+// BroadcastEvent 实现events.SSEBroadcaster接口
+func (ws *WebServer) BroadcastEvent(eventType string, data map[string]interface{}) {
+	if ws.eventManager == nil {
+		return
+	}
+
+	// 根据EventBus的事件类型映射到Web EventType
+	var webEventType EventType
+	switch eventType {
+	case "request":
+		webEventType = EventTypeConnection // 请求事件归类为连接事件
+	case "endpoint":
+		webEventType = EventTypeEndpoint
+	case "connection":
+		webEventType = EventTypeConnection
+	case "status":
+		webEventType = EventTypeStatus
+	case "config":
+		webEventType = EventTypeConfig
+	default:
+		webEventType = EventTypeStatus // 默认类型
+	}
+
+	ws.eventManager.BroadcastEventSmart(webEventType, data, nil)
+}
+
 // BroadcastConnectionUpdate广播连接更新事件
 func (ws *WebServer) BroadcastConnectionUpdate(data map[string]interface{}) {
 	if ws.eventManager != nil {

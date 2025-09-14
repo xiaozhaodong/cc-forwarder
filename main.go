@@ -16,6 +16,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/logging"
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/proxy"
@@ -145,6 +146,19 @@ func main() {
 	endpointManager.Start()
 	defer endpointManager.Stop()
 
+	// Initialize EventBus
+	eventBus := events.NewEventBus(logger)
+	err = eventBus.Start()
+	if err != nil {
+		logger.Error(fmt.Sprintf("❌ EventBus启动失败: %v", err))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := eventBus.Stop(); err != nil {
+			logger.Error(fmt.Sprintf("❌ EventBus关闭失败: %v", err))
+		}
+	}()
+
 	// Initialize usage tracker
 	trackingConfig := &tracking.Config{
 		Enabled:         cfg.UsageTracking.Enabled,
@@ -174,11 +188,18 @@ func main() {
 
 	// Create proxy handler
 	proxyHandler := proxy.NewHandler(endpointManager, cfg)
+	
+	// Connect EventBus to proxy handler  
+	proxyHandler.SetEventBus(eventBus)
 
 	// Create middleware
 	loggingMiddleware := middleware.NewLoggingMiddleware(logger)
 	monitoringMiddleware := middleware.NewMonitoringMiddleware(endpointManager)
 	authMiddleware := middleware.NewAuthMiddleware(cfg.Auth)
+	
+	// Connect EventBus to components
+	endpointManager.SetEventBus(eventBus)
+	monitoringMiddleware.SetEventBus(eventBus)
 	
 	// Set usage tracker for middleware components
 	loggingMiddleware.SetUsageTracker(usageTracker)
@@ -323,11 +344,9 @@ func main() {
 
 	// Start Web server if enabled
 	if cfg.Web.Enabled {
-		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, usageTracker, logger, startTime, *configPath)
+		webServer = web.NewWebServer(cfg, endpointManager, monitoringMiddleware, usageTracker, logger, startTime, *configPath, eventBus)
 		// Register web server as endpoint notifier for real-time updates
 		endpointManager.SetWebNotifier(webServer)
-		// Register web server as proxy handler notifier for connection updates
-		proxyHandler.SetWebNotifier(webServer)
 		if err := webServer.Start(); err != nil {
 			logger.Error(fmt.Sprintf("❌ Web服务器启动失败: %v", err))
 		}
