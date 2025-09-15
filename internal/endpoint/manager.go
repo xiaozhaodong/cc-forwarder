@@ -468,10 +468,27 @@ func (m *Manager) ManualActivateGroup(groupName string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Notify web interface about group change
 	go m.notifyWebGroupChange("group_manually_activated", groupName)
-	
+
+	return nil
+}
+
+// ManualActivateGroupWithForce manually activates a specific group via web interface with force option
+func (m *Manager) ManualActivateGroupWithForce(groupName string, force bool) error {
+	err := m.groupManager.ManualActivateGroupWithForce(groupName, force)
+	if err != nil {
+		return err
+	}
+
+	// Notify web interface about group change
+	if force {
+		go m.notifyWebGroupChange("group_force_activated", groupName)
+	} else {
+		go m.notifyWebGroupChange("group_manually_activated", groupName)
+	}
+
 	return nil
 }
 

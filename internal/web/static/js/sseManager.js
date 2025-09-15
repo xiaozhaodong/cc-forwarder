@@ -510,6 +510,16 @@ window.SSEManager = class {
                         groups[groupIndex].unhealthy_endpoints = data.unhealthy_endpoints;
                         groups[groupIndex].total_endpoints = data.total_endpoints;
 
+                        // 🔥 重要修复：计算并更新应急激活相关字段
+                        const group = groups[groupIndex];
+                        const healthyCount = data.healthy_endpoints;
+
+                        // 更新应急激活可用性 - 只有在完全没有健康端点且组未激活且不在冷却期时才能应急激活
+                        group.can_force_activate = healthyCount === 0 && !group.is_active && !group.in_cooldown;
+
+                        // 更新正常激活可用性 - 有健康端点且组未激活且不在冷却期时可以正常激活
+                        group.can_activate = healthyCount > 0 && !group.is_active && !group.in_cooldown;
+
                         // 🔥 同时更新计算的健康状态标记，用于tab切换时正确显示
                         if (data.healthy_endpoints === 0) {
                             groups[groupIndex]._computed_health_status = '无健康端点';
@@ -523,10 +533,11 @@ window.SSEManager = class {
                     }
                 }
 
-                // 如果当前在组页面，更新特定组卡片
+                // 如果当前在组页面，重新加载完整组数据以确保按钮状态正确
                 if (this.webInterface.currentTab === 'groups') {
-                    console.log(`🔄 [传统处理器] 当前在组页面，正在更新组卡片...`);
-                    this.updateSingleGroupCard(data);
+                    console.log(`🔄 [传统处理器] 当前在组页面，因健康状态变化重新加载组数据以更新按钮状态...`);
+                    // 🔥 重要修复：重新加载组数据，确保应急按钮正确显示
+                    this.webInterface.groupsManager.loadGroups();
                 }
             }
 

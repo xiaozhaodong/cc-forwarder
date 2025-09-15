@@ -1,6 +1,186 @@
 // Claude Request Forwarder - 组管理模块
 // 处理组激活、暂停、恢复操作和挂起请求管理
 
+// 自定义确认对话框类
+class ConfirmDialog {
+    constructor() {
+        this.isOpen = false;
+        this.overlay = null;
+    }
+
+    // 显示确认对话框
+    show(options = {}) {
+        return new Promise((resolve) => {
+            if (this.isOpen) {
+                resolve(false);
+                return;
+            }
+
+            this.isOpen = true;
+            this.createDialog(options, resolve);
+        });
+    }
+
+    // 创建对话框DOM结构
+    createDialog(options, resolve) {
+        const {
+            title = '确认操作',
+            message = '您确定要执行此操作吗？',
+            confirmText = '确定',
+            cancelText = '取消',
+            icon = '⚠️',
+            details = null,
+            warning = null,
+            groupName = ''
+        } = options;
+
+        // 创建遮罩层
+        this.overlay = document.createElement('div');
+        this.overlay.className = 'confirm-dialog-overlay';
+
+        // 创建对话框
+        const dialog = document.createElement('div');
+        dialog.className = 'confirm-dialog';
+
+        // 构建详细信息HTML
+        let detailsHtml = '';
+        if (details && Array.isArray(details)) {
+            detailsHtml = `
+                <div class="confirm-dialog-details">
+                    <h4>应急激活将会:</h4>
+                    <ul>
+                        ${details.map(item => `<li>${item}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
+        // 构建警告信息HTML
+        let warningHtml = '';
+        if (warning) {
+            warningHtml = `
+                <div class="confirm-dialog-warning">
+                    ${warning}
+                </div>
+            `;
+        }
+
+        dialog.innerHTML = `
+            <div class="confirm-dialog-header">
+                <div class="confirm-dialog-icon">${icon}</div>
+                <h3 class="confirm-dialog-title">${title}</h3>
+            </div>
+            <div class="confirm-dialog-body">
+                <div class="confirm-dialog-message">${message}</div>
+                ${detailsHtml}
+                ${warningHtml}
+            </div>
+            <div class="confirm-dialog-footer">
+                <button class="confirm-dialog-btn confirm-dialog-btn-cancel" type="button">
+                    ${cancelText}
+                </button>
+                <button class="confirm-dialog-btn confirm-dialog-btn-confirm" type="button">
+                    ${confirmText}
+                </button>
+            </div>
+        `;
+
+        this.overlay.appendChild(dialog);
+        document.body.appendChild(this.overlay);
+
+        // 获取按钮元素
+        const cancelBtn = dialog.querySelector('.confirm-dialog-btn-cancel');
+        const confirmBtn = dialog.querySelector('.confirm-dialog-btn-confirm');
+
+        // 绑定事件处理器
+        const handleCancel = () => {
+            this.close();
+            resolve(false);
+        };
+
+        const handleConfirm = () => {
+            this.close();
+            resolve(true);
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                handleCancel();
+            } else if (e.key === 'Enter') {
+                handleConfirm();
+            }
+        };
+
+        const handleOverlayClick = (e) => {
+            if (e.target === this.overlay) {
+                handleCancel();
+            }
+        };
+
+        // 添加事件监听器
+        cancelBtn.addEventListener('click', handleCancel);
+        confirmBtn.addEventListener('click', handleConfirm);
+        document.addEventListener('keydown', handleKeyDown);
+        this.overlay.addEventListener('click', handleOverlayClick);
+
+        // 保存事件处理器以便清理
+        this.cleanup = () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            this.overlay.removeEventListener('click', handleOverlayClick);
+        };
+
+        // 显示动画
+        requestAnimationFrame(() => {
+            this.overlay.classList.add('show');
+            confirmBtn.focus();
+        });
+    }
+
+    // 关闭对话框
+    close() {
+        if (!this.isOpen || !this.overlay) {
+            return;
+        }
+
+        this.isOpen = false;
+
+        // 移除show类触发退出动画
+        this.overlay.classList.remove('show');
+
+        // 等待动画完成后移除DOM
+        setTimeout(() => {
+            if (this.overlay && this.overlay.parentNode) {
+                this.overlay.parentNode.removeChild(this.overlay);
+            }
+            if (this.cleanup) {
+                this.cleanup();
+            }
+            this.overlay = null;
+            this.cleanup = null;
+        }, 300);
+    }
+
+    // 静态方法：显示应急激活确认对话框
+    static showForceActivationConfirm(groupName) {
+        const dialog = new ConfirmDialog();
+        return dialog.show({
+            title: '应急激活警告',
+            icon: '⚡',
+            message: `您正在尝试强制激活组 "${groupName}"。`,
+            details: [
+                '立即激活目标组',
+                '绕过冷却时间限制',
+                '强制停用其他活跃组',
+                '可能导致服务不稳定'
+            ],
+            warning: '这是紧急情况的最后手段，只有在确实需要时才使用。',
+            confirmText: '确认应急激活',
+            cancelText: '取消操作',
+            groupName
+        });
+    }
+}
+
 window.GroupsManager = class {
     constructor(webInterface) {
         this.webInterface = webInterface;
@@ -64,15 +244,19 @@ window.GroupsManager = class {
     createGroupCard(group) {
         const statusClass = group.in_cooldown ? 'cooldown' : (group.is_active ? 'active' : 'inactive');
         const statusText = group._computed_health_status || group.status || (group.in_cooldown ? '冷却中' : (group.is_active ? '活跃' : '未激活'));
-        
-        const cooldownInfo = group.in_cooldown && group.cooldown_remaining !== '0s' ? 
+
+        const cooldownInfo = group.in_cooldown && group.cooldown_remaining !== '0s' ?
             `<div class="group-cooldown-info">🕐 冷却剩余时间: ${group.cooldown_remaining}</div>` : '';
+
+        // 应急激活状态显示
+        const forceActivationInfo = group.is_force_activated ?
+            `<div class="group-force-activation-info">⚡ 应急激活 - ${group.force_activation_time || '时间未知'}</div>` : '';
 
         return `
             <div class="group-info-card ${statusClass}" data-group-name="${group.name}">
                 <div class="group-card-header">
                     <h3 class="group-name">${group.name}</h3>
-                    <span class="group-status ${statusClass}">${statusText}</span>
+                    <span class="group-status ${statusClass}">${statusText}${group.is_force_activated ? ' ⚡' : ''}</span>
                 </div>
                 <div class="group-details">
                     <div class="group-detail-item">
@@ -93,31 +277,42 @@ window.GroupsManager = class {
                     </div>
                 </div>
                 <div class="group-actions">
-                    <button class="group-btn btn-activate" 
-                            onclick="webInterface.groupsManager.activateGroup('${group.name}')" 
+                    <button class="group-btn btn-activate"
+                            onclick="webInterface.groupsManager.activateGroup('${group.name}')"
                             ${!group.can_activate ? 'disabled' : ''}>
                         🚀 激活
                     </button>
-                    <button class="group-btn btn-pause" 
-                            onclick="webInterface.groupsManager.pauseGroup('${group.name}')" 
+                    ${group.can_force_activate ? `
+                    <button class="group-btn btn-danger"
+                            onclick="webInterface.groupsManager.forceActivateGroup('${group.name}')">
+                        ⚡应急
+                    </button>
+                    ` : ''}
+                    <button class="group-btn btn-pause"
+                            onclick="webInterface.groupsManager.pauseGroup('${group.name}')"
                             ${!group.can_pause ? 'disabled' : ''}>
                         ⏸️ 暂停
                     </button>
-                    <button class="group-btn btn-resume" 
-                            onclick="webInterface.groupsManager.resumeGroup('${group.name}')" 
+                    <button class="group-btn btn-resume"
+                            onclick="webInterface.groupsManager.resumeGroup('${group.name}')"
                             ${!group.can_resume ? 'disabled' : ''}>
                         ▶️ 恢复
                     </button>
                 </div>
                 ${cooldownInfo}
+                ${forceActivationInfo}
             </div>
         `;
     }
     
     // 激活组
-    async activateGroup(groupName) {
+    async activateGroup(groupName, force = false) {
         try {
-            const response = await fetch(`/api/v1/groups/${groupName}/activate`, {
+            const url = force ?
+                `/api/v1/groups/${groupName}/activate?force=true` :
+                `/api/v1/groups/${groupName}/activate`;
+
+            const response = await fetch(url, {
                 method: 'POST'
             });
             if (!response.ok) {
@@ -125,8 +320,13 @@ window.GroupsManager = class {
                 throw new Error(errorData.error || '激活组失败');
             }
             const result = await response.json();
-            Utils.showSuccess(result.message || `组 ${groupName} 已激活`);
-            
+
+            if (force) {
+                Utils.showWarning(result.message || `组 ${groupName} 已应急激活`);
+            } else {
+                Utils.showSuccess(result.message || `组 ${groupName} 已激活`);
+            }
+
             // 刷新组数据
             this.loadGroups();
         } catch (error) {
@@ -168,12 +368,29 @@ window.GroupsManager = class {
             }
             const result = await response.json();
             Utils.showSuccess(result.message || `组 ${groupName} 已恢复`);
-            
+
             // 刷新组数据
             this.loadGroups();
         } catch (error) {
             console.error('恢复组失败:', error);
             Utils.showError('恢复组失败: ' + error.message);
+        }
+    }
+
+    // 应急激活组（强制激活）
+    async forceActivateGroup(groupName) {
+        try {
+            // 使用自定义确认对话框替代原生confirm
+            const confirmed = await ConfirmDialog.showForceActivationConfirm(groupName);
+
+            if (!confirmed) {
+                return;
+            }
+
+            await this.activateGroup(groupName, true);
+        } catch (error) {
+            console.error('应急激活失败:', error);
+            Utils.showError('应急激活失败: ' + error.message);
         }
     }
     
@@ -340,11 +557,11 @@ window.GroupsManager = class {
     getGroupHealthStats() {
         const groups = this.getGroups();
         if (groups.length === 0) return null;
-        
+
         const totalEndpoints = groups.reduce((sum, g) => sum + g.total_endpoints, 0);
         const healthyEndpoints = groups.reduce((sum, g) => sum + g.healthy_endpoints, 0);
         const unhealthyEndpoints = groups.reduce((sum, g) => sum + g.unhealthy_endpoints, 0);
-        
+
         return {
             totalGroups: groups.length,
             totalEndpoints,
@@ -352,6 +569,30 @@ window.GroupsManager = class {
             unhealthyEndpoints,
             healthPercentage: totalEndpoints > 0 ? (healthyEndpoints / totalEndpoints * 100).toFixed(1) : 0
         };
+    }
+
+    // 检查组是否支持应急激活
+    canForceActivateGroup(groupName) {
+        const group = this.getGroupByName(groupName);
+        return group ? group.can_force_activate : false;
+    }
+
+    // 检查组是否处于应急激活状态
+    isGroupForceActivated(groupName) {
+        const group = this.getGroupByName(groupName);
+        return group ? group.is_force_activated : false;
+    }
+
+    // 获取应急激活时间
+    getForceActivationTime(groupName) {
+        const group = this.getGroupByName(groupName);
+        return group && group.is_force_activated ? group.force_activation_time : null;
+    }
+
+    // 获取应急激活的组列表
+    getForceActivatedGroups() {
+        const groups = this.getGroups();
+        return groups.filter(group => group.is_force_activated);
     }
 };
 

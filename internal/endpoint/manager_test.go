@@ -210,6 +210,7 @@ func TestGetEndpointByNameWithGroups(t *testing.T) {
 		},
 		Group: config.GroupConfig{
 			Cooldown: 10 * time.Minute,
+			AutoSwitchBetweenGroups: true, // Enable auto switching for this test
 		},
 		Endpoints: []config.EndpointConfig{
 			{
@@ -234,6 +235,11 @@ func TestGetEndpointByNameWithGroups(t *testing.T) {
 	}
 
 	manager := NewManager(cfg)
+
+	// Make endpoints healthy for testing
+	for _, ep := range manager.GetAllEndpoints() {
+		ep.Status.Healthy = true
+	}
 
 	// Test: With primary group active, should return primary endpoint
 	endpoint := manager.GetEndpointByName("api-endpoint")

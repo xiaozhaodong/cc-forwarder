@@ -17,9 +17,9 @@ const indexHTML = `<!DOCTYPE html>
         }
     }, 3000);
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js" 
+    <script src="/static/js/lib/chart.umd.js"
             onload="clearTimeout(window.chartLoadTimeout); console.log('Chart.js loaded successfully');"
-            onerror="window.chartLoadFailed=true; clearTimeout(window.chartLoadTimeout); console.warn('Chart.js CDN failed, charts disabled');"></script>
+            onerror="window.chartLoadFailed=true; clearTimeout(window.chartLoadTimeout); console.warn('Chart.js local file failed, charts disabled');"></script>
     <style>
         .connection-indicator {
             position: absolute;
