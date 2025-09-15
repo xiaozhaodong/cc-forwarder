@@ -40,9 +40,9 @@ func (adapter *SSEAdapter) BroadcastEvent(eventType string, data map[string]inte
 
 	// 推送给前端
 	adapter.webBroadcaster.BroadcastEvent(eventType, data)
-	
-	adapter.logger.Debug("Event broadcasted via SSE adapter", 
-		"event_type", eventType, 
+
+	adapter.logger.Debug("Event broadcasted via SSE adapter",
+		"event_type", eventType,
 		"data_keys", getMapKeys(data))
 }
 

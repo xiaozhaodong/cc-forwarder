@@ -1382,7 +1382,6 @@ const indexHTML = `<!DOCTYPE html>
     <script src="/static/js/charts.js"></script>
     <!-- 模块化JavaScript文件 -->
     <script src="/static/js/utils.js"></script>
-    <script src="/static/js/smartUpdateManager.js"></script>
     <script src="/static/js/sseManager.js"></script>
     <script src="/static/js/requestsManager.js"></script>
     <script src="/static/js/groupsManager.js"></script>

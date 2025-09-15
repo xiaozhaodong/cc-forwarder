@@ -14,10 +14,7 @@ window.SSEManager = class {
         this.serverStartTimestamp = null; // 服务器启动时间戳(Unix)
         this.uptimeTimer = null;          // 运行时间计时器
         this.isUptimeActive = false;      // 运行时间计算是否激活
-        
-        // 集成智能更新管理器
-        this.smartUpdateManager = null; // 延迟初始化，等待SmartUpdateManager加载
-        
+
         // 优先级事件统计
         this.stats = {
             eventsReceived: 0,
@@ -52,23 +49,9 @@ window.SSEManager = class {
     
     // 初始化SSE连接
     init() {
-        // 延迟初始化智能更新管理器
-        this.initSmartUpdateManager();
         this.connect();
     }
-    
-    // 初始化智能更新管理器
-    initSmartUpdateManager() {
-        try {
-            if (window.SmartUpdateManager && !this.smartUpdateManager) {
-                this.smartUpdateManager = new window.SmartUpdateManager(this.webInterface);
-                console.log('🧠 智能更新管理器已集成到SSE管理器');
-            }
-        } catch (error) {
-            console.warn('智能更新管理器初始化失败，使用传统模式:', error);
-        }
-    }
-    
+
     // 建立SSE连接
     connect() {
         if (this.connection) {
@@ -127,39 +110,19 @@ window.SSEManager = class {
     // 处理SSE消息
     handleMessage(data, eventType) {
         const startTime = performance.now();
-        
+
         const type = eventType || data.type || 'unknown';
         const priority = data.priority || 'normal';
         const context = data.context || {};
-        
+
+        // 关键调试信息：记录所有接收到的事件
+        console.log(`🔍 [SSE] 接收事件: ${type}, 优先级: ${priority}, 数据:`, data);
+
         // 统计事件接收
         this.stats.eventsReceived++;
         this.stats.eventsByPriority[priority]++;
-        
-        // 优先使用智能更新管理器处理
-        if (this.smartUpdateManager) {
-            try {
-                // 提取实际的业务数据 - 新的SSE格式中业务数据在data.data中
-                const businessData = data.data || data;
-                this.smartUpdateManager.handleSSEEvent(type, businessData, priority, context);
-                
-                // 记录处理时间
-                const endTime = performance.now();
-                this.stats.processingTime += (endTime - startTime);
-                
-                // 调用优先级特定的处理器进行额外处理
-                const priorityHandler = this.priorityEventHandlers[priority];
-                if (priorityHandler) {
-                    priorityHandler(type, businessData, context);
-                }
-                
-                return; // 智能更新管理器处理成功，直接返回
-            } catch (error) {
-                console.warn('智能更新管理器处理失败，使用传统模式:', error);
-            }
-        }
-        
-        // 备用：传统事件处理器
+
+        // 使用传统事件处理器
         const handler = this.eventHandlers[type];
         if (handler) {
             // 提取实际的业务数据
@@ -508,29 +471,156 @@ window.SSEManager = class {
     
     // 处理组事件
     handleGroupEvent(data) {
+        // 🔥 关键调试：记录传统组事件处理器的调用
+        console.log(`🔍 [传统处理器] 处理组事件:`, {
+            currentTab: this.webInterface.currentTab,
+            hasGroups: !!(data && data.groups),
+            changeType: data.change_type,
+            groupName: data.group,
+            data: JSON.parse(JSON.stringify(data))
+        });
+
         // 始终更新缓存数据
         if (data) {
-            this.webInterface.cachedData.groups = data;
-            
-            // 更新挂起请求提示
-            this.webInterface.groupsManager.updateGroupSuspendedAlert(data);
-            
-            // 如果当前在groups标签页，立即更新UI
-            if (this.webInterface.currentTab === 'groups' && data.groups) {
-                this.webInterface.groupsManager.displayGroups(data);
-            }
-            
-            // 如果当前在概览标签页，更新活跃组信息
-            if (this.webInterface.currentTab === 'overview') {
-                const activeGroupElement = document.getElementById('active-group');
-                if (activeGroupElement) {
-                    const activeGroup = data.groups ? data.groups.find(group => group.is_active) : null;
-                    if (activeGroup) {
-                        activeGroupElement.textContent = `${activeGroup.name} (${activeGroup.healthy_endpoints}/${activeGroup.total_endpoints} 健康)`;
-                    } else {
-                        activeGroupElement.textContent = '无活跃组';
+            // 🔥 关键修复：区分完整组数据更新和单个组健康统计更新
+            if (data.groups) {
+                // 完整组数据更新
+                this.webInterface.cachedData.groups = data;
+                console.log(`✅ [传统处理器] 完整组数据已更新到缓存`);
+
+                // 更新挂起请求提示
+                this.webInterface.groupsManager.updateGroupSuspendedAlert(data);
+
+                // 如果当前在groups标签页，立即更新UI
+                if (this.webInterface.currentTab === 'groups') {
+                    console.log(`🔄 [传统处理器] 当前在组页面，正在更新完整组UI...`);
+                    this.webInterface.groupsManager.displayGroups(data);
+                    console.log(`✅ [传统处理器] 组页面完整UI已更新`);
+                }
+            } else if (data.change_type === 'health_stats_changed' && data.group) {
+                // 🔥 新增：单个组健康统计更新处理
+                console.log(`🎯 [传统处理器] 处理单个组健康统计更新: ${data.group}`);
+
+                // 更新缓存中的特定组数据
+                if (this.webInterface.cachedData.groups && this.webInterface.cachedData.groups.groups) {
+                    const groups = this.webInterface.cachedData.groups.groups;
+                    const groupIndex = groups.findIndex(g => g.name === data.group);
+                    if (groupIndex !== -1) {
+                        groups[groupIndex].healthy_endpoints = data.healthy_endpoints;
+                        groups[groupIndex].unhealthy_endpoints = data.unhealthy_endpoints;
+                        groups[groupIndex].total_endpoints = data.total_endpoints;
+
+                        // 🔥 同时更新计算的健康状态标记，用于tab切换时正确显示
+                        if (data.healthy_endpoints === 0) {
+                            groups[groupIndex]._computed_health_status = '无健康端点';
+                        } else if (data.healthy_endpoints < data.total_endpoints) {
+                            groups[groupIndex]._computed_health_status = '部分健康';
+                        } else {
+                            groups[groupIndex]._computed_health_status = null; // 清除计算状态，使用原始状态
+                        }
+
+                        console.log(`✅ [传统处理器] 缓存中的组 ${data.group} 数据已更新`);
                     }
                 }
+
+                // 如果当前在组页面，更新特定组卡片
+                if (this.webInterface.currentTab === 'groups') {
+                    console.log(`🔄 [传统处理器] 当前在组页面，正在更新组卡片...`);
+                    this.updateSingleGroupCard(data);
+                }
+            }
+
+            // 如果当前在概览标签页，更新活跃组信息
+            if (this.webInterface.currentTab === 'overview') {
+                if (data.groups) {
+                    const activeGroup = data.groups.find(group => group.is_active);
+                    const activeGroupElement = document.getElementById('active-group');
+                    if (activeGroupElement) {
+                        if (activeGroup) {
+                            activeGroupElement.textContent = `${activeGroup.name} (${activeGroup.healthy_endpoints}/${activeGroup.total_endpoints} 健康)`;
+                        } else {
+                            activeGroupElement.textContent = '无活跃组';
+                        }
+                        console.log(`✅ [传统处理器] 概览页活跃组信息已更新`);
+                    }
+                } else if (data.is_active && data.group) {
+                    // 单个活跃组的统计更新
+                    const activeGroupElement = document.getElementById('active-group');
+                    if (activeGroupElement) {
+                        activeGroupElement.textContent = `${data.group} (${data.healthy_endpoints}/${data.total_endpoints} 健康)`;
+                        console.log(`✅ [传统处理器] 概览页活跃组统计已更新`);
+                    }
+                }
+            }
+        } else {
+            console.log(`⚠️ [传统处理器] 收到空的组事件数据`);
+        }
+    }
+
+    // 🔥 新增：传统处理器的单个组卡片更新方法
+    updateSingleGroupCard(data) {
+        const groupName = data.group;
+
+        // 查找并更新组卡片
+        const groupCard = document.querySelector(`[data-group-name="${groupName}"]`);
+        if (groupCard) {
+            // 更新健康端点数量
+            const healthyElement = groupCard.querySelector('.group-endpoints-count');
+            if (healthyElement) {
+                const oldValue = healthyElement.textContent;
+                healthyElement.textContent = data.healthy_endpoints;
+                // 添加动画效果提示更新
+                if (oldValue !== String(data.healthy_endpoints)) {
+                    healthyElement.style.backgroundColor = '#e8f5e8';
+                    healthyElement.style.transition = 'background-color 0.5s ease';
+                    setTimeout(() => {
+                        healthyElement.style.backgroundColor = '';
+                    }, 500);
+                }
+            }
+
+            // 更新不健康端点数量
+            const unhealthyElement = groupCard.querySelector('.group-unhealthy-count');
+            if (unhealthyElement) {
+                const oldValue = unhealthyElement.textContent;
+                unhealthyElement.textContent = data.unhealthy_endpoints;
+                // 添加动画效果提示更新
+                if (oldValue !== String(data.unhealthy_endpoints)) {
+                    unhealthyElement.style.backgroundColor = '#ffe8e8';
+                    unhealthyElement.style.transition = 'background-color 0.5s ease';
+                    setTimeout(() => {
+                        unhealthyElement.style.backgroundColor = '';
+                    }, 500);
+                }
+            }
+
+            // 🔥 更新状态文本（但不修改CSS类）
+            const groupStatusElement = groupCard.querySelector('.group-status');
+            if (groupStatusElement) {
+                let statusText;
+
+                // 根据健康端点数量决定状态文本
+                if (data.healthy_endpoints === 0) {
+                    statusText = '无健康端点';
+                } else if (data.healthy_endpoints < data.total_endpoints) {
+                    statusText = '部分健康';
+                } else {
+                    statusText = data.status || '正常';
+                }
+
+                // 更新状态文本（不修改CSS类）
+                if (groupStatusElement.textContent !== statusText) {
+                    groupStatusElement.textContent = statusText;
+                    console.log(`📊 [传统处理器] 组 ${groupName} 状态文本更新为: ${statusText}`);
+                }
+            }
+
+            console.log(`✅ [传统处理器] 组卡片 ${groupName} 已更新 (${data.healthy_endpoints}/${data.total_endpoints} 健康)`);
+        } else {
+            console.log(`⚠️ [传统处理器] 未找到组卡片: ${groupName}, 可能需要重新加载页面`);
+            // 如果找不到卡片，重新加载组页面
+            if (this.webInterface.groupsManager) {
+                this.webInterface.groupsManager.loadGroups();
             }
         }
     }
@@ -651,12 +741,12 @@ window.SSEManager = class {
     }
     
     // 处理日志事件 (已废弃)
-    handleLogEvent(data) {
+    handleLogEvent(_data) {
         console.log('日志功能已被请求追踪功能替代');
     }
     
     // 处理配置事件
-    handleConfigEvent(data) {
+    handleConfigEvent(_data) {
         Utils.showInfo('配置已更新');
         if (this.webInterface.currentTab === 'config') {
             this.webInterface.loadConfig();
@@ -1018,23 +1108,10 @@ window.SSEManager = class {
             eventsByPriority: { high: 0, normal: 0, low: 0 },
             processingTime: 0
         };
-        
-        // 清理智能更新管理器
-        if (this.smartUpdateManager) {
-            this.smartUpdateManager.destroy();
-            this.smartUpdateManager = null;
-        }
-        
+
         console.log('🧹 SSE管理器资源清理完成（包含运行时间计算）');
     }
     
-    // 获取智能更新管理器统计
-    getUpdateStats() {
-        if (this.smartUpdateManager) {
-            return this.smartUpdateManager.getStats();
-        }
-        return null;
-    }
     
     // 获取性能报告
     getPerformanceReport() {
@@ -1050,19 +1127,10 @@ window.SSEManager = class {
         report += `- 低优先级: ${this.stats.eventsByPriority.low} (${((this.stats.eventsByPriority.low/this.stats.eventsReceived)*100).toFixed(1)}%)\n`;
         report += `- 平均处理时间: ${avgProcessingTime}ms\n`;
         
-        if (this.smartUpdateManager) {
-            report += `\n${this.smartUpdateManager.getPerformanceReport()}`;
-        }
         
         return report;
     }
     
-    // 强制处理所有待处理更新
-    flushPendingUpdates() {
-        if (this.smartUpdateManager) {
-            this.smartUpdateManager.flushPendingUpdates();
-        }
-    }
 };
 
 console.log('✅ SSEManager模块已加载');

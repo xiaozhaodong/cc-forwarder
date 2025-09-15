@@ -185,6 +185,13 @@ func (eb *eventBus) setupDefaultFilters() {
 		RateLimit:       100 * time.Millisecond, // 适度限制，避免频繁更新
 	}
 
+	// 组健康统计变化事件过滤器 - 高优先级，立即推送
+	eb.filters[EventGroupHealthStatsChanged] = EventFilter{
+		ShouldBroadcast: func(event Event) bool { return true },
+		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
+		RateLimit:       0, // 暂时移除频率限制用于调试
+	}
+
 	// 初始化频率限制器
 	for eventType, filter := range eb.filters {
 		if filter.RateLimit > 0 {

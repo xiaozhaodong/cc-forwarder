@@ -63,13 +63,13 @@ window.GroupsManager = class {
     // 创建组信息卡片
     createGroupCard(group) {
         const statusClass = group.in_cooldown ? 'cooldown' : (group.is_active ? 'active' : 'inactive');
-        const statusText = group.status || (group.in_cooldown ? '冷却中' : (group.is_active ? '活跃' : '未激活'));
+        const statusText = group._computed_health_status || group.status || (group.in_cooldown ? '冷却中' : (group.is_active ? '活跃' : '未激活'));
         
         const cooldownInfo = group.in_cooldown && group.cooldown_remaining !== '0s' ? 
             `<div class="group-cooldown-info">🕐 冷却剩余时间: ${group.cooldown_remaining}</div>` : '';
 
         return `
-            <div class="group-info-card ${statusClass}">
+            <div class="group-info-card ${statusClass}" data-group-name="${group.name}">
                 <div class="group-card-header">
                     <h3 class="group-name">${group.name}</h3>
                     <span class="group-status ${statusClass}">${statusText}</span>
@@ -89,7 +89,7 @@ window.GroupsManager = class {
                     </div>
                     <div class="group-detail-item">
                         <div class="group-detail-label">不健康端点</div>
-                        <div class="group-detail-value">${group.unhealthy_endpoints}</div>
+                        <div class="group-detail-value group-unhealthy-count">${group.unhealthy_endpoints}</div>
                     </div>
                 </div>
                 <div class="group-actions">

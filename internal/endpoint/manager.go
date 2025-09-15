@@ -537,6 +537,52 @@ func (m *Manager) notifyWebGroupChange(eventType, groupName string) {
 	slog.Debug(fmt.Sprintf("📢 [组管理] 发布组状态变化事件: %s (组: %s)", eventType, groupName))
 }
 
+// notifyGroupHealthStats 通知组健康统计变化
+func (m *Manager) notifyGroupHealthStats(groupName string) {
+	// 检查EventBus是否可用
+	if m.eventBus == nil {
+		slog.Debug("[组健康统计] EventBus未设置，跳过组健康统计通知")
+		return
+	}
+
+	// 处理空组名，默认为"Default"
+	if groupName == "" {
+		groupName = "Default"
+	}
+
+	// 获取组详细信息
+	groupDetails := m.groupManager.GetGroupDetails()
+	if groups, ok := groupDetails["groups"].([]map[string]interface{}); ok {
+		// 查找目标组的健康统计
+		for _, group := range groups {
+			if groupNameStr, exists := group["name"]; exists && groupNameStr == groupName {
+				// 发布组健康统计变化事件
+				m.eventBus.Publish(events.Event{
+					Type:     events.EventGroupHealthStatsChanged,
+					Source:   "endpoint_manager",
+					Priority: events.PriorityHigh,
+					Data: map[string]interface{}{
+						"group":               groupName,
+						"healthy_endpoints":   group["healthy_endpoints"],
+						"unhealthy_endpoints": group["unhealthy_endpoints"],
+						"total_endpoints":     group["total_endpoints"],
+						"is_active":           group["is_active"],
+						"status":              group["status"],
+						"change_type":         "health_stats_changed",
+						"timestamp":           time.Now().Format("2006-01-02 15:04:05"),
+					},
+				})
+
+				slog.Debug(fmt.Sprintf("📊 [组健康统计] 成功发布组健康统计变化事件: %s (健康: %v/%v)",
+					groupName, group["healthy_endpoints"], group["total_endpoints"]))
+				return
+			}
+		}
+	}
+
+	slog.Warn(fmt.Sprintf("📊 [组健康统计] 未找到组 %s 的健康统计信息，可用组: %v", groupName, groupDetails))
+}
+
 // healthCheckLoop runs the health check routine
 func (m *Manager) healthCheckLoop() {
 	defer m.wg.Done()
@@ -670,33 +716,33 @@ func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, responseTime time.Duration) {
 	endpoint.mutex.Lock()
 	defer endpoint.mutex.Unlock()
-	
+
 	endpoint.Status.LastCheck = time.Now()
 	endpoint.Status.ResponseTime = responseTime
 	endpoint.Status.NeverChecked = false // 标记为已检测
-	
+
 	if healthy {
 		// Endpoint is healthy
 		wasUnhealthy := !endpoint.Status.Healthy
 		endpoint.Status.Healthy = true
 		endpoint.Status.ConsecutiveFails = 0
-		
+
 		// Log recovery if endpoint was previously unhealthy
 		if wasUnhealthy {
-			slog.Info(fmt.Sprintf("✅ [健康检查] 端点恢复正常: %s - 响应时间: %dms", 
+			slog.Info(fmt.Sprintf("✅ [健康检查] 端点恢复正常: %s - 响应时间: %dms",
 				endpoint.Config.Name, responseTime.Milliseconds()))
 		}
 	} else {
 		// Endpoint failed health check
 		endpoint.Status.ConsecutiveFails++
 		wasHealthy := endpoint.Status.Healthy
-		
+
 		// Mark as unhealthy immediately on any failure
 		endpoint.Status.Healthy = false
-		
+
 		// Log the failure
 		if wasHealthy {
-			slog.Warn(fmt.Sprintf("❌ [健康检查] 端点标记为不可用: %s - 连续失败: %d次, 响应时间: %dms", 
+			slog.Warn(fmt.Sprintf("❌ [健康检查] 端点标记为不可用: %s - 连续失败: %d次, 响应时间: %dms",
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		} else {
 			slog.Debug(fmt.Sprintf("❌ [健康检查] 端点仍然不可用: %s - 连续失败: %d次, 响应时间: %dms",
@@ -706,6 +752,9 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 
 	// 通知Web界面端点状态变化
 	go m.notifyWebInterface(endpoint)
+
+	// 通知组健康统计变化
+	go m.notifyGroupHealthStats(endpoint.Config.Group)
 }
 
 // IsHealthy returns the health status of an endpoint

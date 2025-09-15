@@ -46,6 +46,8 @@ func (ws *WebServer) BroadcastEvent(eventType string, data map[string]interface{
 		webEventType = EventTypeStatus
 	case "config":
 		webEventType = EventTypeConfig
+	case "group":
+		webEventType = EventTypeGroup // 🔥 修复：添加组事件类型映射
 	default:
 		webEventType = EventTypeStatus // 默认类型
 	}
