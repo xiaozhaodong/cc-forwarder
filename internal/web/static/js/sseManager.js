@@ -485,13 +485,22 @@ window.SSEManager = class {
                 console.log(`✅ [传统处理器] 完整组数据已更新到缓存`);
 
                 // 更新挂起请求提示
-                this.webInterface.groupsManager.updateGroupSuspendedAlert(data);
+                if (this.webInterface.groupsManager) {
+                    this.webInterface.groupsManager.updateGroupSuspendedAlert(data);
+                } else {
+                    // React版本：直接更新缓存，React组件会自动响应数据变化
+                    console.log(`✅ [React模式] 组数据已更新到缓存，React组件将自动响应`);
+                }
 
                 // 如果当前在groups标签页，立即更新UI
                 if (this.webInterface.currentTab === 'groups') {
-                    console.log(`🔄 [传统处理器] 当前在组页面，正在更新完整组UI...`);
-                    this.webInterface.groupsManager.displayGroups(data);
-                    console.log(`✅ [传统处理器] 组页面完整UI已更新`);
+                    console.log(`🔄 [React模式] 当前在组页面，React组件将自动响应数据更新`);
+                    if (this.webInterface.groupsManager) {
+                        // 传统模式
+                        console.log(`🔄 [传统处理器] 当前在组页面，正在更新完整组UI...`);
+                        this.webInterface.groupsManager.displayGroups(data);
+                        console.log(`✅ [传统处理器] 组页面完整UI已更新`);
+                    }
                 }
             } else if (data.change_type === 'health_stats_changed' && data.group) {
                 // 🔥 新增：单个组健康统计更新处理
@@ -531,9 +540,13 @@ window.SSEManager = class {
 
                 // 如果当前在组页面，重新加载完整组数据以确保按钮状态正确
                 if (this.webInterface.currentTab === 'groups') {
-                    console.log(`🔄 [传统处理器] 当前在组页面，因健康状态变化重新加载组数据以更新按钮状态...`);
-                    // 🔥 重要修复：重新加载组数据，确保应急按钮正确显示
-                    this.webInterface.groupsManager.loadGroups();
+                    if (this.webInterface.groupsManager) {
+                        console.log(`🔄 [传统处理器] 当前在组页面，因健康状态变化重新加载组数据以更新按钮状态...`);
+                        // 🔥 重要修复：重新加载组数据，确保应急按钮正确显示
+                        this.webInterface.groupsManager.loadGroups();
+                    } else {
+                        console.log(`🔄 [React模式] 当前在组页面，健康状态变化已更新到缓存，React组件将自动响应`);
+                    }
                 }
             }
 

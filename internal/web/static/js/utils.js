@@ -173,14 +173,45 @@ window.Utils = {
     
     // 显示通知
     showNotification(message, type = 'info') {
+        // 添加通知动画样式（如果不存在）
+        if (!document.getElementById('notification-styles')) {
+            const style = document.createElement('style');
+            style.id = 'notification-styles';
+            style.textContent = `
+                @keyframes slideInFromRight {
+                    from {
+                        opacity: 0;
+                        transform: translateX(100%);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateX(0);
+                    }
+                }
+
+                @keyframes fadeOut {
+                    from {
+                        opacity: 1;
+                        transform: translateX(0);
+                    }
+                    to {
+                        opacity: 0;
+                        transform: translateX(100%);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
         notification.textContent = message;
         
         const colors = {
-            success: 'var(--success-color, #10b981)',
-            error: 'var(--error-color, #ef4444)',
-            info: 'var(--info-color, #3b82f6)'
+            success: '#10b981',
+            error: '#ef4444',
+            info: '#3b82f6',
+            warning: '#f59e0b'
         };
         
         notification.style.cssText = `
@@ -188,12 +219,17 @@ window.Utils = {
             top: 20px;
             right: 20px;
             background: ${colors[type]};
-            color: white;
+            color: white !important;
             padding: 15px 20px;
             border-radius: 8px;
-            z-index: 1000;
+            z-index: 10000;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             max-width: 400px;
+            font-size: 14px;
+            font-weight: 500;
+            line-height: 1.4;
+            opacity: 0.95;
+            animation: slideInFromRight 0.3s ease-out;
         `;
         
         document.body.appendChild(notification);
@@ -217,6 +253,36 @@ window.Utils = {
     
     showInfo(message) {
         this.showNotification('ℹ️ ' + message, 'info');
+    },
+
+    showWarning(message) {
+        // 直接创建黄色通知，参考showSuccess的实现
+        const notification = document.createElement('div');
+        notification.className = 'notification warning';
+        notification.textContent = '⚠️ ' + message;
+
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #f59e0b;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            z-index: 10000;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            font-size: 14px;
+            font-weight: 500;
+        `;
+
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            if (notification.parentNode) {
+                document.body.removeChild(notification);
+            }
+        }, 3000);
     },
     
     // 生成连接统计HTML

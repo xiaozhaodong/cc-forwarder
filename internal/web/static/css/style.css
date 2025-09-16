@@ -646,6 +646,7 @@ tr:hover {
     padding: 20px;
     transition: all 0.3s ease;
     position: relative;
+    outline: none;
 }
 
 .group-info-card.active {
@@ -663,9 +664,19 @@ tr:hover {
     background: rgba(245, 158, 11, 0.05);
 }
 
+.group-info-card.force-activated {
+    border-color: var(--error-color);
+    background: rgba(239, 68, 68, 0.05);
+}
+
 .group-info-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    outline: none;
+}
+
+.group-info-card:focus {
+    outline: none;
 }
 
 .group-card-header {
@@ -797,6 +808,16 @@ tr:hover {
     margin-top: 10px;
     font-size: 0.9em;
     color: #92400e;
+}
+
+.group-force-activation-info {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    font-size: 0.9em;
+    color: #dc2626;
 }
 
 .groups-container {

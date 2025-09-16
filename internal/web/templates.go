@@ -1092,24 +1092,11 @@ const indexHTML = `<!DOCTYPE html>
 
             <!-- 组管理标签页 -->
             <div id="groups" class="tab-content">
-                <div class="section">
-                    <h2>📦 组管理</h2>
-                    
-                    <!-- 挂起请求提示信息 -->
-                    <div id="group-suspended-alert" class="alert-banner" style="display: none;">
-                        <div class="alert-icon">⏸️</div>
-                        <div class="alert-content">
-                            <div class="alert-title">挂起请求通知</div>
-                            <div class="alert-message" id="suspended-alert-message">有请求正在等待组切换...</div>
-                        </div>
-                        <button class="alert-close" onclick="hideSuspendedAlert()">×</button>
-                    </div>
-                    
-                    <div class="group-info-cards" id="group-info-cards">
-                        <p>加载中...</p>
-                    </div>
-                    <div class="groups-container" id="groups-container">
-                        <p>加载中...</p>
+                <!-- React组管理页面容器 -->
+                <div id="react-groups-container">
+                    <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                        <p>React组管理页面加载中...</p>
                     </div>
                 </div>
             </div>
@@ -1326,7 +1313,7 @@ const indexHTML = `<!DOCTYPE html>
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/sseManager.js"></script>
     <script src="/static/js/requestsManager.js"></script>
-    <script src="/static/js/groupsManager.js"></script>
+    <!-- <script src="/static/js/groupsManager.js"></script> 组管理已迁移到React -->
     <script src="/static/js/endpointsManager.js"></script>
     <script src="/static/js/webInterface.js"></script>
     <script>
@@ -1363,6 +1350,16 @@ const indexHTML = `<!DOCTYPE html>
                                 const container = document.getElementById('react-endpoints-container');
                                 if (container && !container.querySelector('[data-reactroot]')) {
                                     await renderEndpointsPage();
+                                }
+                            }, 100);
+                        }
+
+                        // 当切换到组管理标签时，确保React组件已渲染
+                        if (tabName === 'groups') {
+                            setTimeout(async () => {
+                                const container = document.getElementById('react-groups-container');
+                                if (container && !container.querySelector('[data-reactroot]')) {
+                                    await renderGroupsPage();
                                 }
                             }, 100);
                         }
@@ -1461,6 +1458,46 @@ const indexHTML = `<!DOCTYPE html>
 
                         } catch (error) {
                             console.error('❌ [模块渲染] 端点页面渲染失败:', error);
+
+                            // 显示错误信息
+                            container.innerHTML =
+                                '<div style="text-align: center; padding: 48px 24px; color: #ef4444;">' +
+                                    '<div style="font-size: 48px; margin-bottom: 16px;">❌</div>' +
+                                    '<h3 style="margin: 0 0 8px 0;">模块加载失败</h3>' +
+                                    '<p style="margin: 0; font-size: 14px;">' + error.message + '</p>' +
+                                '</div>';
+                        }
+                    }
+
+                    // React组管理页面渲染函数（模块化版本）
+                    async function renderGroupsPage() {
+                        const container = document.getElementById('react-groups-container');
+                        if (!container) {
+                            console.error('❌ 找不到React组管理页面容器');
+                            return;
+                        }
+
+                        try {
+                            console.log('📦 [模块加载] 开始加载组管理页面模块...');
+
+                            // 使用模块加载器动态导入组管理页面组件
+                            const GroupsPageModule = await window.importReactModule('pages/groups/index.jsx');
+                            const GroupsPage = GroupsPageModule.default || GroupsPageModule;
+
+                            if (!GroupsPage) {
+                                throw new Error('组管理页面模块加载失败');
+                            }
+
+                            console.log('✅ [模块加载] 组管理页面模块加载成功');
+
+                            // 创建并渲染React组件
+                            const groupsComponent = React.createElement(GroupsPage);
+                            window.ReactComponents.renderComponent(groupsComponent, container);
+
+                            console.log('✅ [模块渲染] 组管理页面渲染成功');
+
+                        } catch (error) {
+                            console.error('❌ [模块渲染] 组管理页面渲染失败:', error);
 
                             // 显示错误信息
                             container.innerHTML =

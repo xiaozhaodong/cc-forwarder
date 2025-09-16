@@ -19,7 +19,7 @@ window.WebInterface = class {
         // 初始化管理器
         this.sseManager = new SSEManager(this);
         this.requestsManager = new RequestsManager(this);
-        this.groupsManager = new GroupsManager(this);
+        // this.groupsManager = new GroupsManager(this); // 组管理已迁移到React，禁用传统组管理器
         // this.endpointsManager = new EndpointsManager(this); // 已迁移到React，禁用传统端点管理器
         
         this.init();
@@ -50,6 +50,7 @@ window.WebInterface = class {
     }
 
     showTab(tabName) {
+        const previousTab = this.currentTab;
         // 隐藏所有标签页内容
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.remove('active');
@@ -73,13 +74,86 @@ window.WebInterface = class {
                 tab.classList.add('active');
             }
         });
+        // 如果从React组管理页面离开，先卸载React根，避免外部DOM变更导致警告
+        if (previousTab === 'groups' && tabName !== 'groups') {
+            this.cleanupReactGroupsPage();
+        }
 
         this.currentTab = tabName;
-        
+
         // 优先使用缓存数据，如果没有缓存则请求API
         this.loadTabDataFromCache(tabName);
     }
+
+    cleanupReactGroupsPage() {
+        const groupsContainer = document.getElementById('react-groups-container');
+        if (!groupsContainer || !window.ReactComponents) {
+            return;
+        }
+
+        // 卸载React组件，避免外部DOM操作触发React警告
+        window.ReactComponents.unmountComponent(groupsContainer);
+
+        // 恢复占位内容，保持与初始模板一致
+        groupsContainer.innerHTML = `
+            <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                <p>React组管理页面加载中...</p>
+            </div>
+        `;
+    }
     
+    // 加载React组管理页面
+    async loadReactGroupsPage() {
+        try {
+            console.log('🔄 [React组件] 开始加载React组管理页面...');
+
+            // 确保React模块加载器已初始化
+            if (!window.ReactModuleLoader || !window.ReactModuleLoader.initialized) {
+                await window.ReactModuleLoader.initialize();
+            }
+
+            // 加载React组管理页面组件
+            const GroupsPageModule = await window.importReactModule('pages/groups/index.jsx');
+            const GroupsPage = GroupsPageModule.default || GroupsPageModule;
+
+            if (!GroupsPage) {
+                throw new Error('无法获取GroupsPage组件');
+            }
+
+            // 获取React组管理页面容器DOM元素
+            const groupsContainer = document.getElementById('react-groups-container');
+            if (!groupsContainer) {
+                throw new Error('找不到react-groups-container容器元素');
+            }
+
+            // 使用React组件注册系统的渲染方法（不需要手动卸载，React会自动管理）
+            const groupsPageElement = React.createElement(GroupsPage);
+            window.ReactComponents.renderComponent(groupsPageElement, groupsContainer);
+
+            console.log('✅ [React组件] React组管理页面加载成功');
+
+        } catch (error) {
+            console.error('❌ [React组件] React组管理页面加载失败:', error);
+
+            // 显示错误信息而不是回退到传统管理器
+            const groupsContainer = document.getElementById('react-groups-container');
+            if (groupsContainer) {
+                groupsContainer.innerHTML = `
+                    <div style="text-align: center; padding: 48px 24px; color: #ef4444;">
+                        <div style="font-size: 48px; margin-bottom: 16px;">❌</div>
+                        <h3 style="margin: 0 0 8px 0;">React组件加载失败</h3>
+                        <p style="margin: 0; font-size: 14px; color: #6b7280;">${error.message}</p>
+                        <button onclick="window.webInterface.loadReactGroupsPage()"
+                                style="margin-top: 16px; padding: 8px 16px; border: none; border-radius: 6px; background: #3b82f6; color: white; cursor: pointer;">
+                            🔄 重试加载
+                        </button>
+                    </div>
+                `;
+            }
+        }
+    }
+
     loadTabDataFromCache(tabName) {
         console.log('[Cache] 尝试从缓存加载标签页数据:', tabName);
         
@@ -93,12 +167,8 @@ window.WebInterface = class {
                 console.log('端点页面已迁移到React，跳过传统端点管理器初始化');
                 break;
             case 'groups':
-                // 组页面优先使用SSE推送的缓存数据
-                if (this.cachedData.groups && this.cachedData.groups.groups) {
-                    this.groupsManager.displayGroups(this.cachedData.groups);
-                } else {
-                    this.groupsManager.loadGroups();
-                }
+                // 组页面已迁移到React，使用React组件渲染
+                this.loadReactGroupsPage();
                 break;
             case 'requests':
                 if (this.cachedData.requests) {
@@ -148,7 +218,7 @@ window.WebInterface = class {
         Promise.all([
             this.loadOverview(),
             // this.endpointsManager.loadEndpoints(), // 端点页面已迁移到React
-            this.groupsManager.loadGroups(),
+            // this.groupsManager.loadGroups(), // 组页面已迁移到React
             this.requestsManager.loadRequests(),
             this.loadConfig()
         ]).catch(error => {
@@ -166,7 +236,8 @@ window.WebInterface = class {
                 console.log('端点页面已迁移到React，跳过传统端点数据加载');
                 break;
             case 'groups':
-                this.groupsManager.loadGroups();
+                // 组页面已迁移到React，使用React组件渲染
+                this.loadReactGroupsPage();
                 break;
             case 'requests':
                 this.requestsManager.loadRequests();
