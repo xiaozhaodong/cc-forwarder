@@ -453,21 +453,12 @@ func (ws *WebServer) broadcastCurrentData() {
 	metrics := ws.monitoringMiddleware.GetMetrics()
 	stats := metrics.GetMetrics()
 	suspendedStats := metrics.GetSuspendedRequestStats()
-	ws.BroadcastConnectionUpdate(map[string]interface{}{
-		"total_requests":       stats.TotalRequests,
-		"active_connections":   len(stats.ActiveConnections),
-		"successful_requests":  stats.SuccessfulRequests,
-		"failed_requests":      stats.FailedRequests,
-		"average_response_time": utils.FormatResponseTime(stats.GetAverageResponseTime()),
-		"success_rate":         stats.GetSuccessRate(),
-		"suspended":            suspendedStats,
-	})
-	
-	// 广播组状态
-	groupDetails := ws.endpointManager.GetGroupDetails()
 	suspendedConnections := metrics.GetActiveSuspendedConnections()
+
+	// 统计每个组的挂起请求数量
 	groupSuspendedCounts := make(map[string]int)
 	for _, conn := range suspendedConnections {
+		// 根据endpoint名称查找对应的组
 		endpoints := ws.endpointManager.GetEndpoints()
 		for _, ep := range endpoints {
 			if ep.Config.Name == conn.Endpoint {
@@ -476,7 +467,23 @@ func (ws *WebServer) broadcastCurrentData() {
 			}
 		}
 	}
-	
+
+	ws.BroadcastConnectionUpdate(map[string]interface{}{
+		"total_requests":       stats.TotalRequests,
+		"active_connections":   len(stats.ActiveConnections),
+		"successful_requests":  stats.SuccessfulRequests,
+		"failed_requests":      stats.FailedRequests,
+		"average_response_time": utils.FormatResponseTime(stats.GetAverageResponseTime()),
+		"success_rate":         stats.GetSuccessRate(),
+		"suspended":            suspendedStats,
+		"group_suspended_counts": groupSuspendedCounts,
+		"total_suspended_requests": len(suspendedConnections),
+		"max_suspended_requests": ws.config.RequestSuspend.MaxSuspendedRequests,
+	})
+
+	// 广播组状态
+	groupDetails := ws.endpointManager.GetGroupDetails()
+
 	ws.BroadcastGroupUpdate(map[string]interface{}{
 		"groups":                groupDetails["groups"],
 		"active_group":          groupDetails["active_group"],
@@ -484,6 +491,7 @@ func (ws *WebServer) broadcastCurrentData() {
 		"auto_switch_enabled":   groupDetails["auto_switch_enabled"],
 		"group_suspended_counts": groupSuspendedCounts,
 		"total_suspended_requests": len(suspendedConnections),
+		"max_suspended_requests": ws.config.RequestSuspend.MaxSuspendedRequests,
 	})
 	
 	// 广播挂起请求事件

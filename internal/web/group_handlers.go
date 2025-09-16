@@ -37,6 +37,7 @@ func (ws *WebServer) handleGroups(c *gin.Context) {
 		"auto_switch_enabled":   groupDetails["auto_switch_enabled"],
 		"group_suspended_counts": groupSuspendedCounts,
 		"total_suspended_requests": len(suspendedConnections),
+		"max_suspended_requests": ws.config.RequestSuspend.MaxSuspendedRequests,
 		"timestamp":             time.Now().Format("2006-01-02 15:04:05"),
 	}
 	
