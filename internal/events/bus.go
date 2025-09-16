@@ -159,6 +159,13 @@ func (eb *eventBus) setupDefaultFilters() {
 		RateLimit:       5 * time.Second, // 5秒限制一次
 	}
 
+	// 连接统计更新事件过滤器 - 实时推送优化
+	eb.filters[EventConnectionStatsUpdated] = EventFilter{
+		ShouldBroadcast: func(event Event) bool { return true },
+		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
+		RateLimit:       1 * time.Second, // 1秒限制，因为是实时推送，允许更高频率
+	}
+
 	eb.filters[EventResponseReceived] = EventFilter{
 		ShouldBroadcast: func(event Event) bool { return true },
 		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
@@ -176,6 +183,13 @@ func (eb *eventBus) setupDefaultFilters() {
 		ShouldBroadcast: func(event Event) bool { return true },
 		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
 		RateLimit:       0, // 无限制
+	}
+
+	// 系统统计更新事件过滤器 - 系统级统计数据，适度限制频率
+	eb.filters[EventSystemStatsUpdated] = EventFilter{
+		ShouldBroadcast: func(event Event) bool { return true },
+		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
+		RateLimit:       5 * time.Second, // 5秒限制一次，避免过于频繁
 	}
 
 	// 组状态变化事件过滤器 - 适度限制，避免频繁更新

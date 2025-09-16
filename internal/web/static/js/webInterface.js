@@ -20,7 +20,7 @@ window.WebInterface = class {
         this.sseManager = new SSEManager(this);
         this.requestsManager = new RequestsManager(this);
         this.groupsManager = new GroupsManager(this);
-        this.endpointsManager = new EndpointsManager(this);
+        // this.endpointsManager = new EndpointsManager(this); // 已迁移到React，禁用传统端点管理器
         
         this.init();
     }
@@ -89,16 +89,8 @@ window.WebInterface = class {
                 this.loadOverview();
                 break;
             case 'endpoints':
-                // 端点页面优先使用SSE推送的缓存数据
-                if (this.cachedData.endpoints && this.cachedData.endpoints.endpoints) {
-                    const container = document.getElementById('endpoints-table');
-                    if (container) {
-                        container.innerHTML = this.endpointsManager.generateEndpointsTable(this.cachedData.endpoints.endpoints);
-                        this.endpointsManager.bindEndpointEvents();
-                    }
-                } else {
-                    this.endpointsManager.loadEndpoints();
-                }
+                // 端点页面已迁移到React，不再使用传统的端点管理器
+                console.log('端点页面已迁移到React，跳过传统端点管理器初始化');
                 break;
             case 'groups':
                 // 组页面优先使用SSE推送的缓存数据
@@ -155,7 +147,7 @@ window.WebInterface = class {
         // 并行加载所有标签页数据，加快初始显示速度
         Promise.all([
             this.loadOverview(),
-            this.endpointsManager.loadEndpoints(),
+            // this.endpointsManager.loadEndpoints(), // 端点页面已迁移到React
             this.groupsManager.loadGroups(),
             this.requestsManager.loadRequests(),
             this.loadConfig()
@@ -170,7 +162,8 @@ window.WebInterface = class {
                 this.loadOverview();
                 break;
             case 'endpoints':
-                this.endpointsManager.loadEndpoints();
+                // 端点页面已迁移到React，不再使用传统的端点管理器
+                console.log('端点页面已迁移到React，跳过传统端点数据加载');
                 break;
             case 'groups':
                 this.groupsManager.loadGroups();

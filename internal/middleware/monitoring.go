@@ -3,13 +3,14 @@ package middleware
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"runtime"
 	"time"
 
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/utils"
 )
 
 // MonitoringMiddleware provides health and metrics endpoints
@@ -18,6 +19,7 @@ type MonitoringMiddleware struct {
 	metrics         *monitor.Metrics
 	eventBus        events.EventBus
 	lastBroadcast   map[string]time.Time
+	startTime       time.Time
 }
 
 // NewMonitoringMiddleware creates a new monitoring middleware
@@ -26,6 +28,7 @@ func NewMonitoringMiddleware(endpointManager *endpoint.Manager) *MonitoringMiddl
 		endpointManager: endpointManager,
 		metrics:         monitor.NewMetrics(),
 		lastBroadcast:   make(map[string]time.Time),
+		startTime:       time.Now(),
 	}
 }
 
@@ -140,7 +143,7 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 	
 	response := HealthResponse{
 		Status:    overallStatus,
-		Timestamp: fmt.Sprintf("%d", healthyCount),
+		Timestamp: time.Now().Format("2006-01-02T15:04:05Z"),
 		Endpoints: endpointHealths,
 	}
 
@@ -203,15 +206,74 @@ func (mm *MonitoringMiddleware) RecordRequest(endpoint, clientIP, userAgent, met
 }
 
 // RecordResponse 记录响应数据 - 纯数据收集，不发布事件
-// 请求级事件由 lifecycle_manager 负责
+// 请求级事件由 lifecycle_manager 负责，系统统计事件由定时广播负责
 func (mm *MonitoringMiddleware) RecordResponse(connID string, statusCode int, responseTime time.Duration, bytesSent int64, endpoint string) {
-	// 只有原有的监控数据收集逻辑
+	// 原有的监控数据收集逻辑
 	mm.metrics.RecordResponse(connID, statusCode, responseTime, bytesSent, endpoint)
-	
-	// 发布系统级统计事件（低优先级，批量处理）
-	if mm.eventBus != nil && mm.shouldBroadcast("system_stats", 5*time.Second) {
-		mm.broadcastSystemStats()
+
+	// 推送真实的连接统计数据（基于实际的统计数据）
+	if mm.eventBus != nil && mm.shouldBroadcast("connection_stats", 1*time.Second) {
+		mm.broadcastRealConnectionStats(connID, endpoint)
 	}
+}
+
+// broadcastRealConnectionStats 推送真实的连接统计数据
+func (mm *MonitoringMiddleware) broadcastRealConnectionStats(triggerConnID, triggerEndpoint string) {
+	if mm.eventBus == nil {
+		return
+	}
+
+	// 获取真实的连接统计数据
+	stats := mm.metrics.GetMetrics()
+	suspendedStats := mm.GetSuspendedRequestStats()
+
+	// 计算活跃连接数
+	activeConnections := len(stats.ActiveConnections)
+
+	// 计算总Token使用量
+	totalTokens := stats.TotalTokenUsage.InputTokens + stats.TotalTokenUsage.OutputTokens +
+					stats.TotalTokenUsage.CacheCreationTokens + stats.TotalTokenUsage.CacheReadTokens
+
+	// 构建真实的连接统计数据
+	connectionData := map[string]interface{}{
+		"total_requests":       stats.TotalRequests,
+		"active_connections":   activeConnections,
+		"successful_requests":  stats.SuccessfulRequests,
+		"failed_requests":      stats.FailedRequests,
+		"average_response_time": mm.formatResponseTime(stats.GetAverageResponseTime()),
+		"total_tokens":         totalTokens,
+		"change_type":          "connection_stats_updated",
+		"timestamp":            time.Now().Unix(),
+		"trigger_endpoint":     triggerEndpoint,
+		"trigger_conn_id":      triggerConnID,
+	}
+
+	// 添加暂停请求统计
+	if suspendedStats != nil {
+		connectionData["total_suspended_requests"] = suspendedStats["total_suspended_requests"]
+		connectionData["error_suspended_requests"] = suspendedStats["error_suspended_requests"]
+		connectionData["timeout_suspended_requests"] = suspendedStats["timeout_suspended_requests"]
+		connectionData["suspended_success_rate"] = suspendedStats["success_rate"]
+	}
+
+	// 发布连接统计更新事件
+	mm.eventBus.Publish(events.Event{
+		Type:     events.EventConnectionStatsUpdated,
+		Source:   "monitoring_middleware",
+		Priority: events.PriorityNormal,
+		Data:     connectionData,
+	})
+
+	slog.Debug(fmt.Sprintf("🔗 [连接统计推送] 真实数据: 总请求=%d, 活跃连接=%d, 成功=%d, 失败=%d, Token=%d, 触发端点=%s",
+		stats.TotalRequests, activeConnections, stats.SuccessfulRequests, stats.FailedRequests, totalTokens, triggerEndpoint))
+}
+
+// formatResponseTime 格式化响应时间为字符串
+func (mm *MonitoringMiddleware) formatResponseTime(duration time.Duration) string {
+	if duration < time.Second {
+		return fmt.Sprintf("%dms", duration.Milliseconds())
+	}
+	return fmt.Sprintf("%.2fs", duration.Seconds())
 }
 
 // RecordRetry records a retry attempt
@@ -289,32 +351,56 @@ func (mm *MonitoringMiddleware) shouldBroadcast(eventType string, interval time.
 }
 
 // broadcastSystemStats 广播系统级统计事件
+// 只包含系统级统计：uptime、memory_usage、goroutine_count
 func (mm *MonitoringMiddleware) broadcastSystemStats() {
 	if mm.eventBus == nil {
 		return
 	}
-	
-	stats := mm.metrics.GetMetrics()
-	suspendedStats := mm.metrics.GetSuspendedRequestStats()
-	
-	// 只发布系统级统计事件（低优先级，批量处理）
+
+	// 获取系统运行时间
+	uptime := time.Since(mm.startTime)
+
+	// 获取内存使用情况
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	// 获取goroutine数量
+	goroutineCount := runtime.NumGoroutine()
+
+	// 只发布系统级统计事件（移除连接统计数据）
 	mm.eventBus.Publish(events.Event{
-		Type:     events.EventConnectionStats,
+		Type:     events.EventSystemStatsUpdated,
 		Source:   "monitoring",
 		Priority: events.PriorityLow,
 		Data: map[string]interface{}{
-			"total_requests":              stats.TotalRequests,
-			"active_connections":          len(stats.ActiveConnections),
-			"successful_requests":         stats.SuccessfulRequests,
-			"failed_requests":             stats.FailedRequests,
-			"average_response_time":       utils.FormatResponseTime(stats.GetAverageResponseTime()),
-			"total_suspended_requests":    suspendedStats["total_suspended_requests"],
-			"error_suspended_requests":    suspendedStats["error_suspended_requests"],
-			"timeout_suspended_requests":  suspendedStats["timeout_suspended_requests"],
-			"suspended_success_rate":      suspendedStats["success_rate"],
-			"change_type":                 "system_stats_updated",
+			"uptime":           uptime.Seconds(),
+			"memory_usage":     memStats.Alloc,
+			"goroutine_count":  goroutineCount,
+			"change_type":      "system_stats_updated",
+			"timestamp":        time.Now().Unix(),
 		},
 	})
+
+	// 添加诊断日志确认发布的是系统统计事件
+	fmt.Printf("🖥️ [系统统计推送] 事件类型: EventSystemStatsUpdated, 映射: status, 数据: uptime=%.0fs, memory=%dMB, goroutines=%d\n",
+		uptime.Seconds(), memStats.Alloc/(1024*1024), goroutineCount)
+}
+
+// StartPeriodicBroadcast 启动系统统计的定时广播
+// 10秒间隔广播系统级统计信息
+func (mm *MonitoringMiddleware) StartPeriodicBroadcast() {
+	if mm.eventBus == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			mm.broadcastSystemStats()
+		}
+	}()
 }
 
 // getStreamingConnections 计算流式连接数量

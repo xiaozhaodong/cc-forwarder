@@ -20,6 +20,24 @@ const indexHTML = `<!DOCTYPE html>
     <script src="/static/js/lib/chart.umd.js"
             onload="clearTimeout(window.chartLoadTimeout); console.log('Chart.js loaded successfully');"
             onerror="window.chartLoadFailed=true; clearTimeout(window.chartLoadTimeout); console.warn('Chart.js local file failed, charts disabled');"></script>
+
+    <!-- React Libraries (本地化依赖) -->
+    <script>
+    // React loading timeout handling
+    window.reactLoadTimeout = setTimeout(() => {
+        console.warn('React loading timeout, React components will be disabled');
+        window.reactLoadFailed = true;
+    }, 5000);
+    </script>
+    <script src="/static/js/lib/react.development.js"
+            onload="console.log('React loaded successfully');"
+            onerror="window.reactLoadFailed=true; clearTimeout(window.reactLoadTimeout); console.warn('React failed to load, fallback to legacy UI');"></script>
+    <script src="/static/js/lib/react-dom.development.js"
+            onload="console.log('ReactDOM loaded successfully');"
+            onerror="window.reactLoadFailed=true; clearTimeout(window.reactLoadTimeout); console.warn('ReactDOM failed to load, fallback to legacy UI');"></script>
+    <script src="/static/js/lib/babel.min.js"
+            onload="clearTimeout(window.reactLoadTimeout); console.log('Babel loaded successfully, React system ready');"
+            onerror="window.reactLoadFailed=true; clearTimeout(window.reactLoadTimeout); console.warn('Babel failed to load, JSX disabled');"></script>
     <style>
         .connection-indicator {
             position: absolute;
@@ -922,91 +940,11 @@ const indexHTML = `<!DOCTYPE html>
         <main>
             <!-- 概览标签页 -->
             <div id="overview" class="tab-content active">
-                <div class="cards">
-                    <div class="card">
-                        <h3>🚀 服务状态</h3>
-                        <p id="server-status">加载中...</p>
-                    </div>
-                    <div class="card">
-                        <h3>⏱️ 运行时间</h3>
-                        <p id="uptime">加载中...</p>
-                    </div>
-                    <div class="card">
-                        <h3>📡 端点数量</h3>
-                        <p id="endpoint-count">加载中...</p>
-                    </div>
-                    <div class="card">
-                        <h3>🔗 总请求数</h3>
-                        <p id="total-requests">加载中...</p>
-                    </div>
-                    <div class="card">
-                        <h3>⏸️ 挂起请求</h3>
-                        <p id="suspended-requests">加载中...</p>
-                        <small id="suspended-success-rate" class="text-muted">成功率: --</small>
-                    </div>
-                    <div class="card">
-                        <h3>🔄 当前活动组</h3>
-                        <p id="active-group">加载中...</p>
-                        <small id="group-suspended-info" class="text-warning"></small>
-                    </div>
-                </div>
-                
-                <!-- 连接统计详情区域（可折叠） -->
-                <div class="collapsible-section" id="connection-details-section">
-                    <div class="section-header" onclick="toggleCollapsible('connection-details')">
-                        <h3>🔗 连接统计详情</h3>
-                        <span class="collapse-indicator" id="connection-details-indicator">▼</span>
-                    </div>
-                    <div class="section-content collapsed" id="connection-details-content">
-                        <div id="connections-stats">
-                            <p>加载中...</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 挂起请求监控区域（可折叠） -->
-                <div class="collapsible-section" id="suspended-monitoring-section">
-                    <div class="section-header" onclick="toggleCollapsible('suspended-monitoring')">
-                        <h3>⏸️ 挂起请求监控</h3>
-                        <span class="collapse-indicator" id="suspended-monitoring-indicator">▼</span>
-                    </div>
-                    <div class="section-content collapsed" id="suspended-monitoring-content">
-                        <!-- 挂起请求统计 -->
-                        <h4>⏸️ 挂起请求状态</h4>
-                        <div id="suspended-stats" class="cards">
-                            <div class="card">
-                                <h5>当前挂起</h5>
-                                <p id="current-suspended">0</p>
-                            </div>
-                            <div class="card">
-                                <h5>历史总数</h5>
-                                <p id="total-suspended">0</p>
-                            </div>
-                            <div class="card">
-                                <h5>成功恢复</h5>
-                                <p id="successful-suspended">0</p>
-                            </div>
-                            <div class="card">
-                                <h5>超时失败</h5>
-                                <p id="timeout-suspended">0</p>
-                            </div>
-                            <div class="card">
-                                <h5>成功率</h5>
-                                <p id="suspended-success-rate-detail">0%</p>
-                            </div>
-                            <div class="card">
-                                <h5>平均挂起时间</h5>
-                                <p id="avg-suspended-time">0ms</p>
-                            </div>
-                        </div>
-                        
-                        <!-- 当前挂起的连接列表 -->
-                        <div id="suspended-connections-section">
-                            <h4>当前挂起的连接</h4>
-                            <div id="suspended-connections-table">
-                                <p>无挂起连接</p>
-                            </div>
-                        </div>
+                <!-- React概览页面容器 -->
+                <div id="react-overview-container">
+                    <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                        <p>React概览页面加载中...</p>
                     </div>
                 </div>
             </div>
@@ -1143,10 +1081,11 @@ const indexHTML = `<!DOCTYPE html>
 
             <!-- 端点标签页 -->
             <div id="endpoints" class="tab-content">
-                <div class="section">
-                    <h2>📡 端点状态</h2>
-                    <div id="endpoints-table">
-                        <p>加载中...</p>
+                <!-- React端点页面容器 -->
+                <div id="react-endpoints-container">
+                    <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                        <p>React端点页面加载中...</p>
                     </div>
                 </div>
             </div>
@@ -1380,6 +1319,9 @@ const indexHTML = `<!DOCTYPE html>
     </div>
 
     <script src="/static/js/charts.js"></script>
+    <!-- React模块化系统 -->
+    <script src="/static/js/react/registry.js"></script>
+    <script src="/static/js/react/moduleLoader.js"></script>
     <!-- 模块化JavaScript文件 -->
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/sseManager.js"></script>
@@ -1397,21 +1339,138 @@ const indexHTML = `<!DOCTYPE html>
             setTimeout(() => {
                 if (window.webInterface) {
                     console.log('📊 扩展图表功能到WebInterface');
-                    
+
                     // 保存原始的showTab方法
                     const originalShowTab = window.webInterface.showTab.bind(window.webInterface);
-                    
-                    // 扩展showTab方法以支持图表
+
+                    // 扩展showTab方法以支持图表和React概览页面
                     window.webInterface.showTab = function(tabName) {
                         originalShowTab(tabName);
-                        
+
+                        // 当切换到概览标签时，确保React组件已渲染
+                        if (tabName === 'overview') {
+                            setTimeout(async () => {
+                                const container = document.getElementById('react-overview-container');
+                                if (container && !container.querySelector('[data-reactroot]')) {
+                                    await renderOverviewPage();
+                                }
+                            }, 100);
+                        }
+
+                        // 当切换到端点标签时，确保React组件已渲染
+                        if (tabName === 'endpoints') {
+                            setTimeout(async () => {
+                                const container = document.getElementById('react-endpoints-container');
+                                if (container && !container.querySelector('[data-reactroot]')) {
+                                    await renderEndpointsPage();
+                                }
+                            }, 100);
+                        }
+
                         // 当切换到图表标签时，确保图表已初始化并更新数据
                         if (tabName === 'charts') {
                             initializeCharts();
                         }
                     };
-                    
+
+                    // 保留图表功能扩展
                     console.log('✅ 图表功能扩展完成');
+
+                    // 🚀 初始化React概览页面
+                    console.log('📊 初始化React概览页面...');
+
+                    // 监听React系统就绪事件
+                    document.addEventListener('reactSystemReady', async function(event) {
+                        console.log('✅ React系统就绪，渲染概览页面');
+                        await renderOverviewPage();
+                    });
+
+                    // 如果React系统已经就绪，直接渲染
+                    if (window.ReactComponents?.isReactReady()) {
+                        setTimeout(async () => {
+                            await renderOverviewPage();
+                        }, 500);
+                    }
+
+                    // React概览页面渲染函数（模块化版本）
+                    async function renderOverviewPage() {
+                        const container = document.getElementById('react-overview-container');
+                        if (!container) {
+                            console.error('❌ 找不到React概览页面容器');
+                            return;
+                        }
+
+                        try {
+                            console.log('📦 [模块加载] 开始加载概览页面模块...');
+
+                            // 使用模块加载器动态导入概览页面组件
+                            const OverviewPageModule = await window.importReactModule('pages/overview/index.jsx');
+                            const OverviewPage = OverviewPageModule.default || OverviewPageModule;
+
+                            if (!OverviewPage) {
+                                throw new Error('概览页面模块加载失败');
+                            }
+
+                            console.log('✅ [模块加载] 概览页面模块加载成功');
+
+                            // 创建并渲染React组件
+                            const overviewComponent = React.createElement(OverviewPage);
+                            window.ReactComponents.renderComponent(overviewComponent, container);
+
+                            console.log('✅ [模块渲染] 概览页面渲染成功');
+
+                        } catch (error) {
+                            console.error('❌ [模块渲染] 概览页面渲染失败:', error);
+
+                            // 显示错误信息
+                            container.innerHTML =
+                                '<div style="text-align: center; padding: 48px 24px; color: #ef4444;">' +
+                                    '<div style="font-size: 48px; margin-bottom: 16px;">❌</div>' +
+                                    '<h3 style="margin: 0 0 8px 0;">模块加载失败</h3>' +
+                                    '<p style="margin: 0; font-size: 14px;">' + error.message + '</p>' +
+                                '</div>';
+                        }
+                    }
+
+                    // React端点页面渲染函数（模块化版本）
+                    async function renderEndpointsPage() {
+                        const container = document.getElementById('react-endpoints-container');
+                        if (!container) {
+                            console.error('❌ 找不到React端点页面容器');
+                            return;
+                        }
+
+                        try {
+                            console.log('📦 [模块加载] 开始加载端点页面模块...');
+
+                            // 使用模块加载器动态导入端点页面组件
+                            const EndpointsPageModule = await window.importReactModule('pages/endpoints/index.jsx');
+                            const EndpointsPage = EndpointsPageModule.default || EndpointsPageModule;
+
+                            if (!EndpointsPage) {
+                                throw new Error('端点页面模块加载失败');
+                            }
+
+                            console.log('✅ [模块加载] 端点页面模块加载成功');
+
+                            // 创建并渲染React组件
+                            const endpointsComponent = React.createElement(EndpointsPage);
+                            window.ReactComponents.renderComponent(endpointsComponent, container);
+
+                            console.log('✅ [模块渲染] 端点页面渲染成功');
+
+                        } catch (error) {
+                            console.error('❌ [模块渲染] 端点页面渲染失败:', error);
+
+                            // 显示错误信息
+                            container.innerHTML =
+                                '<div style="text-align: center; padding: 48px 24px; color: #ef4444;">' +
+                                    '<div style="font-size: 48px; margin-bottom: 16px;">❌</div>' +
+                                    '<h3 style="margin: 0 0 8px 0;">模块加载失败</h3>' +
+                                    '<p style="margin: 0; font-size: 14px;">' + error.message + '</p>' +
+                                '</div>';
+                        }
+                    }
                 } else {
                     console.error('❌ WebInterface未找到，无法扩展图表功能');
                 }
@@ -1423,7 +1482,7 @@ const indexHTML = `<!DOCTYPE html>
             if (chartManager) {
                 return; // 已经初始化过了
             }
-            
+
             try {
                 console.log('🔄 开始初始化图表系统...');
                 chartManager = new ChartManager();

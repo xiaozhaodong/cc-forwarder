@@ -332,9 +332,8 @@ window.SSEManager = class {
         // 调用对应标签页的刷新方法
         switch (currentTab) {
             case 'endpoints':
-                if (this.webInterface.endpointsManager) {
-                    this.webInterface.endpointsManager.refreshEndpoints();
-                }
+                // 端点页面已迁移到React，不再需要传统的刷新操作
+                console.log('端点页面已迁移到React，跳过传统刷新操作');
                 break;
             case 'groups':
                 if (this.webInterface.groupsManager) {
@@ -359,9 +358,8 @@ window.SSEManager = class {
         // 使用缓存数据更新，避免重复API调用
         switch (currentTab) {
             case 'endpoints':
-                if (this.webInterface.cachedData.endpoints && this.webInterface.endpointsManager) {
-                    this.webInterface.endpointsManager.displayEndpoints(this.webInterface.cachedData.endpoints);
-                }
+                // 端点页面已迁移到React，不再需要传统的显示操作
+                console.log('端点页面已迁移到React，跳过传统显示操作');
                 break;
             case 'groups':
                 if (this.webInterface.cachedData.groups && this.webInterface.groupsManager) {
@@ -425,11 +423,9 @@ window.SSEManager = class {
         if (data.endpoints) {
             this.webInterface.cachedData.endpoints = data;
             
-            // 如果当前在endpoints标签页，立即更新UI
+            // 如果当前在端点页面，React组件将通过useSSE Hook自动处理端点数据更新
             if (this.webInterface.currentTab === 'endpoints') {
-                Utils.updateElementHTML('endpoints-table', 
-                    this.webInterface.endpointsManager.generateEndpointsTable(data.endpoints));
-                this.webInterface.endpointsManager.bindEndpointEvents();
+                console.log('端点SSE数据接收，页面已迁移到React，跳过传统DOM更新');
             }
             
             // 更新概览页面的端点数量
@@ -455,9 +451,9 @@ window.SSEManager = class {
                     endpoints[endpointIndex].last_check = data.last_check;
                     endpoints[endpointIndex].never_checked = data.never_checked || false;
                     
-                    // 如果当前在endpoints标签页，实时更新特定行
+                    // 如果当前在端点页面，React组件将通过useSSE Hook自动处理端点状态更新
                     if (this.webInterface.currentTab === 'endpoints') {
-                        this.updateEndpointTableRow(data.endpoint, endpoints[endpointIndex]);
+                        console.log(`端点 ${data.endpoint} 状态更新，页面已迁移到React，跳过传统表格行更新`);
                     }
                     
                     // 如果在概览页面，更新相关统计

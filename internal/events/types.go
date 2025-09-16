@@ -16,16 +16,18 @@ const (
 	EventEndpointUnhealthy EventType = "endpoint_unhealthy"
 
 	// 连接统计事件
-	EventConnectionStats  EventType = "connection_stats"
-	EventResponseReceived EventType = "response_received"
+	EventConnectionStats        EventType = "connection_stats"
+	EventConnectionStatsUpdated EventType = "connection_stats_updated"
+	EventResponseReceived       EventType = "response_received"
 
 	// 组管理事件
 	EventGroupStatusChanged      EventType = "group_status_changed"
 	EventGroupHealthStatsChanged EventType = "group_health_stats_changed"
 
 	// 系统级事件
-	EventSystemError   EventType = "system_error"
-	EventConfigChanged EventType = "config_changed"
+	EventSystemError        EventType = "system_error"
+	EventSystemStatsUpdated EventType = "system_stats_updated"
+	EventConfigChanged      EventType = "config_changed"
 )
 
 // 事件优先级
@@ -56,9 +58,11 @@ var EventTypeMapping = map[EventType]string{
 	EventEndpointHealthy:         "endpoint",
 	EventEndpointUnhealthy:       "endpoint",
 	EventConnectionStats:         "connection",
+	EventConnectionStatsUpdated:  "connection",
 	EventResponseReceived:        "connection",
 	EventGroupStatusChanged:      "group",
 	EventGroupHealthStatsChanged: "group",
 	EventSystemError:             "status",
+	EventSystemStatsUpdated:      "status",
 	EventConfigChanged:           "config",
 }
