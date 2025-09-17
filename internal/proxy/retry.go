@@ -16,6 +16,10 @@ import (
 )
 
 // RetryHandler handles retry logic with exponential backoff
+// @Deprecated: This struct is deprecated. Use RetryManager and SuspensionManager instead.
+// - RetryManager: 负责重试算法逻辑、基于错误分类的重试决策、指数退避延迟计算
+// - SuspensionManager: 负责请求挂起逻辑和等待组切换通知
+// 该结构体将在后续版本中被完全移除，当前仅作为过渡期兼容保留
 type RetryHandler struct {
 	config          *config.Config
 	endpointManager *endpoint.Manager
@@ -30,6 +34,7 @@ type RetryHandler struct {
 }
 
 // NewRetryHandler creates a new retry handler
+// @Deprecated: Use NewRetryManager and NewSuspensionManager instead
 func NewRetryHandler(cfg *config.Config) *RetryHandler {
 	return &RetryHandler{
 		config: cfg,
@@ -103,17 +108,13 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 				// 挂起请求等待组切换
 				if rh.waitForGroupSwitch(ctx, connID) {
 					slog.InfoContext(ctx, fmt.Sprintf("🚀 [挂起恢复] 连接 %s 组切换完成，重新进入重试循环", connID))
-					// 更新请求状态为转发中（从挂起状态恢复）
-					if rh.usageTracker != nil {
-						rh.usageTracker.RecordRequestUpdate(connID, "", "", "forwarding", totalEndpointsAttempted-1, 0)
-					}
+					// 状态管理已迁移到LifecycleManager，此处不再记录状态
+					// 历史注释：更新请求状态为转发中（从挂起状态恢复）
 					continue // 重新进入外层循环，获取新的端点列表
 				} else {
 					slog.WarnContext(ctx, fmt.Sprintf("⚠️ [挂起失败] 连接 %s 挂起等待超时或被取消，继续原有错误处理", connID))
-					// 更新请求状态为超时（挂起失败）
-					if rh.usageTracker != nil {
-						rh.usageTracker.RecordRequestUpdate(connID, "", "", "timeout", totalEndpointsAttempted-1, 0)
-					}
+					// 状态管理已迁移到LifecycleManager，此处不再记录状态
+					// 历史注释：更新请求状态为超时（挂起失败）
 					// 继续执行原有的错误处理逻辑
 				}
 			}
@@ -152,15 +153,8 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 			slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s (组: %s, 总尝试 %d)", 
 				connID, ep.Config.Name, groupName, totalEndpointsAttempted))
 			
-			// Record endpoint selection in usage tracking
-			if rh.usageTracker != nil && connID != "" {
-				// 对于第一次尝试，记录为"start"状态，后续记录为"retry"
-				status := "forwarding"
-				if totalEndpointsAttempted > 1 {
-					status = "retry"
-				}
-				rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, totalEndpointsAttempted-1, 0)
-			}
+			// 状态管理已迁移到LifecycleManager，此处不再记录状态
+			// 历史注释：Record endpoint selection in usage tracking
 			
 			// Retry logic for current endpoint
 			for attempt := 1; attempt <= rh.config.Retry.MaxAttempts; attempt++ {
@@ -169,11 +163,8 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					if lastResp != nil {
 						lastResp.Body.Close()
 					}
-					// 记录请求取消状态
-					if rh.usageTracker != nil && connID != "" {
-						cancelStatus := rh.determineErrorStatus(ctx.Err(), ctx)
-						rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, cancelStatus, attempt-1, 0)
-					}
+					// 状态管理已迁移到LifecycleManager，此处不再记录状态
+					// 历史注释：记录请求取消状态
 					return nil, ctx.Err()
 				default:
 				}
@@ -188,24 +179,18 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 						// 区分真正的成功和不可重试的错误
 						if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 							// 2xx/3xx - 真正的成功
-							slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: %d (总尝试 %d 个端点)", 
+							slog.InfoContext(ctxWithEndpoint, fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: %d (总尝试 %d 个端点)",
 								connID, ep.Config.Name, groupName, resp.StatusCode, totalEndpointsAttempted))
-							
-							// Record success in usage tracking
-							if rh.usageTracker != nil && connID != "" {
-								status := "processing"  // HTTP响应成功但Token解析中
-								rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, attempt-1, resp.StatusCode)
-							}
+
+							// 状态管理已迁移到LifecycleManager，此处不再记录状态
+							// 历史注释：Record success in usage tracking
 						} else {
 							// 4xx/5xx - 不可重试的错误（如404, 401等）
 							slog.ErrorContext(ctxWithEndpoint, fmt.Sprintf("❌ [请求失败] [%s] 端点: %s (组: %s), 状态码: %d - %s (总尝试 %d 个端点)", 
 								connID, ep.Config.Name, groupName, resp.StatusCode, retryDecision.Reason, totalEndpointsAttempted))
-							
-							// Record error in usage tracking
-							if rh.usageTracker != nil && connID != "" {
-								status := "error"  // 明确标记为错误状态
-								rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, status, attempt-1, resp.StatusCode)
-							}
+
+							// 状态管理已迁移到LifecycleManager，此处不再记录状态
+							// 历史注释：Record error in usage tracking
 						}
 						
 						return resp, nil
@@ -226,16 +211,14 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					// Network error or other failure
 					lastErr = err
 					if err != nil {
-						// 确定错误状态类型
-						errorStatus := rh.determineErrorStatus(err, ctx)
+						// 状态管理已迁移到LifecycleManager，类型判断不再需要
+						// 历史注释：确定错误状态类型
 						
 						slog.WarnContext(ctxWithEndpoint, fmt.Sprintf("❌ [网络错误] [%s] 端点: %s (组: %s, 尝试 %d/%d) - 错误: %s", 
 							connID, ep.Config.Name, groupName, attempt, rh.config.Retry.MaxAttempts, err.Error()))
 						
-						// Record error with proper status in usage tracking
-						if rh.usageTracker != nil && connID != "" {
-							rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, errorStatus, attempt-1, 0)
-						}
+						// 状态管理已迁移到LifecycleManager，此处不再记录状态
+						// 历史注释：Record error with proper status in usage tracking
 					}
 				}
 
@@ -249,10 +232,8 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					rh.monitoringMiddleware.RecordRetry(connID, ep.Config.Name)
 				}
 				
-				// 更新状态为retry（同端点重试也是重试状态）
-				if rh.usageTracker != nil && connID != "" {
-					rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, "retry", attempt-1, 0)
-				}
+				// 状态管理已迁移到LifecycleManager，此处不再记录状态
+				// 历史注释：更新状态为retry（同端点重试也是重试状态）
 
 				// Calculate delay with exponential backoff
 				delay := rh.calculateDelay(attempt)
@@ -266,11 +247,8 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 					if lastResp != nil {
 						lastResp.Body.Close()
 					}
-					// 记录请求取消状态
-					if rh.usageTracker != nil && connID != "" {
-						cancelStatus := rh.determineErrorStatus(ctx.Err(), ctx)
-						rh.usageTracker.RecordRequestUpdate(connID, ep.Config.Name, groupName, cancelStatus, attempt-1, 0)
-					}
+					// 状态管理已迁移到LifecycleManager，此处不再记录状态
+					// 历史注释：记录请求取消状态
 					return nil, ctx.Err()
 				case <-time.After(delay):
 					// Continue to next attempt
@@ -645,10 +623,8 @@ func (rh *RetryHandler) waitForGroupSwitch(ctx context.Context, connID string) b
 	
 	slog.InfoContext(ctx, fmt.Sprintf("⏸️ [请求挂起] 连接 %s 请求已挂起，等待组切换 (当前挂起数: %d)", connID, currentCount))
 	
-	// 更新请求状态为挂起状态
-	if rh.usageTracker != nil {
-		rh.usageTracker.RecordRequestUpdate(connID, "", "", "suspended", 0, 0)
-	}
+	// 状态管理已迁移到LifecycleManager，此处不再记录状态
+	// 历史注释：更新请求状态为挂起状态
 	
 	// 订阅组切换通知
 	groupChangeNotify := rh.endpointManager.GetGroupManager().SubscribeToGroupChanges()

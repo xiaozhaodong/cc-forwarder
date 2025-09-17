@@ -52,6 +52,7 @@ const (
 	ErrorTypeNetwork
 	ErrorTypeTimeout
 	ErrorTypeHTTP
+	ErrorTypeServerError
 	ErrorTypeStream
 	ErrorTypeAuth
 	ErrorTypeRateLimit
@@ -122,4 +123,28 @@ type TokenAnalyzerFactory interface {
 // ResponseProcessorFactory 响应处理器工厂接口
 type ResponseProcessorFactory interface {
 	NewResponseProcessor() ResponseProcessor
+}
+
+// RetryManagerFactory 重试管理器工厂接口
+type RetryManagerFactory interface {
+	NewRetryManager() RetryManager
+}
+
+// SuspensionManagerFactory 挂起管理器工厂接口
+type SuspensionManagerFactory interface {
+	NewSuspensionManager() SuspensionManager
+}
+
+// RetryManager 重试管理器接口
+type RetryManager interface {
+	ShouldRetry(errorCtx *ErrorContext, attempt int) (bool, time.Duration)
+	GetHealthyEndpoints(ctx context.Context) []*endpoint.Endpoint
+	GetMaxAttempts() int
+}
+
+// SuspensionManager 挂起管理器接口
+type SuspensionManager interface {
+	ShouldSuspend(ctx context.Context) bool
+	WaitForGroupSwitch(ctx context.Context, connID string) bool
+	GetSuspendedRequestsCount() int
 }

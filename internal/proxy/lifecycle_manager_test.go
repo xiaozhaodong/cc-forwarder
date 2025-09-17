@@ -25,6 +25,7 @@ func TestRequestLifecycleManager_SettersAndGetters(t *testing.T) {
 	// 测试设置方法
 	rlm.SetEndpoint("test-endpoint", "test-group")
 	rlm.SetModel("claude-3-sonnet")
+	rlm.SetFinalStatusCode(404)
 
 	// 测试获取方法
 	if rlm.GetRequestID() != requestID {
@@ -41,6 +42,10 @@ func TestRequestLifecycleManager_SettersAndGetters(t *testing.T) {
 
 	if rlm.modelName != "claude-3-sonnet" {
 		t.Errorf("Expected model 'claude-3-sonnet', got '%s'", rlm.modelName)
+	}
+
+	if rlm.GetFinalStatusCode() != 404 {
+		t.Errorf("Expected final status code 404, got %d", rlm.GetFinalStatusCode())
 	}
 }
 

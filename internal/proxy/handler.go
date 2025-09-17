@@ -34,6 +34,9 @@ type Handler struct {
 	forwarder            *handlers.Forwarder
 	regularHandler       *handlers.RegularHandler
 	streamingHandler     *handlers.StreamingHandler
+	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
+	// 确保在SetUsageTracker中重建Handler时保持共享状态
+	sharedSuspensionManager handlers.SuspensionManager
 }
 
 // TokenParserProviderImpl 实现TokenParserProvider接口
@@ -150,7 +153,7 @@ func (rha *RetryHandlerAdapter) WaitForGroupSwitch(ctx context.Context, connID s
 	return rha.innerHandler.waitForGroupSwitch(ctx, connID)
 }
 
-func (rha *RetryHandlerAdapter) SetEndpointManager(manager interface{}) {
+func (rha *RetryHandlerAdapter) SetEndpointManager(manager any) {
 	if em, ok := manager.(*endpoint.Manager); ok {
 		rha.innerHandler.SetEndpointManager(em)
 	}
@@ -198,12 +201,31 @@ func (f *ErrorRecoveryFactoryImpl) NewErrorRecoveryManager(usageTracker *trackin
 
 type RetryHandlerFactoryImpl struct{}
 
-func (f *RetryHandlerFactoryImpl) NewRetryHandler(configInterface interface{}) handlers.RetryHandler {
+func (f *RetryHandlerFactoryImpl) NewRetryHandler(configInterface any) handlers.RetryHandler {
 	if cfg, ok := configInterface.(*config.Config); ok {
 		innerHandler := NewRetryHandler(cfg)
 		return &RetryHandlerAdapter{innerHandler: innerHandler}
 	}
 	return nil
+}
+
+type RetryManagerFactoryImpl struct {
+	config          *config.Config
+	errorRecovery   *ErrorRecoveryManager
+	endpointManager *endpoint.Manager
+}
+
+func (f *RetryManagerFactoryImpl) NewRetryManager() handlers.RetryManager {
+	return NewRetryManager(f.config, f.errorRecovery, f.endpointManager)
+}
+
+type SuspensionManagerFactoryImpl struct {
+	config          *config.Config
+	endpointManager *endpoint.Manager
+}
+
+func (f *SuspensionManagerFactoryImpl) NewSuspensionManager() handlers.SuspensionManager {
+	return NewSuspensionManager(f.config, f.endpointManager, f.endpointManager.GetGroupManager())
 }
 
 
@@ -232,13 +254,30 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	streamProcessorFactory := &StreamProcessorFactoryImpl{}
 	errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
 	retryHandlerFactory := &RetryHandlerFactoryImpl{}
-	
+	retryManagerFactory := &RetryManagerFactoryImpl{
+		config:          cfg,
+		errorRecovery:   NewErrorRecoveryManager(nil), // 临时创建，后续会在工厂中重新创建
+		endpointManager: endpointManager,
+	}
+	suspensionManagerFactory := &SuspensionManagerFactoryImpl{
+		config:          cfg,
+		endpointManager: endpointManager,
+	}
+
+	// 🔧 [Critical修复] 创建单一共享的SuspensionManager实例
+	// 确保常规请求和流式请求共享同一个挂起计数器，真正实现全局限制
+	sharedSuspensionManager := suspensionManagerFactory.NewSuspensionManager()
+
+	// 🔧 [Critical修复] 保存共享SuspensionManager的引用到Handler结构体
+	// 确保在SetUsageTracker中能重用相同的实例
+	h.sharedSuspensionManager = sharedSuspensionManager
+
 	// 创建RetryHandler适配器
 	retryHandlerAdapter := &RetryHandlerAdapter{innerHandler: retryHandler}
-	
+
 	// 创建TokenAnalyzer适配器
 	tokenAnalyzerAdapter := &TokenAnalyzerAdapter{innerAnalyzer: h.tokenAnalyzer}
-	
+
 	// 创建regularHandler - 传入正确初始化的组件
 	h.regularHandler = handlers.NewRegularHandler(
 		cfg,
@@ -249,8 +288,12 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		tokenAnalyzerAdapter, // 传入TokenAnalyzer适配器
 		retryHandlerAdapter, // 传入RetryHandler适配器
 		errorRecoveryFactory,
+		retryManagerFactory,
+		suspensionManagerFactory,
+		// 🔧 [Critical修复] 传入共享的SuspensionManager实例
+		sharedSuspensionManager,
 	)
-	
+
 	// 创建streamingHandler
 	h.streamingHandler = handlers.NewStreamingHandler(
 		cfg,
@@ -261,6 +304,9 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		streamProcessorFactory,
 		errorRecoveryFactory,
 		retryHandlerFactory,
+		suspensionManagerFactory,
+		// 🔧 [Critical修复] 传入相同的共享SuspensionManager实例
+		sharedSuspensionManager,
 	)
 	
 	// 初始化 token analyzer，暂时不设置 usageTracker 和 monitoringMiddleware
@@ -289,23 +335,38 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	// ⚠️ 重要：先更新tokenAnalyzer，再创建适配器
 	provider := &TokenParserProviderImpl{}
 	h.tokenAnalyzer = response.NewTokenAnalyzer(ut, h.retryHandler.monitoringMiddleware, provider)
-	
+
+	// 创建共用的工厂实例
+	errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
+	retryManagerFactory := &RetryManagerFactoryImpl{
+		config:          h.config,
+		errorRecovery:   NewErrorRecoveryManager(nil), // 临时创建，后续会在工厂中重新创建
+		endpointManager: h.endpointManager,
+	}
+	suspensionManagerFactory := &SuspensionManagerFactoryImpl{
+		config:          h.config,
+		endpointManager: h.endpointManager,
+	}
+
 	// 重新创建regularHandler以包含usageTracker
 	if h.regularHandler != nil {
 		// 创建适配器 - 使用更新后的tokenAnalyzer
 		retryHandlerAdapter := &RetryHandlerAdapter{innerHandler: h.retryHandler}
 		tokenAnalyzerAdapter := &TokenAnalyzerAdapter{innerAnalyzer: h.tokenAnalyzer}
-		errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
-		
+
 		h.regularHandler = handlers.NewRegularHandler(
 			h.config,
 			h.endpointManager,
 			h.forwarder,
 			ut,
-			h.responseProcessor, // responseProcessor 
+			h.responseProcessor, // responseProcessor
 			tokenAnalyzerAdapter, // tokenAnalyzer适配器
 			retryHandlerAdapter, // retryHandler适配器
 			errorRecoveryFactory,
+			retryManagerFactory,
+			suspensionManagerFactory,
+			// 🔧 [Critical修复] 使用保存的共享SuspensionManager实例
+			h.sharedSuspensionManager,
 		)
 	}
 	
@@ -313,7 +374,6 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	if h.streamingHandler != nil {
 		tokenParserFactory := &TokenParserFactoryImpl{}
 		streamProcessorFactory := &StreamProcessorFactoryImpl{}
-		errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
 		retryHandlerFactory := &RetryHandlerFactoryImpl{}
 		
 		h.streamingHandler = handlers.NewStreamingHandler(
@@ -325,6 +385,9 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 			streamProcessorFactory,
 			errorRecoveryFactory,
 			retryHandlerFactory,
+			suspensionManagerFactory,
+			// 🔧 [Critical修复] 使用保存的共享SuspensionManager实例
+			h.sharedSuspensionManager,
 		)
 	}
 	

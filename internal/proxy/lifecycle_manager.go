@@ -31,6 +31,7 @@ type RequestLifecycleManager struct {
 	retryCount          int                           // 重试计数
 	lastStatus          string                        // 最后状态
 	lastError           error                         // 最后一次错误
+	finalStatusCode     int                           // 最终状态码
 	modelUpdatedInDB    bool                          // 标记是否已在数据库中更新过模型
 	modelUpdateMu       sync.Mutex                    // 保护模型更新标记
 }
@@ -149,14 +150,14 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 		if tokens != nil {
 			totalTokens := tokens.InputTokens + tokens.OutputTokens
 			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
-			
-			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: 200 (总尝试 %d 个端点)", 
+
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (组: %s) (总尝试 %d 个端点)",
 				rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount+1))
-			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms", 
-				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens, 
+			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
+				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
 		} else {
-			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 模型: %s, 耗时: %dms (无Token统计)", 
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (组: %s), 模型: %s, 耗时: %dms (无Token统计)",
 				rlm.requestID, rlm.endpointName, rlm.groupName, modelName, duration.Milliseconds()))
 		}
 		
@@ -394,4 +395,15 @@ func (rlm *RequestLifecycleManager) IncrementRetry() {
 // GetLastError 获取最后一次错误
 func (rlm *RequestLifecycleManager) GetLastError() error {
 	return rlm.lastError
+}
+
+// SetFinalStatusCode 设置最终状态码
+// 用于记录请求的实际HTTP状态码，替代硬编码的状态码
+func (rlm *RequestLifecycleManager) SetFinalStatusCode(statusCode int) {
+	rlm.finalStatusCode = statusCode
+}
+
+// GetFinalStatusCode 获取最终状态码
+func (rlm *RequestLifecycleManager) GetFinalStatusCode() int {
+	return rlm.finalStatusCode
 }
