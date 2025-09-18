@@ -26,7 +26,7 @@ type StreamingHandler struct {
 	retryHandlerFactory      RetryHandlerFactory
 	suspensionManagerFactory SuspensionManagerFactory
 	// 🔧 [修复] 共享SuspensionManager实例，确保全局挂起限制生效
-	sharedSuspensionManager  SuspensionManager
+	sharedSuspensionManager SuspensionManager
 }
 
 // NewStreamingHandler 创建新的StreamingHandler实例
@@ -55,7 +55,7 @@ func NewStreamingHandler(
 		suspensionManagerFactory: suspensionManagerFactory,
 		// 🔧 [Critical修复] 使用传入的共享SuspensionManager实例
 		// 确保流式请求与常规请求共享同一个全局挂起计数器
-		sharedSuspensionManager:  sharedSuspensionManager,
+		sharedSuspensionManager: sharedSuspensionManager,
 	}
 }
 
@@ -130,6 +130,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	// 🔧 [重试逻辑修复] 对每个端点进行max_attempts次重试，而不是只尝试一次
 	// 尝试端点直到成功
 	var lastErr error // 声明在外层作用域，供最终错误处理使用
+	var currentAttemptCount int // 🔢 [语义修复] 声明在外层作用域，用于追踪真实尝试次数
 	for i := 0; i < len(endpoints); i++ {
 		ep := endpoints[i]
 		// 更新生命周期管理器信息
@@ -140,11 +141,14 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 		endpointSuccess := false
 
 		for attempt := 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
+			// 🔢 [语义修复] 每次尝试端点时增加真实的尝试计数
+			currentAttemptCount = lifecycleManager.IncrementAttempt()
+
 			// 检查是否被取消
 			select {
 			case <-ctx.Done():
 				slog.Info(fmt.Sprintf("🚫 [客户端取消检测] [%s] 检测到客户端取消，立即停止重试", connID))
-				lifecycleManager.UpdateStatus("cancelled", i+1, attempt-1)
+				lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
 				fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
 				flusher.Flush()
 				return
@@ -157,9 +161,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				// ✅ 成功！开始处理响应
 				endpointSuccess = true
 				slog.Info(fmt.Sprintf("✅ [流式成功] [%s] 端点: %s (组: %s), 尝试次数: %d",
-					connID, ep.Config.Name, ep.Config.Group, attempt))
+					connID, ep.Config.Name, ep.Config.Group, currentAttemptCount))
 
-				lifecycleManager.UpdateStatus("processing", i+1, attempt)
+				lifecycleManager.UpdateStatus("processing", currentAttemptCount, resp.StatusCode)
 
 				// 设置选中的端点到请求上下文，用于日志记录
 				*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
@@ -199,7 +203,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 					}
 
 					// ✅ 使用正确的状态更新
-					lifecycleManager.UpdateStatus(status, i+1, resp.StatusCode)
+					lifecycleManager.UpdateStatus(status, currentAttemptCount, resp.StatusCode)
 
 					// ✅ 如果有token信息，使用失败Token记录方法，不改变请求状态
 					if finalTokenUsage != nil {
@@ -264,7 +268,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// 检查是否为客户端取消错误
 			if errorCtx.ErrorType == ErrorTypeClientCancel {
 				slog.Info(fmt.Sprintf("🚫 [客户端取消检测] [%s] 检测到客户端取消，立即停止重试", connID))
-				lifecycleManager.UpdateStatus("cancelled", i+1, attempt-1)
+				lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
 				fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
 				flusher.Flush()
 				return
@@ -272,7 +276,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 			// 非取消错误：记录重试状态
 			lifecycleManager.HandleError(lastErr)
-			lifecycleManager.UpdateStatus("retry", i+1, attempt-1)
+			lifecycleManager.UpdateStatus("retry", currentAttemptCount, 0)
 
 			slog.Warn(fmt.Sprintf("🔄 [流式重试] [%s] 端点: %s, 尝试: %d/%d, 错误: %v",
 				connID, ep.Config.Name, attempt, sh.config.Retry.MaxAttempts, lastErr))
@@ -293,7 +297,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				select {
 				case <-ctx.Done():
 					slog.Info(fmt.Sprintf("🚫 [重试取消] [%s] 等待重试期间检测到取消", connID))
-					lifecycleManager.UpdateStatus("cancelled", i+1, attempt)
+					lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
 					fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
 					flusher.Flush()
 					return
@@ -317,7 +321,8 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				// 因为这类错误与端点健康状况无关，资源不存在问题不会因为更换端点而解决
 				if errorCtx.ErrorType == ErrorTypeHTTP {
 					slog.Info(fmt.Sprintf("❌ [HTTP错误终止] [%s] HTTP错误不尝试其他端点: %v", connID, lastErr))
-					lifecycleManager.UpdateStatus("error", len(endpoints), 0)
+					// 🔧 [语义修复] 使用-1参数让内部计数器处理
+					lifecycleManager.UpdateStatus("error", -1, 0)
 					fmt.Fprintf(w, "data: error: HTTP错误，终止处理: %v\n\n", lastErr)
 					flusher.Flush()
 					return
@@ -341,10 +346,20 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 	// 检查是否应该挂起请求
 	if suspensionMgr.ShouldSuspend(ctx) {
+		currentEndpoints := sh.endpointManager.GetHealthyEndpoints()
+		if cfg := sh.endpointManager.GetConfig(); cfg != nil && cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled {
+			currentEndpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+		}
+
+		// 🔧 [语义修复] 使用-1参数让内部计数器处理
+		lifecycleManager.UpdateStatus("suspended", -1, 0)
 		fmt.Fprintf(w, "data: suspend: 当前所有组均不可用，请求已挂起等待组切换...\n\n")
 		flusher.Flush()
 
-		slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 请求已挂起等待组切换", connID))
+		// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
+		actualAttemptCount := lifecycleManager.GetAttemptCount()
+		slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d",
+			connID, actualAttemptCount, len(currentEndpoints)))
 
 		// 等待组切换
 		if suspensionMgr.WaitForGroupSwitch(ctx, connID) {
@@ -380,7 +395,8 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	slog.Warn(fmt.Sprintf("⚠️ [挂起失败] [%s] 挂起等待超时或失败", connID))
 
 	// 最终失败处理 - 生命周期管理器已处理错误分类
-	lifecycleManager.UpdateStatus("error", len(endpoints), http.StatusBadGateway)
+	// 🔧 [语义修复] 使用-1参数让内部计数器处理
+	lifecycleManager.UpdateStatus("error", -1, http.StatusBadGateway)
 	fmt.Fprintf(w, "data: error: All endpoints failed, last error: %v\n\n", lastErr)
 	flusher.Flush()
 }

@@ -35,6 +35,8 @@ type RequestLifecycleManager struct {
 	finalStatusCode     int                           // 最终状态码
 	modelUpdatedInDB    bool                          // 标记是否已在数据库中更新过模型
 	modelUpdateMu       sync.Mutex                    // 保护模型更新标记
+	attemptCounter      int                           // 内部尝试计数器（语义修复：统一重试计数）
+	attemptMu           sync.Mutex                    // 保护尝试计数器的互斥锁
 }
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
@@ -60,59 +62,66 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 
 // UpdateStatus 更新请求状态
 // 调用 RecordRequestUpdate 记录状态变化，并实现模型信息搭便车更新机制
+// 如果retryCount为-1，则使用内部attemptCounter
 func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, httpStatus int) {
+	// 处理特殊的-1标记，使用内部计数器
+	actualRetryCount := retryCount
+	if retryCount == -1 {
+		actualRetryCount = rlm.GetAttemptCount()
+	}
+
 	// 更新内部状态 (总是更新，不管usageTracker是否为nil)
-	rlm.retryCount = retryCount
+	rlm.retryCount = actualRetryCount
 	rlm.lastStatus = status
-	
+
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		// 获取当前的模型信息（线程安全）
 		currentModel := rlm.GetModelName()
-		
+
 		// 搭便车机制：检查是否需要更新模型到数据库
 		rlm.modelUpdateMu.Lock()
-		shouldUpdateModel := currentModel != "" && 
-							currentModel != "unknown" && 
+		shouldUpdateModel := currentModel != "" &&
+							currentModel != "unknown" &&
 							!rlm.modelUpdatedInDB
 		if shouldUpdateModel {
 			rlm.modelUpdatedInDB = true // 标记为已更新，避免重复
 		}
 		rlm.modelUpdateMu.Unlock()
-		
+
 		if shouldUpdateModel {
 			// 第一次有模型信息时，执行带模型的更新
 			rlm.usageTracker.RecordRequestUpdateWithModel(
-				rlm.requestID, rlm.endpointName, rlm.groupName, 
-				status, retryCount, httpStatus, currentModel)
+				rlm.requestID, rlm.endpointName, rlm.groupName,
+				status, actualRetryCount, httpStatus, currentModel)
 		} else {
 			// 正常状态更新（模型已更新过或尚未就绪）
-			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName, 
-				rlm.groupName, status, retryCount, httpStatus)
+			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName,
+				rlm.groupName, status, actualRetryCount, httpStatus)
 		}
 	}
-	
+
 	// 记录状态变更日志
 	switch status {
 	case "forwarding":
-		slog.Info(fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s (组: %s)", 
+		slog.Info(fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s (组: %s)",
 			rlm.requestID, rlm.endpointName, rlm.groupName))
 	case "retry":
-		slog.Info(fmt.Sprintf("🔄 [需要重试] [%s] 端点: %s (重试次数: %d)", 
-			rlm.requestID, rlm.endpointName, retryCount))
+		slog.Info(fmt.Sprintf("🔄 [需要重试] [%s] 端点: %s (重试次数: %d)",
+			rlm.requestID, rlm.endpointName, actualRetryCount))
 	case "processing":
-		slog.Info(fmt.Sprintf("⚙️ [请求处理] [%s] 端点: %s, 状态码: %d", 
+		slog.Info(fmt.Sprintf("⚙️ [请求处理] [%s] 端点: %s, 状态码: %d",
 			rlm.requestID, rlm.endpointName, httpStatus))
 	case "suspended":
-		slog.Warn(fmt.Sprintf("⏸️ [请求挂起] [%s] 端点: %s (组: %s)", 
+		slog.Warn(fmt.Sprintf("⏸️ [请求挂起] [%s] 端点: %s (组: %s)",
 			rlm.requestID, rlm.endpointName, rlm.groupName))
 	case "cancelled":
-		slog.Info(fmt.Sprintf("🚫 [请求取消] [%s] 端点: %s (组: %s)", 
+		slog.Info(fmt.Sprintf("🚫 [请求取消] [%s] 端点: %s (组: %s)",
 			rlm.requestID, rlm.endpointName, rlm.groupName))
 	case "error":
-		slog.Error(fmt.Sprintf("❌ [请求错误] [%s] 端点: %s, 状态码: %d", 
+		slog.Error(fmt.Sprintf("❌ [请求错误] [%s] 端点: %s, 状态码: %d",
 			rlm.requestID, rlm.endpointName, httpStatus))
 	case "timeout":
-		slog.Error(fmt.Sprintf("⏰ [请求超时] [%s] 端点: %s", 
+		slog.Error(fmt.Sprintf("⏰ [请求超时] [%s] 端点: %s",
 			rlm.requestID, rlm.endpointName))
 	}
 }
@@ -449,4 +458,22 @@ func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *trackin
 		slog.Info(fmt.Sprintf("💾 [失败请求Token记录] [%s] 端点: %s, 原因: %s, 模型: %s, 输入: %d, 输出: %d",
 			rlm.requestID, rlm.endpointName, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
 	}
+}
+
+// IncrementAttempt 线程安全地增加尝试计数
+// 用于统一重试计数语义，每次端点切换或重试时调用
+func (rlm *RequestLifecycleManager) IncrementAttempt() int {
+	rlm.attemptMu.Lock()
+	defer rlm.attemptMu.Unlock()
+	rlm.attemptCounter++
+	slog.Debug(fmt.Sprintf("🔢 [尝试计数] [%s] 当前尝试次数: %d", rlm.requestID, rlm.attemptCounter))
+	return rlm.attemptCounter
+}
+
+// GetAttemptCount 线程安全地获取当前尝试次数
+// 返回真实的尝试次数，用于数据库记录和监控
+func (rlm *RequestLifecycleManager) GetAttemptCount() int {
+	rlm.attemptMu.Lock()
+	defer rlm.attemptMu.Unlock()
+	return rlm.attemptCounter
 }

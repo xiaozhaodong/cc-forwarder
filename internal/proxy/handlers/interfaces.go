@@ -25,6 +25,9 @@ type RequestLifecycleManager interface {
 	HandleNonTokenResponse(responseContent string)
 	// 失败请求Token记录方法：只记录Token统计，不改变请求状态
 	RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string)
+	// 🔢 [语义修复] 新增尝试计数管理方法
+	IncrementAttempt() int      // 线程安全地增加尝试计数，返回当前计数
+	GetAttemptCount() int       // 线程安全地获取当前尝试次数
 }
 
 // ErrorRecoveryManager 错误恢复管理器接口

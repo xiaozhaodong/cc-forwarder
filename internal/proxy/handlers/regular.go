@@ -89,15 +89,19 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		}
 
 		// ✅ 使用与流式请求相同的重试循环
+		var currentAttemptCount int // 🔢 [语义修复] 追踪真实尝试次数
 		for i, endpoint := range endpoints {
 			lifecycleManager.SetEndpoint(endpoint.Config.Name, endpoint.Config.Group)
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 			for attempt := 1; attempt <= retryMgr.GetMaxAttempts(); attempt++ {
+				// 🔢 [语义修复] 每次尝试端点时增加真实的尝试计数
+				currentAttemptCount = lifecycleManager.IncrementAttempt()
+
 				// 检查取消
 				select {
 				case <-ctx.Done():
-					lifecycleManager.UpdateStatus("cancelled", i, 0)
+					lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
 					return
 				default:
 				}
@@ -107,7 +111,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 				if err == nil && IsSuccessStatus(resp.StatusCode) {
 					// ✅ 成功 - 响应体由processSuccessResponse管理
-					lifecycleManager.UpdateStatus("processing", i+1, resp.StatusCode)
+					lifecycleManager.UpdateStatus("processing", currentAttemptCount, resp.StatusCode)
 					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name)
 					return
 				}
@@ -147,13 +151,16 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				statusCode := GetStatusCodeFromError(err, resp)
 
 				if !shouldRetry {
-					lifecycleManager.UpdateStatus("error", i+1, statusCode)
+					lifecycleManager.UpdateStatus("error", currentAttemptCount, statusCode)
 
 					// 对于HTTP错误（如404 Not Found），立即失败而不尝试其他端点
 					// 因为这类错误与端点健康状况无关，资源不存在问题不会因为更换端点而解决
 					if errorCtx.ErrorType == ErrorTypeHTTP {
 						finalEndpoints := retryMgr.GetHealthyEndpoints(ctx)
-						lifecycleManager.UpdateStatus("error", len(finalEndpoints), statusCode)
+						// 🔢 [语义修复] 在日志中记录端点数量信息，但使用真实尝试次数
+						slog.Info(fmt.Sprintf("❌ [HTTP错误终止] [%s] HTTP错误不尝试其他端点，尝试次数: %d, 健康端点数: %d",
+							connID, currentAttemptCount, len(finalEndpoints)))
+						lifecycleManager.UpdateStatus("error", currentAttemptCount, statusCode)
 
 						// ✅ 注意：Token提取已在第119-120行的tryExtractTokensFromHttpError中完成
 						// 此时响应体已经在前面的步骤中处理过，无需额外Token处理
@@ -166,7 +173,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				}
 
 				// 重试
-				lifecycleManager.UpdateStatus("retry", i+1, statusCode)
+				lifecycleManager.UpdateStatus("retry", currentAttemptCount, statusCode)
 				if attempt < retryMgr.GetMaxAttempts() {
 					time.Sleep(delay)
 				}
@@ -178,7 +185,13 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		// 使用循环而非递归避免栈溢出
 		if suspensionMgr.ShouldSuspend(ctx) {
 			currentEndpoints := retryMgr.GetHealthyEndpoints(ctx)
-			lifecycleManager.UpdateStatus("suspended", len(currentEndpoints), 0)
+			// 🔢 [语义修复] 使用真实的尝试次数而不是端点数量
+			actualAttemptCount := lifecycleManager.GetAttemptCount()
+			lifecycleManager.UpdateStatus("suspended", actualAttemptCount, 0)
+
+			// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
+			slog.Info(fmt.Sprintf("⏸️ [常规挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d",
+				connID, actualAttemptCount, len(currentEndpoints)))
 			if suspensionMgr.WaitForGroupSwitch(ctx, connID) {
 				// 使用循环重入而非递归
 				continue // 重新获取端点列表并继续处理
@@ -193,7 +206,11 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 	// ✅ 注意：对于所有尝试过的HTTP错误，Token已在第119-120行处理
 	// 此处为最终的全部端点失败情况，无额外Token可提取
 	lastEndpoints := retryMgr.GetHealthyEndpoints(ctx)
-	lifecycleManager.UpdateStatus("error", len(lastEndpoints), http.StatusBadGateway)
+	// 🔢 [语义修复] 使用真实的尝试次数而不是端点数量，在日志中记录端点信息
+	finalAttemptCount := lifecycleManager.GetAttemptCount()
+	slog.Info(fmt.Sprintf("❌ [全部端点失败] [%s] 尝试次数: %d, 健康端点数: %d",
+		connID, finalAttemptCount, len(lastEndpoints)))
+	lifecycleManager.UpdateStatus("error", finalAttemptCount, http.StatusBadGateway)
 	http.Error(w, "All endpoints failed", http.StatusBadGateway)
 }
 
