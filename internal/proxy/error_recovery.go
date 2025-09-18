@@ -108,6 +108,16 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		return errorCtx
 	}
 
+	// 限流错误分类 - 优先级最高，必须在HTTP通用检查之前
+	if strings.Contains(errStr, "rate") || strings.Contains(errStr, "429") || strings.Contains(errStr, "quota") ||
+	   strings.Contains(errStr, "endpoint returned error: 429") {
+		errorCtx.ErrorType = ErrorTypeRateLimit
+		errorCtx.RetryableAfter = time.Minute // 限流错误建议等待1分钟
+		slog.Warn(fmt.Sprintf("🚦 [限流错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
+			requestID, endpoint, attempt, err))
+		return errorCtx
+	}
+
 	// 服务器错误分类（5xx）- 优先级高于通用HTTP错误
 	if strings.Contains(errStr, "endpoint returned error: 5") ||
 	   strings.Contains(errStr, "500") || strings.Contains(errStr, "501") ||
@@ -115,36 +125,27 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 	   strings.Contains(errStr, "504") || strings.Contains(errStr, "505") {
 		errorCtx.ErrorType = ErrorTypeServerError
 		errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
-		slog.Warn(fmt.Sprintf("🚨 [服务器错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v", 
+		slog.Warn(fmt.Sprintf("🚨 [服务器错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
 			requestID, endpoint, attempt, err))
 		return errorCtx
 	}
 
-	// HTTP错误分类（非5xx）
-	if strings.Contains(errStr, "http") || strings.Contains(errStr, "status") ||
-	   strings.Contains(errStr, "endpoint returned error") {
-		errorCtx.ErrorType = ErrorTypeHTTP
-		// 非5xx HTTP错误通常不可重试
-		slog.Error(fmt.Sprintf("🔗 [HTTP错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v", 
-			requestID, endpoint, attempt, err))
-		return errorCtx
-	}
-
-	// 认证错误分类  
+	// 认证错误分类
 	if strings.Contains(errStr, "auth") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "401") {
 		errorCtx.ErrorType = ErrorTypeAuth
 		// 认证错误通常不可重试
 		errorCtx.RetryableAfter = 0
-		slog.Error(fmt.Sprintf("🔐 [认证错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v", 
+		slog.Error(fmt.Sprintf("🔐 [认证错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
 			requestID, endpoint, attempt, err))
 		return errorCtx
 	}
 
-	// 限流错误分类
-	if strings.Contains(errStr, "rate") || strings.Contains(errStr, "429") || strings.Contains(errStr, "quota") {
-		errorCtx.ErrorType = ErrorTypeRateLimit
-		errorCtx.RetryableAfter = time.Minute // 限流错误建议等待1分钟
-		slog.Warn(fmt.Sprintf("🚦 [限流错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v", 
+	// HTTP错误分类（非5xx）- 现在在限流检查之后，避免过早捕获429错误
+	if strings.Contains(errStr, "http") || strings.Contains(errStr, "status") ||
+	   strings.Contains(errStr, "endpoint returned error") {
+		errorCtx.ErrorType = ErrorTypeHTTP
+		// 非5xx HTTP错误通常不可重试
+		slog.Error(fmt.Sprintf("🔗 [HTTP错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
 			requestID, endpoint, attempt, err))
 		return errorCtx
 	}
