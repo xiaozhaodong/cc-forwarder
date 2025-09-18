@@ -50,7 +50,7 @@ type GroupStat struct {
 
 // RequestEvent 表示请求事件
 type RequestEvent struct {
-	Type      string      `json:"type"`      // "start", "update", "complete"
+	Type      string      `json:"type"`      // "start", "update", "update_with_model", "complete", "failed_request_tokens"
 	RequestID string      `json:"request_id"`
 	Timestamp time.Time   `json:"timestamp"`
 	Data      interface{} `json:"data"` // 根据Type不同而变化
@@ -92,6 +92,7 @@ type RequestCompleteData struct {
 	CacheCreationTokens int64         `json:"cache_creation_tokens"`
 	CacheReadTokens     int64         `json:"cache_read_tokens"`
 	Duration            time.Duration `json:"duration"`
+	FailureReason       string        `json:"failure_reason,omitempty"` // 可选：失败原因
 }
 
 // TokenUsage token使用统计
@@ -464,7 +465,39 @@ func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, token
 	case ut.eventChan <- event:
 		// 成功发送事件
 	default:
-		slog.Warn("Usage tracking event buffer full, dropping complete event", 
+		slog.Warn("Usage tracking event buffer full, dropping complete event",
+			"request_id", requestID)
+	}
+}
+
+// RecordFailedRequestTokens 记录失败请求的Token使用
+// 只记录Token统计，不影响请求状态
+func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string) {
+	if ut.config == nil || !ut.config.Enabled || tokens == nil {
+		return
+	}
+
+	// 创建特殊的失败请求完成事件
+	event := RequestEvent{
+		Type:      "failed_request_tokens", // 新的事件类型
+		RequestID: requestID,
+		Timestamp: time.Now(),
+		Data: RequestCompleteData{
+			ModelName:           modelName,
+			InputTokens:         tokens.InputTokens,
+			OutputTokens:        tokens.OutputTokens,
+			CacheCreationTokens: tokens.CacheCreationTokens,
+			CacheReadTokens:     tokens.CacheReadTokens,
+			Duration:            duration,
+			FailureReason:       failureReason, // 新增失败原因字段
+		},
+	}
+
+	select {
+	case ut.eventChan <- event:
+		slog.Debug(fmt.Sprintf("💾 [失败Token事件] [%s] 原因: %s, 模型: %s", requestID, failureReason, modelName))
+	default:
+		slog.Warn("Usage tracking event buffer full, dropping failed request tokens event",
 			"request_id", requestID)
 	}
 }

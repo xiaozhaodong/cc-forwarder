@@ -24,7 +24,7 @@ type Metrics struct {
 	TotalRequests     int64
 	SuccessfulRequests int64
 	FailedRequests    int64
-	
+
 	// Suspended request metrics
 	SuspendedRequests          int64  // Current number of suspended requests
 	TotalSuspendedRequests     int64  // Total historical suspended requests
@@ -33,9 +33,14 @@ type Metrics struct {
 	TotalSuspendedTime         time.Duration // Total time spent in suspension
 	MinSuspendedTime           time.Duration // Minimum suspension time
 	MaxSuspendedTime           time.Duration // Maximum suspension time
-	
+
 	// Token usage metrics
 	TotalTokenUsage   TokenUsage
+
+	// Failed request token statistics
+	FailedRequestTokens     int64                 // Total token count for failed requests
+	FailedTokensByReason    map[string]int64      // Token statistics by failure reason
+	FailedTokensByEndpoint  map[string]int64      // Failed token statistics by endpoint
 	
 	// Response time metrics
 	ResponseTimes     []time.Duration
@@ -155,6 +160,8 @@ func NewMetrics() *Metrics {
 		MaxResponseTime:             time.Duration(0),
 		MinSuspendedTime:            time.Duration(0),
 		MaxSuspendedTime:            time.Duration(0),
+		FailedTokensByReason:        make(map[string]int64),
+		FailedTokensByEndpoint:      make(map[string]int64),
 	}
 }
 
@@ -367,6 +374,9 @@ func (m *Metrics) GetMetrics() *Metrics {
 		MinSuspendedTime:               m.MinSuspendedTime,
 		MaxSuspendedTime:               m.MaxSuspendedTime,
 		TotalTokenUsage:                m.TotalTokenUsage,
+		FailedRequestTokens:            m.FailedRequestTokens,
+		FailedTokensByReason:           make(map[string]int64),
+		FailedTokensByEndpoint:         make(map[string]int64),
 		TotalResponseTime:              m.TotalResponseTime,
 		MinResponseTime:                m.MinResponseTime,
 		MaxResponseTime:                m.MaxResponseTime,
@@ -445,6 +455,14 @@ func (m *Metrics) GetMetrics() *Metrics {
 		}
 	}
 
+	// Copy failed tokens maps
+	for k, v := range m.FailedTokensByReason {
+		snapshot.FailedTokensByReason[k] = v
+	}
+	for k, v := range m.FailedTokensByEndpoint {
+		snapshot.FailedTokensByEndpoint[k] = v
+	}
+
 	// Copy response times (last 100)
 	if len(m.ResponseTimes) > 0 {
 		start := 0
@@ -505,6 +523,11 @@ func (m *Metrics) RecordTokenUsage(connID string, endpoint string, tokens *Token
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// 安全处理 nil tokens
+	if tokens == nil {
+		return
+	}
+
 	// Update overall token metrics
 	m.TotalTokenUsage.InputTokens += tokens.InputTokens
 	m.TotalTokenUsage.OutputTokens += tokens.OutputTokens
@@ -531,6 +554,43 @@ func (m *Metrics) RecordTokenUsage(connID string, endpoint string, tokens *Token
 	
 	// Note: Token history points are now added by AddHistoryDataPoints() method
 	// This avoids duplicate history entries and provides better data sampling
+}
+
+// RecordFailedRequestTokenUsage 记录失败请求Token使用指标
+func (m *Metrics) RecordFailedRequestTokenUsage(connID, endpoint string, tokens *TokenUsage, failureReason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 安全处理 nil tokens
+	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	if tokens != nil {
+		inputTokens = tokens.InputTokens
+		outputTokens = tokens.OutputTokens
+		cacheCreationTokens = tokens.CacheCreationTokens
+		cacheReadTokens = tokens.CacheReadTokens
+	}
+
+	// 计算总Token数
+	totalTokens := inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
+
+	// 记录失败请求Token统计
+	m.FailedRequestTokens += totalTokens
+
+	// 按失败原因分类统计
+	if m.FailedTokensByReason == nil {
+		m.FailedTokensByReason = make(map[string]int64)
+	}
+	m.FailedTokensByReason[failureReason] += totalTokens
+
+	// 按端点分类统计失败Token
+	if m.FailedTokensByEndpoint == nil {
+		m.FailedTokensByEndpoint = make(map[string]int64)
+	}
+	m.FailedTokensByEndpoint[endpoint] += totalTokens
+
+	// 注意：不再更新连接的Token使用情况
+	// 这避免了与RecordTokenUsage的重复计算
+	// 连接的Token统计应该由RecordTokenUsage负责
 }
 
 // GetTotalTokenStats returns total token usage statistics

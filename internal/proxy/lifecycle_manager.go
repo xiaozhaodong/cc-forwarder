@@ -11,9 +11,10 @@ import (
 	"cc-forwarder/internal/tracking"
 )
 
-// MonitoringMiddlewareInterface 定义监控中间件接口
+// MonitoringMiddlewareInterface 定义监控中间件接口（扩展版）
 type MonitoringMiddlewareInterface interface {
 	RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
+	RecordFailedRequestTokens(connID, endpoint string, tokens *monitor.TokenUsage, failureReason string) // 新增方法
 }
 
 // RequestLifecycleManager 请求生命周期管理器
@@ -406,4 +407,46 @@ func (rlm *RequestLifecycleManager) SetFinalStatusCode(statusCode int) {
 // GetFinalStatusCode 获取最终状态码
 func (rlm *RequestLifecycleManager) GetFinalStatusCode() int {
 	return rlm.finalStatusCode
+}
+
+// RecordTokensForFailedRequest 为失败请求记录Token信息
+// 与 CompleteRequest 的区别：只记录Token统计，不改变请求状态
+func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string) {
+	if rlm.requestID != "" && tokens != nil {
+		// ✅ 检查是否有真实的Token使用
+		hasRealTokens := tokens.InputTokens > 0 || tokens.OutputTokens > 0 ||
+			tokens.CacheCreationTokens > 0 || tokens.CacheReadTokens > 0
+
+		if !hasRealTokens {
+			// 空Token信息不记录
+			slog.Debug(fmt.Sprintf("⏭️ [跳过空Token] [%s] 失败请求无实际Token消耗", rlm.requestID))
+			return
+		}
+
+		duration := time.Since(rlm.startTime)
+		modelName := rlm.GetModelName()
+		if modelName == "" {
+			modelName = "unknown"
+		}
+
+		// ✅ 只记录Token统计到UsageTracker，不调用 RecordRequestComplete
+		if rlm.usageTracker != nil {
+			rlm.usageTracker.RecordFailedRequestTokens(rlm.requestID, modelName, tokens, duration, failureReason)
+		}
+
+		// ✅ 记录到监控中间件（总是调用，即使usageTracker为nil）
+		if rlm.monitoringMiddleware != nil {
+			monitorTokens := &monitor.TokenUsage{
+				InputTokens:         tokens.InputTokens,
+				OutputTokens:        tokens.OutputTokens,
+				CacheCreationTokens: tokens.CacheCreationTokens,
+				CacheReadTokens:     tokens.CacheReadTokens,
+			}
+			// 新增失败请求Token记录方法
+			rlm.monitoringMiddleware.RecordFailedRequestTokens(rlm.requestID, rlm.endpointName, monitorTokens, failureReason)
+		}
+
+		slog.Info(fmt.Sprintf("💾 [失败请求Token记录] [%s] 端点: %s, 原因: %s, 模型: %s, 输入: %d, 输出: %d",
+			rlm.requestID, rlm.endpointName, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
+	}
 }

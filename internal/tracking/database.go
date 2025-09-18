@@ -242,7 +242,58 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			totalCost,
 			event.RequestID,
 		}
-		
+
+		return query, args, nil
+	case "failed_request_tokens":
+		// 处理失败请求Token事件：只记录Token统计，不更新请求状态
+		data, ok := event.Data.(RequestCompleteData)
+		if !ok {
+			return "", nil, fmt.Errorf("invalid failed_request_tokens event data type")
+		}
+
+		// 计算成本
+		tokens := &TokenUsage{
+			InputTokens:         data.InputTokens,
+			OutputTokens:        data.OutputTokens,
+			CacheCreationTokens: data.CacheCreationTokens,
+			CacheReadTokens:     data.CacheReadTokens,
+		}
+
+		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+
+		// 只更新Token相关字段和成本，不更新状态
+		// 重要：只更新失败状态的请求，确保不会影响已完成的请求
+		query := `UPDATE request_logs SET
+			model_name = COALESCE(?, model_name),
+			input_tokens = ?,
+			output_tokens = ?,
+			cache_creation_tokens = ?,
+			cache_read_tokens = ?,
+			input_cost_usd = ?,
+			output_cost_usd = ?,
+			cache_creation_cost_usd = ?,
+			cache_read_cost_usd = ?,
+			total_cost_usd = ?,
+			duration_ms = COALESCE(?, duration_ms),
+			updated_at = datetime('now', 'localtime')
+		WHERE request_id = ?
+		AND status IN ('error', 'timeout', 'suspended', 'cancelled', 'network_error', 'auth_error', 'rate_limited', 'stream_error')`
+
+		args := []interface{}{
+			data.ModelName,
+			data.InputTokens,
+			data.OutputTokens,
+			data.CacheCreationTokens,
+			data.CacheReadTokens,
+			inputCost,
+			outputCost,
+			cacheCost,
+			readCost,
+			totalCost,
+			data.Duration.Milliseconds(),
+			event.RequestID,
+		}
+
 		return query, args, nil
 	default:
 		return "", nil, fmt.Errorf("unknown event type: %s", event.Type)

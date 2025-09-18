@@ -3,6 +3,7 @@ package middleware
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -367,4 +368,47 @@ func (mm *MonitoringMiddleware) getStreamingConnections(activeConnections map[st
 		}
 	}
 	return count
+}
+
+// RecordFailedRequestTokens 记录失败请求的Token使用到监控系统
+func (mm *MonitoringMiddleware) RecordFailedRequestTokens(connID, endpoint string, tokens *monitor.TokenUsage, failureReason string) {
+	if mm.metrics != nil {
+		// 只有当tokens不为nil时才记录普通Token使用
+		// 避免nil pointer dereference
+		if tokens != nil {
+			// 记录普通Token使用（更新总体统计）
+			// 即使是失败请求，也需要计入总Token使用量
+			mm.metrics.RecordTokenUsage(connID, endpoint, tokens)
+		}
+
+		// 总是记录失败请求专用的Token统计（内部处理nil tokens）
+		// 这会更新FailedRequestTokens、FailedTokensByReason等专用指标
+		mm.metrics.RecordFailedRequestTokenUsage(connID, endpoint, tokens, failureReason)
+	}
+
+	// 广播失败请求Token事件
+	if mm.eventBroadcaster != nil {
+		// 安全处理 nil tokens
+		var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+		if tokens != nil {
+			inputTokens = tokens.InputTokens
+			outputTokens = tokens.OutputTokens
+			cacheCreationTokens = tokens.CacheCreationTokens
+			cacheReadTokens = tokens.CacheReadTokens
+		}
+
+		mm.eventBroadcaster.BroadcastLogEvent(map[string]interface{}{
+			"type":                  "failed_request_tokens",
+			"conn_id":               connID,
+			"endpoint":              endpoint,
+			"input_tokens":          inputTokens,
+			"output_tokens":         outputTokens,
+			"cache_creation_tokens": cacheCreationTokens,
+			"cache_read_tokens":     cacheReadTokens,
+			"failure_reason":        failureReason,
+			"timestamp":             time.Now(),
+		})
+	}
+
+	slog.Debug(fmt.Sprintf("📊 [监控失败Token] [%s] 端点: %s, 原因: %s", connID, endpoint, failureReason))
 }

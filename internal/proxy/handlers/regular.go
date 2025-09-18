@@ -116,6 +116,10 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				// 对于非成功响应，必须立即关闭响应体（不能在循环中使用defer！）
 				if err == nil && resp != nil {
 					if !IsSuccessStatus(resp.StatusCode) {
+						// ✅ 先尝试从HTTP错误中提取Token信息（如果可能）
+						rh.tryExtractTokensFromHttpError(resp, lifecycleManager, endpoint.Config.Name)
+
+						// 然后关闭响应体
 						closeErr := resp.Body.Close()
 						if closeErr != nil {
 							// Close失败时记录日志但继续处理HTTP错误
@@ -150,6 +154,10 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 					if errorCtx.ErrorType == ErrorTypeHTTP {
 						finalEndpoints := retryMgr.GetHealthyEndpoints(ctx)
 						lifecycleManager.UpdateStatus("error", len(finalEndpoints), statusCode)
+
+						// ✅ 注意：Token提取已在第119-120行的tryExtractTokensFromHttpError中完成
+						// 此时响应体已经在前面的步骤中处理过，无需额外Token处理
+
 						http.Error(w, fmt.Sprintf("HTTP %d: %s", statusCode, http.StatusText(statusCode)), statusCode)
 						return
 					}
@@ -182,6 +190,8 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 	}
 
 	// 最终失败 - 使用最后获取的端点数量
+	// ✅ 注意：对于所有尝试过的HTTP错误，Token已在第119-120行处理
+	// 此处为最终的全部端点失败情况，无额外Token可提取
 	lastEndpoints := retryMgr.GetHealthyEndpoints(ctx)
 	lifecycleManager.UpdateStatus("error", len(lastEndpoints), http.StatusBadGateway)
 	http.Error(w, "All endpoints failed", http.StatusBadGateway)
@@ -245,46 +255,29 @@ func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.Res
 		return
 	}
 
-	// ✅ 异步Token解析优化：不阻塞连接关闭
-	go func() {
-		// 检查context是否已取消
-		select {
-		case <-ctx.Done():
-			// 如果请求已取消，不执行异步Token解析
-			return
-		default:
+	// ✅ 同步Token解析：简化逻辑，避免协程控制问题
+	connID := lifecycleManager.GetRequestID()
+	slog.Debug(fmt.Sprintf("🔄 [Token解析] [%s] 开始Token解析", connID))
+
+	// 对于常规请求，同步解析Token信息（如果存在）
+	tokenUsage, modelName := rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
+
+	// 使用生命周期管理器完成请求
+	if tokenUsage != nil {
+		// 设置模型名称并完成请求
+		// 使用对比方法，检测并警告模型不一致情况
+		if modelName != "unknown" && modelName != "" {
+			lifecycleManager.SetModelWithComparison(modelName, "常规响应解析")
 		}
-
-		connID := lifecycleManager.GetRequestID()
-		slog.Debug(fmt.Sprintf("🔄 [异步Token解析] [%s] 开始后台Token解析", connID))
-
-		// 对于常规请求，异步解析Token信息（如果存在）
-		tokenUsage, modelName := rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
-
-		// 再次检查context状态
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		// 使用生命周期管理器完成请求
-		if tokenUsage != nil {
-			// 设置模型名称并完成请求
-			// 使用对比方法，检测并警告模型不一致情况
-			if modelName != "unknown" && modelName != "" {
-				lifecycleManager.SetModelWithComparison(modelName, "常规响应解析")
-			}
-			lifecycleManager.CompleteRequest(tokenUsage)
-			slog.Info(fmt.Sprintf("✅ [常规请求Token完成] [%s] 端点: %s, 模型: %s, 输入: %d, 输出: %d",
-				connID, endpointName, modelName, tokenUsage.InputTokens, tokenUsage.OutputTokens))
-		} else {
-			// 处理非Token响应
-			lifecycleManager.HandleNonTokenResponse(string(responseBytes))
-			slog.Info(fmt.Sprintf("✅ [常规请求完成] [%s] 端点: %s, 响应类型: %s",
-				connID, endpointName, modelName))
-		}
-	}()
+		lifecycleManager.CompleteRequest(tokenUsage)
+		slog.Info(fmt.Sprintf("✅ [常规请求Token完成] [%s] 端点: %s, 模型: %s, 输入: %d, 输出: %d",
+			connID, endpointName, modelName, tokenUsage.InputTokens, tokenUsage.OutputTokens))
+	} else {
+		// 处理非Token响应
+		lifecycleManager.HandleNonTokenResponse(string(responseBytes))
+		slog.Info(fmt.Sprintf("✅ [常规请求完成] [%s] 端点: %s, 响应类型: %s",
+			connID, endpointName, modelName))
+	}
 }
 
 // HandleRegularRequest handles non-streaming requests
@@ -411,5 +404,42 @@ func (rh *RegularHandler) HandleRegularRequest(ctx context.Context, w http.Respo
 	if writeErr != nil {
 		// Log error but don't return error response as headers are already sent
 		slog.Error("Failed to write response to client", "request_id", connID, "error", writeErr)
+	}
+}
+
+// tryExtractTokensFromHttpError 尝试从HTTP错误响应中提取Token信息
+// 注意：此方法必须在响应体关闭前调用
+func (rh *RegularHandler) tryExtractTokensFromHttpError(resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+
+	// ✅ 只对可能包含Token信息的错误码进行解析
+	if resp.StatusCode != 429 && resp.StatusCode != 413 && resp.StatusCode < 500 {
+		return
+	}
+
+	// ✅ 同步解析，确保在响应体关闭前完成
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn(fmt.Sprintf("⚠️ [错误响应解析恢复] 解析过程中出现异常: %v", r))
+		}
+	}()
+
+	responseBytes, err := rh.responseProcessor.ProcessResponseBody(resp)
+	if err != nil || len(responseBytes) == 0 {
+		return
+	}
+
+	tokenUsage, modelName := rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, lifecycleManager.GetRequestID(), endpointName)
+	if tokenUsage != nil {
+		// ✅ 修复：将解析到的模型信息设置到生命周期管理器
+		if modelName != "" && modelName != "unknown" {
+			lifecycleManager.SetModel(modelName)
+		}
+
+		lifecycleManager.RecordTokensForFailedRequest(tokenUsage, fmt.Sprintf("http_%d", resp.StatusCode))
+		slog.Info(fmt.Sprintf("💾 [HTTP错误Token记录] [%s] 端点: %s, 状态码: %d, 模型: %s",
+			lifecycleManager.GetRequestID(), endpointName, resp.StatusCode, modelName))
 	}
 }

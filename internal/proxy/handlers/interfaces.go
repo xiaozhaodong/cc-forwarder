@@ -23,6 +23,8 @@ type RequestLifecycleManager interface {
 	// 新增方法：统一的请求完成入口
 	CompleteRequest(tokens *tracking.TokenUsage)
 	HandleNonTokenResponse(responseContent string)
+	// 失败请求Token记录方法：只记录Token统计，不改变请求状态
+	RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string)
 }
 
 // ErrorRecoveryManager 错误恢复管理器接口

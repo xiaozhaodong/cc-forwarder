@@ -190,17 +190,24 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 					}
 
 					// ✅ 确保生命周期管理器获得正确的模型信息
-					// 使用对比方法，检测并警告模型不一致情况
+					// 优先使用从错误包装器中解析的模型信息
 					if parsedModelName != "unknown" && parsedModelName != "" {
-						lifecycleManager.SetModelWithComparison(parsedModelName, "message_start")
+						lifecycleManager.SetModelWithComparison(parsedModelName, "stream_status")
+					} else if modelName != "unknown" && modelName != "" {
+						// ✅ 如果错误包装器中没有模型信息，使用ProcessStreamWithRetry返回的模型信息
+						lifecycleManager.SetModelWithComparison(modelName, "stream_processor")
 					}
 
 					// ✅ 使用正确的状态更新
 					lifecycleManager.UpdateStatus(status, i+1, resp.StatusCode)
 
-					// 如果有token信息，完成记录
+					// ✅ 如果有token信息，使用失败Token记录方法，不改变请求状态
 					if finalTokenUsage != nil {
-						lifecycleManager.CompleteRequest(finalTokenUsage)
+						lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, status)
+					} else {
+						// 无Token信息，仅记录失败状态
+						slog.Info(fmt.Sprintf("❌ [流式失败无Token] [%s] 端点: %s, 状态: %s, 无Token信息可保存",
+							connID, ep.Config.Name, status))
 					}
 
 					slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 状态: %s, 模型: %s, 错误: %v",
