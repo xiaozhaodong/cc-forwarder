@@ -10,7 +10,6 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/proxy/retry"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -24,7 +23,7 @@ type StreamingHandler struct {
 	tokenParserFactory       TokenParserFactory
 	streamProcessorFactory   StreamProcessorFactory
 	errorRecoveryFactory     ErrorRecoveryFactory
-	retryHandlerFactory      RetryHandlerFactory
+	retryManagerFactory      RetryManagerFactory
 	suspensionManagerFactory SuspensionManagerFactory
 	// 🔧 [修复] 共享SuspensionManager实例，确保全局挂起限制生效
 	sharedSuspensionManager SuspensionManager
@@ -39,7 +38,7 @@ func NewStreamingHandler(
 	tokenParserFactory TokenParserFactory,
 	streamProcessorFactory StreamProcessorFactory,
 	errorRecoveryFactory ErrorRecoveryFactory,
-	retryHandlerFactory RetryHandlerFactory,
+	retryManagerFactory RetryManagerFactory,
 	suspensionManagerFactory SuspensionManagerFactory,
 	// 🔧 [Critical修复] 直接接受共享的SuspensionManager实例
 	sharedSuspensionManager SuspensionManager,
@@ -52,7 +51,7 @@ func NewStreamingHandler(
 		tokenParserFactory:       tokenParserFactory,
 		streamProcessorFactory:   streamProcessorFactory,
 		errorRecoveryFactory:     errorRecoveryFactory,
-		retryHandlerFactory:      retryHandlerFactory,
+		retryManagerFactory:      retryManagerFactory,
 		suspensionManagerFactory: suspensionManagerFactory,
 		// 🔧 [Critical修复] 使用传入的共享SuspensionManager实例
 		// 确保流式请求与常规请求共享同一个全局挂起计数器
@@ -132,7 +131,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	// 尝试端点直到成功
 	var lastErr error // 声明在外层作用域，供最终错误处理使用
 	var lastResp *http.Response // 🔧 [修复] 添加lastResp变量，用于获取真实HTTP状态码
-	// 🔢 [重构] 移除currentAttemptCount变量，统一由RetryController管理计数
+	// 🔢 [重构] 移除currentAttemptCount变量，统一由LifecycleManager管理计数
 	for i := 0; i < len(endpoints); i++ {
 		ep := endpoints[i]
 		// 更新生命周期管理器信息
@@ -143,7 +142,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 		endpointSuccess := false
 
 		for attempt := 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
-			// 🔢 [重构] 移除预先计数，统一由RetryController管理
+			// 🔢 [重构] 移除预先计数，统一由LifecycleManager管理
 			// 获取当前计数用于日志，但不增加计数
 			currentAttemptCount := lifecycleManager.GetAttemptCount()
 
@@ -163,16 +162,13 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// 🔧 [修复] 保存最后的响应，用于获取真实HTTP状态码
 			lastResp = resp
 			if err == nil && IsSuccessStatus(resp.StatusCode) {
-				// 🔢 [关键修复] 成功时也需要通过RetryController计数，确保一致性
-				// 成功的尝试也是真实的HTTP调用，应该被计数
-				retryController := sh.createRetryController(lifecycleManager)
-				_, ctrlErr := retryController.OnAttemptResult(ctx, ep, nil, attempt, true) // 流式：isStreaming=true
-				if ctrlErr != nil {
-					slog.Error(fmt.Sprintf("❌ [流式成功计数错误] [%s] 端点: %s, 错误: %v", connID, ep.Config.Name, ctrlErr))
-				}
-
-				// 获取更新后的计数
+				// 🔢 [成功计数] 成功的尝试记录到生命周期管理器
+				lifecycleManager.IncrementAttempt()
 				currentAttemptCount := lifecycleManager.GetAttemptCount()
+
+				// ✅ [重试决策] 成功请求的决策日志 - 保持监控完整性
+				slog.Info(fmt.Sprintf("✅ [重试决策] 请求成功完成 request_id=%s endpoint=%s attempt=%d reason=请求成功完成",
+					connID, ep.Config.Name, currentAttemptCount))
 
 				// ✅ 成功！开始处理响应
 				endpointSuccess = true
@@ -258,7 +254,8 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				return
 			}
 
-			// ❌ 出现错误，进行错误分类
+			// ❌ 出现错误，记录尝试次数
+			globalAttemptCount := lifecycleManager.IncrementAttempt()
 			lastErr = err
 
 			// 错误处理 - 先构造HTTP状态码错误（保持现有逻辑）
@@ -267,7 +264,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				if closeErr != nil {
 					slog.Warn(fmt.Sprintf("⚠️ [响应体关闭失败] [%s] 端点: %s, Close错误: %v", connID, ep.Config.Name, closeErr))
 				}
-				// 构造HTTP状态码错误，确保RetryController能正确分类429等状态
+				// 构造HTTP状态码错误，确保RetryManager能正确分类429等状态
 				lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 			} else if err != nil && resp != nil {
 				closeErr := resp.Body.Close()
@@ -276,17 +273,17 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				}
 			}
 
-			// 使用统一重试控制器
-			retryController := sh.createRetryController(lifecycleManager)
+			// 🔧 使用增强的RetryManager进行统一决策
+			errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
+			errorCtx := errorRecovery.ClassifyError(lastErr, connID, ep.Config.Name, ep.Config.Group, attempt-1)
+			lifecycleManager.HandleError(lastErr)
 
-			decision, ctrlErr := retryController.OnAttemptResult(ctx, ep, lastErr, attempt, true) // 流式请求：isStreaming=true
-			if ctrlErr != nil {
-				slog.Error(fmt.Sprintf("❌ [重试控制器错误] [%s] 端点: %s, 错误: %v",
-					connID, ep.Config.Name, ctrlErr))
-				fmt.Fprintf(w, "data: error: 重试控制器错误: %v\n\n", ctrlErr)
-				flusher.Flush()
-				return
-			}
+			// 创建重试管理器
+			retryMgr := sh.retryManagerFactory.NewRetryManager()
+			// 🔢 [关键修复] 分离局部和全局计数语义
+			// attempt: 当前端点内的尝试次数，用于退避计算
+			// globalAttemptCount: 全局尝试次数，用于限流策略
+			decision := retryMgr.ShouldRetryWithDecision(&errorCtx, attempt, globalAttemptCount, true) // 流式请求: isStreaming=true
 
 			// 检查决策结果
 			if decision.FinalStatus == "cancelled" {
@@ -483,26 +480,3 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	flusher.Flush()
 }
 
-// createRetryController 创建重试控制器（流式专用）
-func (sh *StreamingHandler) createRetryController(lifecycleManager RequestLifecycleManager) *retry.RetryController {
-	policy := retry.NewDefaultRetryPolicy(sh.config)
-	// 创建适配器接口实现
-	adaptedErrorRecoveryFactory := &errorRecoveryFactoryAdapter{
-		factory: sh.errorRecoveryFactory,
-	}
-	// 创建适配器类型的lifecycleManager
-	adaptedLifecycleManager := &lifecycleManagerAdapter{
-		manager: lifecycleManager,
-	}
-	// 创建适配器类型的suspensionManager
-	adaptedSuspensionManager := &suspensionManagerAdapter{
-		manager: sh.sharedSuspensionManager,
-	}
-	return retry.NewRetryController(
-		policy,
-		adaptedSuspensionManager,
-		adaptedErrorRecoveryFactory,
-		adaptedLifecycleManager,
-		sh.usageTracker,
-	)
-}

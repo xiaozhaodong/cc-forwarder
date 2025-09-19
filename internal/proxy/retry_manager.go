@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"math"
+	"net/http"
 	"time"
 
 	"cc-forwarder/config"
@@ -135,4 +136,199 @@ func (rm *RetryManager) GetErrorRecoveryManager() *ErrorRecoveryManager {
 // GetEndpointManager 获取端点管理器（用于测试）
 func (rm *RetryManager) GetEndpointManager() *endpoint.Manager {
 	return rm.endpointMgr
+}
+
+// ShouldRetryWithDecision 基于错误分类的详细重试决策
+// 完全复制retry/policy.go的决策逻辑，确保行为一致
+// 参数:
+//   - errorCtx: 错误上下文信息
+//   - localAttempt: 当前端点的尝试次数（从1开始，用于退避计算）
+//   - globalAttempt: 全局尝试次数（用于限流策略）
+//   - isStreaming: 是否为流式请求
+//
+// 返回:
+//   - handlers.RetryDecision: 详细的重试决策信息
+func (rm *RetryManager) ShouldRetryWithDecision(errorCtx *handlers.ErrorContext, localAttempt int, globalAttempt int, isStreaming bool) handlers.RetryDecision {
+	// 如果没有错误上下文，默认不重试
+	if errorCtx == nil {
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    false,
+			SuspendRequest:    false,
+			FinalStatus:       "completed",
+			Reason:           "没有错误，无需重试",
+		}
+	}
+
+	// 直接使用handlers.ErrorType类型
+	errorType := int(errorCtx.ErrorType)
+
+	// 🔧 [关键修复] 分离局部和全局计数语义
+	// localAttempt: 用于退避计算和端点内重试判断
+	// globalAttempt: 仅用于限流策略和全局挂起判断
+
+	switch errorType {
+	case 9: // ErrorTypeClientCancel - 客户端取消错误
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    false,
+			SuspendRequest:    false,
+			FinalStatus:       "cancelled",
+			Reason:           "客户端取消请求，立即停止",
+		}
+
+	case 1: // ErrorTypeNetwork - 网络错误
+		// 网络错误：可以在同一端点重试，也可以切换端点
+		if localAttempt < rm.config.Retry.MaxAttempts {
+			return handlers.RetryDecision{
+				RetrySameEndpoint: true,
+				SwitchEndpoint:    false,
+				SuspendRequest:    false,
+				Delay:            rm.calculateBackoff(localAttempt),
+				Reason:           "网络错误，在同一端点重试",
+			}
+		}
+		// 达到最大重试次数，尝试切换端点
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    true,
+			SuspendRequest:    false,
+			Reason:           "网络错误重试达到上限，切换端点",
+		}
+
+	case 2: // ErrorTypeTimeout - 超时错误
+		// 超时错误：优先切换端点，因为当前端点可能响应慢
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    true,
+			SuspendRequest:    false,
+			Delay:            rm.calculateBackoff(localAttempt),
+			Reason:           "超时错误，切换到更快的端点",
+		}
+
+	case 3: // ErrorTypeHTTP - HTTP错误
+		// HTTP错误：通常是4xx错误，不应重试
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    false,
+			SuspendRequest:    false,
+			FinalStatus:       "error",
+			Reason:           "HTTP错误，无需重试",
+		}
+
+	case 4: // ErrorTypeServerError - 服务器错误（5xx）
+		// 🔧 [修复] 服务器错误：先在同一端点重试，达到上限后切换端点
+		// 恢复正确行为：同端点重试到MaxAttempts，然后切换
+		if localAttempt < rm.config.Retry.MaxAttempts {
+			return handlers.RetryDecision{
+				RetrySameEndpoint: true,
+				SwitchEndpoint:    false,
+				SuspendRequest:    false,
+				Delay:            rm.calculateBackoff(localAttempt),
+				Reason:           "服务器错误，在同一端点重试",
+			}
+		}
+		// 达到最大重试次数，尝试切换端点
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    true,
+			SuspendRequest:    false,
+			Reason:           "服务器错误重试达到上限，切换端点",
+		}
+
+	case 5: // ErrorTypeStream - 流式处理错误
+		// 流式错误：可以在同一端点重试
+		if localAttempt < rm.config.Retry.MaxAttempts {
+			return handlers.RetryDecision{
+				RetrySameEndpoint: true,
+				SwitchEndpoint:    false,
+				SuspendRequest:    false,
+				Delay:            rm.calculateBackoff(localAttempt),
+				Reason:           "流处理错误，在同一端点重试",
+			}
+		}
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    true,
+			SuspendRequest:    false,
+			Reason:           "流处理错误重试达到上限，切换端点",
+		}
+
+	case 6: // ErrorTypeAuth - 认证错误
+		// 认证错误：通常不可重试，除非是临时的认证问题
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    false,
+			SuspendRequest:    false,
+			FinalStatus:       "auth_error",
+			Reason:           "认证错误，无需重试",
+		}
+
+	case 7: // ErrorTypeRateLimit - 限流错误
+		// 限流错误：使用特殊的退避策略，可以考虑挂起请求
+		// 🔧 [重要] 限流错误使用全局计数，因为限流是全局性的
+		if globalAttempt < rm.config.Retry.MaxAttempts {
+			delay := rm.calculateRateLimitBackoff(globalAttempt)
+			return handlers.RetryDecision{
+				RetrySameEndpoint: false,
+				SwitchEndpoint:    true,
+				SuspendRequest:    delay > 30*time.Second, // 如果延迟太长，考虑挂起
+				Delay:            delay,
+				Reason:           "限流错误，使用特殊退避策略",
+			}
+		}
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    false,
+			SuspendRequest:    true, // 达到重试上限，尝试挂起
+			FinalStatus:       "rate_limited",
+			Reason:           "限流错误重试达到上限，尝试挂起请求",
+		}
+
+	case 8: // ErrorTypeParsing - 解析错误
+		// 解析错误：通常是响应格式问题，切换端点重试
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    true,
+			SuspendRequest:    false,
+			Delay:            rm.calculateBackoff(localAttempt),
+			Reason:           "解析错误，切换端点重试",
+		}
+
+	default: // ErrorTypeUnknown (0) 或其他未知错误
+		// 未知错误：保守策略，有限重试
+		if localAttempt < rm.config.Retry.MaxAttempts {
+			return handlers.RetryDecision{
+				RetrySameEndpoint: true,
+				SwitchEndpoint:    false,
+				SuspendRequest:    false,
+				Delay:            rm.calculateBackoff(localAttempt),
+				Reason:           "未知错误，保守重试",
+			}
+		}
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    true, // 修复：未知错误达到重试上限时应切换到下一端点
+			SuspendRequest:    false,
+			Delay:            0,
+			Reason:           "未知错误重试达到上限，切换端点",
+		}
+	}
+}
+
+
+// GetDefaultStatusCodeForFinalStatus 根据最终状态获取默认HTTP状态码
+func GetDefaultStatusCodeForFinalStatus(finalStatus string) int {
+	switch finalStatus {
+	case "cancelled":
+		return 499 // nginx风格的客户端取消码
+	case "auth_error":
+		return http.StatusUnauthorized
+	case "rate_limited":
+		return http.StatusTooManyRequests
+	case "error":
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadGateway
+	}
 }

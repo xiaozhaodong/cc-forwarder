@@ -7,13 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/proxy/retry"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 )
@@ -67,189 +65,20 @@ func NewRegularHandler(
 	}
 }
 
-// createRetryController 创建重试控制器
-func (rh *RegularHandler) createRetryController(lifecycleManager RequestLifecycleManager) *retry.RetryController {
-	policy := retry.NewDefaultRetryPolicy(rh.config)
-
-	// 创建适配器接口实现
-	adaptedErrorRecoveryFactory := &errorRecoveryFactoryAdapter{
-		factory: rh.errorRecoveryFactory,
-	}
-
-	// 创建适配器类型的lifecycleManager
-	adaptedLifecycleManager := &lifecycleManagerAdapter{
-		manager: lifecycleManager,
-	}
-
-	// 创建适配器类型的suspensionManager
-	adaptedSuspensionManager := &suspensionManagerAdapter{
-		manager: rh.sharedSuspensionManager,
-	}
-
-	return retry.NewRetryController(
-		policy,
-		adaptedSuspensionManager,
-		adaptedErrorRecoveryFactory,
-		adaptedLifecycleManager,
-		rh.usageTracker,
-	)
-}
-
-// errorRecoveryFactoryAdapter 适配handlers.ErrorRecoveryFactory到retry.ErrorRecoveryFactory
-type errorRecoveryFactoryAdapter struct {
-	factory ErrorRecoveryFactory
-}
-
-func (a *errorRecoveryFactoryAdapter) NewErrorRecoveryManager(usageTracker *tracking.UsageTracker) retry.ErrorRecoveryManager {
-	manager := a.factory.NewErrorRecoveryManager(usageTracker)
-	return &errorRecoveryManagerAdapter{manager: manager}
-}
-
-// errorRecoveryManagerAdapter 适配handlers.ErrorRecoveryManager到retry.ErrorRecoveryManager
-type errorRecoveryManagerAdapter struct {
-	manager ErrorRecoveryManager
-}
-
-func (a *errorRecoveryManagerAdapter) ClassifyError(err error, connID, endpointName, groupName string, attemptCount int) retry.ErrorContext {
-	ctx := a.manager.ClassifyError(err, connID, endpointName, groupName, attemptCount)
-	return retry.ErrorContext{
-		RequestID:      ctx.RequestID,
-		EndpointName:   ctx.EndpointName,
-		GroupName:      ctx.GroupName,
-		AttemptCount:   ctx.AttemptCount,
-		ErrorType:      ctx.ErrorType,  // ErrorType会被自动转换为interface{}
-		OriginalError:  ctx.OriginalError,
-		RetryableAfter: ctx.RetryableAfter, // time.Duration会被转换为interface{}
-		MaxRetries:     ctx.MaxRetries,
-	}
-}
-
-func (a *errorRecoveryManagerAdapter) HandleFinalFailure(errorCtx retry.ErrorContext) {
-	// 将retry.ErrorContext转换为handlers.ErrorContext
-	// 🔧 [修复] 直接转换而不是类型断言，避免proxy.ErrorType到handlers.ErrorType的断言失败
-	// errorCtx.ErrorType 实际上是 proxy.ErrorType，需要通过int转换
-	var errorType ErrorType
-	switch et := errorCtx.ErrorType.(type) {
-	case int:
-		errorType = ErrorType(et)
+// getDefaultStatusCodeForFinalStatus 根据最终状态获取默认HTTP状态码
+func getDefaultStatusCodeForFinalStatus(finalStatus string) int {
+	switch finalStatus {
+	case "cancelled":
+		return 499 // nginx风格的客户端取消码
+	case "auth_error":
+		return http.StatusUnauthorized
+	case "rate_limited":
+		return http.StatusTooManyRequests
+	case "error":
+		return http.StatusBadRequest
 	default:
-		// 对于其他类型（如proxy.ErrorType），尝试通过整数转换
-		// 这里使用反射获取底层值
-		if intVal, ok := errorCtx.ErrorType.(interface{ Int() int }); ok {
-			errorType = ErrorType(intVal.Int())
-		} else {
-			// 使用 fmt 包转换为整数
-			var val int
-			if _, err := fmt.Sscanf(fmt.Sprintf("%d", errorCtx.ErrorType), "%d", &val); err == nil {
-				errorType = ErrorType(val)
-			} else {
-				errorType = ErrorTypeUnknown
-			}
-		}
+		return http.StatusBadGateway
 	}
-
-	var retryableAfter time.Duration
-	if ra, ok := errorCtx.RetryableAfter.(time.Duration); ok {
-		retryableAfter = ra
-	}
-
-	handlersCtx := ErrorContext{
-		RequestID:      errorCtx.RequestID,
-		EndpointName:   errorCtx.EndpointName,
-		GroupName:      errorCtx.GroupName,
-		AttemptCount:   errorCtx.AttemptCount,
-		ErrorType:      errorType,
-		OriginalError:  errorCtx.OriginalError,
-		RetryableAfter: retryableAfter,
-		MaxRetries:     errorCtx.MaxRetries,
-	}
-
-	a.manager.HandleFinalFailure(handlersCtx)
-}
-
-func (a *errorRecoveryManagerAdapter) GetErrorTypeName(errorType interface{}) string {
-	// 🔧 [修复] 使用反射获取底层整数值，避免proxy.ErrorType到handlers.ErrorType的断言失败
-	if errorType != nil {
-		v := reflect.ValueOf(errorType)
-		if v.Kind() == reflect.Int {
-			return a.manager.GetErrorTypeName(ErrorType(v.Int()))
-		}
-		// 如果已经是 handlers.ErrorType，直接使用
-		if et, ok := errorType.(ErrorType); ok {
-			return a.manager.GetErrorTypeName(et)
-		}
-	}
-	return "unknown"
-}
-
-// lifecycleManagerAdapter 适配handlers.RequestLifecycleManager到retry.RequestLifecycleManager
-type lifecycleManagerAdapter struct {
-	manager RequestLifecycleManager
-}
-
-func (a *lifecycleManagerAdapter) GetRequestID() string {
-	return a.manager.GetRequestID()
-}
-
-func (a *lifecycleManagerAdapter) SetEndpoint(name, group string) {
-	a.manager.SetEndpoint(name, group)
-}
-
-func (a *lifecycleManagerAdapter) SetModel(modelName string) {
-	a.manager.SetModel(modelName)
-}
-
-func (a *lifecycleManagerAdapter) SetModelWithComparison(modelName, source string) {
-	a.manager.SetModelWithComparison(modelName, source)
-}
-
-func (a *lifecycleManagerAdapter) HasModel() bool {
-	return a.manager.HasModel()
-}
-
-func (a *lifecycleManagerAdapter) UpdateStatus(status string, endpointIndex, statusCode int) {
-	a.manager.UpdateStatus(status, endpointIndex, statusCode)
-}
-
-func (a *lifecycleManagerAdapter) HandleError(err error) {
-	a.manager.HandleError(err)
-}
-
-func (a *lifecycleManagerAdapter) CompleteRequest(tokens *tracking.TokenUsage) {
-	a.manager.CompleteRequest(tokens)
-}
-
-func (a *lifecycleManagerAdapter) HandleNonTokenResponse(responseContent string) {
-	a.manager.HandleNonTokenResponse(responseContent)
-}
-
-func (a *lifecycleManagerAdapter) RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string) {
-	a.manager.RecordTokensForFailedRequest(tokens, failureReason)
-}
-
-func (a *lifecycleManagerAdapter) IncrementAttempt() int {
-	return a.manager.IncrementAttempt()
-}
-
-func (a *lifecycleManagerAdapter) GetAttemptCount() int {
-	return a.manager.GetAttemptCount()
-}
-
-// suspensionManagerAdapter 适配handlers.SuspensionManager到retry.SuspensionManager
-type suspensionManagerAdapter struct {
-	manager SuspensionManager
-}
-
-func (a *suspensionManagerAdapter) ShouldSuspend(ctx context.Context) bool {
-	return a.manager.ShouldSuspend(ctx)
-}
-
-func (a *suspensionManagerAdapter) WaitForGroupSwitch(ctx context.Context, connID string) bool {
-	return a.manager.WaitForGroupSwitch(ctx, connID)
-}
-
-func (a *suspensionManagerAdapter) GetSuspendedRequestsCount() int {
-	return a.manager.GetSuspendedRequestsCount()
 }
 
 // HandleRegularRequestUnified 统一常规请求处理
@@ -259,11 +88,9 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 	slog.Info(fmt.Sprintf("🔄 [常规架构] [%s] 使用unified v3架构", connID))
 
-	// 创建重试控制器
-	retryController := rh.createRetryController(lifecycleManager)
-
 	// 创建管理器 - 修复依赖注入
 	retryMgr := rh.retryManagerFactory.NewRetryManager()
+	errorRecovery := rh.errorRecoveryFactory.NewErrorRecoveryManager(rh.usageTracker)
 
 	// 外层循环处理组切换逻辑
 	for {
@@ -291,20 +118,18 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				default:
 				}
 
+				// 🔢 [关键修复] 每次尝试开始时增加全局计数 - 确保生命周期和重试策略正确
+				globalAttemptCount := lifecycleManager.IncrementAttempt()
+
 				// 执行请求
 				resp, err := rh.executeRequest(ctx, r, bodyBytes, endpoint)
 
 				if err == nil && IsSuccessStatus(resp.StatusCode) {
-					// 🔢 [重构] 成功时也需要通过RetryController计数，确保一致性
-					// 成功的尝试也是真实的HTTP调用，应该被计数
-					retryController := rh.createRetryController(lifecycleManager)
-					_, ctrlErr := retryController.OnAttemptResult(ctx, endpoint, nil, attempt, false)
-					if ctrlErr != nil {
-						slog.Error(fmt.Sprintf("❌ [成功计数错误] [%s] 端点: %s, 错误: %v", connID, endpoint.Config.Name, ctrlErr))
-					}
+					// ✅ [重试决策] 成功请求的决策日志 - 保持监控完整性
+					slog.Info(fmt.Sprintf("✅ [重试决策] 请求成功完成 request_id=%s endpoint=%s attempt=%d reason=请求成功完成",
+						connID, endpoint.Config.Name, attempt))
 
-					currentAttemptCount := lifecycleManager.GetAttemptCount()
-					lifecycleManager.UpdateStatus("processing", currentAttemptCount, resp.StatusCode)
+					lifecycleManager.UpdateStatus("processing", globalAttemptCount, resp.StatusCode)
 					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name)
 					return
 				}
@@ -328,19 +153,19 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 					}
 				}
 
-				// 使用统一重试控制器
-				decision, ctrlErr := retryController.OnAttemptResult(ctx, endpoint, err, attempt, false) // 常规请求：isStreaming=false
-				if ctrlErr != nil {
-					lifecycleManager.HandleError(ctrlErr)
-					http.Error(w, "Retry controller error", http.StatusInternalServerError)
-					return
-				}
+				// 🔧 使用增强的RetryManager进行统一决策
+				errorCtx := errorRecovery.ClassifyError(err, connID, endpoint.Config.Name, endpoint.Config.Group, attempt-1)
+				lifecycleManager.HandleError(err)
+
+				// 🔢 [关键修复] 分离局部和全局计数语义
+				// localAttempt: 当前端点内的尝试次数，用于退避计算
+				// globalAttemptCount: 全局尝试次数，用于限流策略
+				decision := retryMgr.ShouldRetryWithDecision(&errorCtx, attempt, globalAttemptCount, false) // 常规请求: isStreaming=false
 
 				// 处理挂起决策
 				if decision.SuspendRequest {
 					if rh.sharedSuspensionManager.ShouldSuspend(ctx) {
-						currentAttemptCount := lifecycleManager.GetAttemptCount()
-						lifecycleManager.UpdateStatus("suspended", currentAttemptCount, 0)
+						lifecycleManager.UpdateStatus("suspended", globalAttemptCount, 0)
 						slog.Info(fmt.Sprintf("⏸️ [请求挂起] [%s] 原因: %s",
 							connID, decision.Reason))
 
@@ -352,8 +177,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 						} else {
 							slog.Warn(fmt.Sprintf("⏰ [挂起失败] [%s] 等待组切换超时或被取消",
 								connID))
-							currentAttemptCount := lifecycleManager.GetAttemptCount()
-							lifecycleManager.UpdateStatus("error", currentAttemptCount, http.StatusBadGateway)
+							lifecycleManager.UpdateStatus("error", globalAttemptCount, http.StatusBadGateway)
 							http.Error(w, "Request suspended but group switch failed", http.StatusBadGateway)
 							return
 						}
@@ -370,21 +194,10 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 						// 🚨 [关键修复] 避免statusCode=0导致http.Error panic
 						// Go标准库要求状态码在100-999之间，0会触发panic
 						if statusCode == 0 {
-							switch decision.FinalStatus {
-							case "cancelled":
-								// 客户端取消：使用499（nginx风格的客户端取消码）
-								statusCode = 499
-							case "auth_error":
-								statusCode = http.StatusUnauthorized
-							case "rate_limited":
-								statusCode = http.StatusTooManyRequests
-							default:
-								// 其他情况（网络错误等）使用502
-								statusCode = http.StatusBadGateway
-							}
+							statusCode = getDefaultStatusCodeForFinalStatus(decision.FinalStatus)
 						}
 
-						currentAttemptCount := lifecycleManager.GetAttemptCount()
+						currentAttemptCount := globalAttemptCount
 						lifecycleManager.UpdateStatus(decision.FinalStatus, currentAttemptCount, statusCode)
 						http.Error(w, decision.Reason, statusCode)
 						return

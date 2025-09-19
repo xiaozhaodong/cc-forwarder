@@ -253,7 +253,6 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	tokenParserFactory := &TokenParserFactoryImpl{}
 	streamProcessorFactory := &StreamProcessorFactoryImpl{}
 	errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
-	retryHandlerFactory := &RetryHandlerFactoryImpl{}
 	retryManagerFactory := &RetryManagerFactoryImpl{
 		config:          cfg,
 		errorRecovery:   NewErrorRecoveryManager(nil), // 临时创建，后续会在工厂中重新创建
@@ -303,7 +302,7 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		tokenParserFactory,
 		streamProcessorFactory,
 		errorRecoveryFactory,
-		retryHandlerFactory,
+		retryManagerFactory, // 传递retryManagerFactory
 		suspensionManagerFactory,
 		// 🔧 [Critical修复] 传入相同的共享SuspensionManager实例
 		sharedSuspensionManager,
@@ -374,8 +373,7 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	if h.streamingHandler != nil {
 		tokenParserFactory := &TokenParserFactoryImpl{}
 		streamProcessorFactory := &StreamProcessorFactoryImpl{}
-		retryHandlerFactory := &RetryHandlerFactoryImpl{}
-		
+
 		h.streamingHandler = handlers.NewStreamingHandler(
 			h.config,
 			h.endpointManager,
@@ -384,7 +382,7 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 			tokenParserFactory,
 			streamProcessorFactory,
 			errorRecoveryFactory,
-			retryHandlerFactory,
+			retryManagerFactory,
 			suspensionManagerFactory,
 			// 🔧 [Critical修复] 使用保存的共享SuspensionManager实例
 			h.sharedSuspensionManager,
