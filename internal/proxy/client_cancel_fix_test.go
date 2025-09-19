@@ -88,8 +88,9 @@ func TestLifecycleManagerClientCancel(t *testing.T) {
 		t.Errorf("Expected status 'cancelled', got '%s'", lifecycle.GetLastStatus())
 	}
 	
-	// 验证不应该重试
-	if lifecycle.ShouldRetry() {
+	// 验证不应该重试 - 直接使用错误恢复管理器判断
+	errorCtx := lifecycle.errorRecovery.ClassifyError(cancelErr, "test-req-123", "test-endpoint", "test-group", 0)
+	if lifecycle.errorRecovery.ShouldRetry(errorCtx) {
 		t.Error("Client cancelled request should not be retryable")
 	}
 	

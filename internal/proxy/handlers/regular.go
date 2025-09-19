@@ -7,11 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/proxy/retry"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 )
@@ -65,6 +67,191 @@ func NewRegularHandler(
 	}
 }
 
+// createRetryController 创建重试控制器
+func (rh *RegularHandler) createRetryController(lifecycleManager RequestLifecycleManager) *retry.RetryController {
+	policy := retry.NewDefaultRetryPolicy(rh.config)
+
+	// 创建适配器接口实现
+	adaptedErrorRecoveryFactory := &errorRecoveryFactoryAdapter{
+		factory: rh.errorRecoveryFactory,
+	}
+
+	// 创建适配器类型的lifecycleManager
+	adaptedLifecycleManager := &lifecycleManagerAdapter{
+		manager: lifecycleManager,
+	}
+
+	// 创建适配器类型的suspensionManager
+	adaptedSuspensionManager := &suspensionManagerAdapter{
+		manager: rh.sharedSuspensionManager,
+	}
+
+	return retry.NewRetryController(
+		policy,
+		adaptedSuspensionManager,
+		adaptedErrorRecoveryFactory,
+		adaptedLifecycleManager,
+		rh.usageTracker,
+	)
+}
+
+// errorRecoveryFactoryAdapter 适配handlers.ErrorRecoveryFactory到retry.ErrorRecoveryFactory
+type errorRecoveryFactoryAdapter struct {
+	factory ErrorRecoveryFactory
+}
+
+func (a *errorRecoveryFactoryAdapter) NewErrorRecoveryManager(usageTracker *tracking.UsageTracker) retry.ErrorRecoveryManager {
+	manager := a.factory.NewErrorRecoveryManager(usageTracker)
+	return &errorRecoveryManagerAdapter{manager: manager}
+}
+
+// errorRecoveryManagerAdapter 适配handlers.ErrorRecoveryManager到retry.ErrorRecoveryManager
+type errorRecoveryManagerAdapter struct {
+	manager ErrorRecoveryManager
+}
+
+func (a *errorRecoveryManagerAdapter) ClassifyError(err error, connID, endpointName, groupName string, attemptCount int) retry.ErrorContext {
+	ctx := a.manager.ClassifyError(err, connID, endpointName, groupName, attemptCount)
+	return retry.ErrorContext{
+		RequestID:      ctx.RequestID,
+		EndpointName:   ctx.EndpointName,
+		GroupName:      ctx.GroupName,
+		AttemptCount:   ctx.AttemptCount,
+		ErrorType:      ctx.ErrorType,  // ErrorType会被自动转换为interface{}
+		OriginalError:  ctx.OriginalError,
+		RetryableAfter: ctx.RetryableAfter, // time.Duration会被转换为interface{}
+		MaxRetries:     ctx.MaxRetries,
+	}
+}
+
+func (a *errorRecoveryManagerAdapter) HandleFinalFailure(errorCtx retry.ErrorContext) {
+	// 将retry.ErrorContext转换为handlers.ErrorContext
+	// 🔧 [修复] 直接转换而不是类型断言，避免proxy.ErrorType到handlers.ErrorType的断言失败
+	// errorCtx.ErrorType 实际上是 proxy.ErrorType，需要通过int转换
+	var errorType ErrorType
+	switch et := errorCtx.ErrorType.(type) {
+	case int:
+		errorType = ErrorType(et)
+	default:
+		// 对于其他类型（如proxy.ErrorType），尝试通过整数转换
+		// 这里使用反射获取底层值
+		if intVal, ok := errorCtx.ErrorType.(interface{ Int() int }); ok {
+			errorType = ErrorType(intVal.Int())
+		} else {
+			// 使用 fmt 包转换为整数
+			var val int
+			if _, err := fmt.Sscanf(fmt.Sprintf("%d", errorCtx.ErrorType), "%d", &val); err == nil {
+				errorType = ErrorType(val)
+			} else {
+				errorType = ErrorTypeUnknown
+			}
+		}
+	}
+
+	var retryableAfter time.Duration
+	if ra, ok := errorCtx.RetryableAfter.(time.Duration); ok {
+		retryableAfter = ra
+	}
+
+	handlersCtx := ErrorContext{
+		RequestID:      errorCtx.RequestID,
+		EndpointName:   errorCtx.EndpointName,
+		GroupName:      errorCtx.GroupName,
+		AttemptCount:   errorCtx.AttemptCount,
+		ErrorType:      errorType,
+		OriginalError:  errorCtx.OriginalError,
+		RetryableAfter: retryableAfter,
+		MaxRetries:     errorCtx.MaxRetries,
+	}
+
+	a.manager.HandleFinalFailure(handlersCtx)
+}
+
+func (a *errorRecoveryManagerAdapter) GetErrorTypeName(errorType interface{}) string {
+	// 🔧 [修复] 使用反射获取底层整数值，避免proxy.ErrorType到handlers.ErrorType的断言失败
+	if errorType != nil {
+		v := reflect.ValueOf(errorType)
+		if v.Kind() == reflect.Int {
+			return a.manager.GetErrorTypeName(ErrorType(v.Int()))
+		}
+		// 如果已经是 handlers.ErrorType，直接使用
+		if et, ok := errorType.(ErrorType); ok {
+			return a.manager.GetErrorTypeName(et)
+		}
+	}
+	return "unknown"
+}
+
+// lifecycleManagerAdapter 适配handlers.RequestLifecycleManager到retry.RequestLifecycleManager
+type lifecycleManagerAdapter struct {
+	manager RequestLifecycleManager
+}
+
+func (a *lifecycleManagerAdapter) GetRequestID() string {
+	return a.manager.GetRequestID()
+}
+
+func (a *lifecycleManagerAdapter) SetEndpoint(name, group string) {
+	a.manager.SetEndpoint(name, group)
+}
+
+func (a *lifecycleManagerAdapter) SetModel(modelName string) {
+	a.manager.SetModel(modelName)
+}
+
+func (a *lifecycleManagerAdapter) SetModelWithComparison(modelName, source string) {
+	a.manager.SetModelWithComparison(modelName, source)
+}
+
+func (a *lifecycleManagerAdapter) HasModel() bool {
+	return a.manager.HasModel()
+}
+
+func (a *lifecycleManagerAdapter) UpdateStatus(status string, endpointIndex, statusCode int) {
+	a.manager.UpdateStatus(status, endpointIndex, statusCode)
+}
+
+func (a *lifecycleManagerAdapter) HandleError(err error) {
+	a.manager.HandleError(err)
+}
+
+func (a *lifecycleManagerAdapter) CompleteRequest(tokens *tracking.TokenUsage) {
+	a.manager.CompleteRequest(tokens)
+}
+
+func (a *lifecycleManagerAdapter) HandleNonTokenResponse(responseContent string) {
+	a.manager.HandleNonTokenResponse(responseContent)
+}
+
+func (a *lifecycleManagerAdapter) RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string) {
+	a.manager.RecordTokensForFailedRequest(tokens, failureReason)
+}
+
+func (a *lifecycleManagerAdapter) IncrementAttempt() int {
+	return a.manager.IncrementAttempt()
+}
+
+func (a *lifecycleManagerAdapter) GetAttemptCount() int {
+	return a.manager.GetAttemptCount()
+}
+
+// suspensionManagerAdapter 适配handlers.SuspensionManager到retry.SuspensionManager
+type suspensionManagerAdapter struct {
+	manager SuspensionManager
+}
+
+func (a *suspensionManagerAdapter) ShouldSuspend(ctx context.Context) bool {
+	return a.manager.ShouldSuspend(ctx)
+}
+
+func (a *suspensionManagerAdapter) WaitForGroupSwitch(ctx context.Context, connID string) bool {
+	return a.manager.WaitForGroupSwitch(ctx, connID)
+}
+
+func (a *suspensionManagerAdapter) GetSuspendedRequestsCount() int {
+	return a.manager.GetSuspendedRequestsCount()
+}
+
 // HandleRegularRequestUnified 统一常规请求处理
 // 实现与StreamingHandler相同的重试循环模式，应用所有Critical修复
 func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager RequestLifecycleManager) {
@@ -72,13 +259,13 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 	slog.Info(fmt.Sprintf("🔄 [常规架构] [%s] 使用unified v3架构", connID))
 
-	// 创建管理器 - 修复依赖注入
-	errorRecovery := rh.errorRecoveryFactory.NewErrorRecoveryManager(rh.usageTracker)
-	retryMgr := rh.retryManagerFactory.NewRetryManager()
-	// 🔧 [修复] 使用共享的SuspensionManager实例，确保全局挂起限制生效
-	suspensionMgr := rh.sharedSuspensionManager
+	// 创建重试控制器
+	retryController := rh.createRetryController(lifecycleManager)
 
-	// 外层循环处理组切换恢复 - 修复递归调用栈问题
+	// 创建管理器 - 修复依赖注入
+	retryMgr := rh.retryManagerFactory.NewRetryManager()
+
+	// 外层循环处理组切换逻辑
 	for {
 		// 获取端点列表
 		endpoints := retryMgr.GetHealthyEndpoints(ctx)
@@ -88,19 +275,17 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 			return
 		}
 
-		// ✅ 使用与流式请求相同的重试循环
-		var currentAttemptCount int // 🔢 [语义修复] 追踪真实尝试次数
+		// 内层循环处理端点重试
+		groupSwitchNeeded := false
 		for i, endpoint := range endpoints {
 			lifecycleManager.SetEndpoint(endpoint.Config.Name, endpoint.Config.Group)
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 			for attempt := 1; attempt <= retryMgr.GetMaxAttempts(); attempt++ {
-				// 🔢 [语义修复] 每次尝试端点时增加真实的尝试计数
-				currentAttemptCount = lifecycleManager.IncrementAttempt()
-
 				// 检查取消
 				select {
 				case <-ctx.Done():
+					currentAttemptCount := lifecycleManager.GetAttemptCount()
 					lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
 					return
 				default:
@@ -110,107 +295,126 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				resp, err := rh.executeRequest(ctx, r, bodyBytes, endpoint)
 
 				if err == nil && IsSuccessStatus(resp.StatusCode) {
-					// ✅ 成功 - 响应体由processSuccessResponse管理
+					// 🔢 [重构] 成功时也需要通过RetryController计数，确保一致性
+					// 成功的尝试也是真实的HTTP调用，应该被计数
+					retryController := rh.createRetryController(lifecycleManager)
+					_, ctrlErr := retryController.OnAttemptResult(ctx, endpoint, nil, attempt, false)
+					if ctrlErr != nil {
+						slog.Error(fmt.Sprintf("❌ [成功计数错误] [%s] 端点: %s, 错误: %v", connID, endpoint.Config.Name, ctrlErr))
+					}
+
+					currentAttemptCount := lifecycleManager.GetAttemptCount()
 					lifecycleManager.UpdateStatus("processing", currentAttemptCount, resp.StatusCode)
 					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name)
 					return
 				}
 
-				// ❌ 错误处理 - 修复HTTP响应体资源泄漏问题
-				// 对于非成功响应，必须立即关闭响应体（不能在循环中使用defer！）
-				if err == nil && resp != nil {
-					if !IsSuccessStatus(resp.StatusCode) {
-						// ✅ 先尝试从HTTP错误中提取Token信息（如果可能）
-						rh.tryExtractTokensFromHttpError(resp, lifecycleManager, endpoint.Config.Name)
+				// 构造HTTP状态码错误（保持现有逻辑）
+				if err == nil && resp != nil && !IsSuccessStatus(resp.StatusCode) {
+					// 先尝试从HTTP错误中提取Token信息（如果可能）
+					rh.tryExtractTokensFromHttpError(resp, lifecycleManager, endpoint.Config.Name)
 
-						// 然后关闭响应体
-						closeErr := resp.Body.Close()
-						if closeErr != nil {
-							// Close失败时记录日志但继续处理HTTP错误
-							slog.Warn(fmt.Sprintf("⚠️ [响应体关闭失败] [%s] 端点: %s, Close错误: %v", connID, endpoint.Config.Name, closeErr))
-						}
-						// 将HTTP状态码错误赋给外层err变量，确保后续错误处理生效
-						err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
-					}
-					// 注意：成功响应的Body由processSuccessResponse管理，不在此关闭
-				} else if err != nil && resp != nil {
-					// HTTP客户端在某些错误情况下仍会返回响应体，必须关闭避免泄漏
 					closeErr := resp.Body.Close()
 					if closeErr != nil {
-						// Close失败时记录日志但继续处理原错误
-						slog.Warn(fmt.Sprintf("⚠️ [错误响应体关闭失败] [%s] 端点: %s, Close错误: %v", connID, endpoint.Config.Name, closeErr))
+						slog.Warn(fmt.Sprintf("⚠️ [响应体关闭失败] [%s] 端点: %s, Close错误: %v",
+							connID, endpoint.Config.Name, closeErr))
 					}
-					// 保持原错误不变，让原网络/超时错误得到正确处理
+					err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+				} else if err != nil && resp != nil {
+					closeErr := resp.Body.Close()
+					if closeErr != nil {
+						slog.Warn(fmt.Sprintf("⚠️ [错误响应体关闭失败] [%s] 端点: %s, Close错误: %v",
+							connID, endpoint.Config.Name, closeErr))
+					}
 				}
 
-				errorCtx := errorRecovery.ClassifyError(err, connID, endpoint.Config.Name, endpoint.Config.Group, attempt-1)
-				lifecycleManager.HandleError(err)
+				// 使用统一重试控制器
+				decision, ctrlErr := retryController.OnAttemptResult(ctx, endpoint, err, attempt, false) // 常规请求：isStreaming=false
+				if ctrlErr != nil {
+					lifecycleManager.HandleError(ctrlErr)
+					http.Error(w, "Retry controller error", http.StatusInternalServerError)
+					return
+				}
 
-				// 重试判断
-				shouldRetry, delay := retryMgr.ShouldRetry(&errorCtx, attempt)
-				statusCode := GetStatusCodeFromError(err, resp)
+				// 处理挂起决策
+				if decision.SuspendRequest {
+					if rh.sharedSuspensionManager.ShouldSuspend(ctx) {
+						currentAttemptCount := lifecycleManager.GetAttemptCount()
+						lifecycleManager.UpdateStatus("suspended", currentAttemptCount, 0)
+						slog.Info(fmt.Sprintf("⏸️ [请求挂起] [%s] 原因: %s",
+							connID, decision.Reason))
 
-				if !shouldRetry {
-					lifecycleManager.UpdateStatus("error", currentAttemptCount, statusCode)
+						if rh.sharedSuspensionManager.WaitForGroupSwitch(ctx, connID) {
+							slog.Info(fmt.Sprintf("📡 [组切换成功] [%s] 重新获取端点列表",
+								connID))
+							groupSwitchNeeded = true
+							break // 跳出端点循环
+						} else {
+							slog.Warn(fmt.Sprintf("⏰ [挂起失败] [%s] 等待组切换超时或被取消",
+								connID))
+							currentAttemptCount := lifecycleManager.GetAttemptCount()
+							lifecycleManager.UpdateStatus("error", currentAttemptCount, http.StatusBadGateway)
+							http.Error(w, "Request suspended but group switch failed", http.StatusBadGateway)
+							return
+						}
+					}
+				}
 
-					// 对于HTTP错误（如404 Not Found），立即失败而不尝试其他端点
-					// 因为这类错误与端点健康状况无关，资源不存在问题不会因为更换端点而解决
-					if errorCtx.ErrorType == ErrorTypeHTTP {
-						finalEndpoints := retryMgr.GetHealthyEndpoints(ctx)
-						// 🔢 [语义修复] 在日志中记录端点数量信息，但使用真实尝试次数
-						slog.Info(fmt.Sprintf("❌ [HTTP错误终止] [%s] HTTP错误不尝试其他端点，尝试次数: %d, 健康端点数: %d",
-							connID, currentAttemptCount, len(finalEndpoints)))
-						lifecycleManager.UpdateStatus("error", currentAttemptCount, statusCode)
+				if !decision.RetrySameEndpoint {
+					if decision.SwitchEndpoint {
+						break // 尝试下一个端点
+					} else {
+						// 🔧 [修复] 终止重试时获取真实状态码，避免http.Error panic
+						statusCode := GetStatusCodeFromError(err, resp)
 
-						// ✅ 注意：Token提取已在第119-120行的tryExtractTokensFromHttpError中完成
-						// 此时响应体已经在前面的步骤中处理过，无需额外Token处理
+						// 🚨 [关键修复] 避免statusCode=0导致http.Error panic
+						// Go标准库要求状态码在100-999之间，0会触发panic
+						if statusCode == 0 {
+							switch decision.FinalStatus {
+							case "cancelled":
+								// 客户端取消：使用499（nginx风格的客户端取消码）
+								statusCode = 499
+							case "auth_error":
+								statusCode = http.StatusUnauthorized
+							case "rate_limited":
+								statusCode = http.StatusTooManyRequests
+							default:
+								// 其他情况（网络错误等）使用502
+								statusCode = http.StatusBadGateway
+							}
+						}
 
-						http.Error(w, fmt.Sprintf("HTTP %d: %s", statusCode, http.StatusText(statusCode)), statusCode)
+						currentAttemptCount := lifecycleManager.GetAttemptCount()
+						lifecycleManager.UpdateStatus(decision.FinalStatus, currentAttemptCount, statusCode)
+						http.Error(w, decision.Reason, statusCode)
 						return
 					}
-
-					break // 对于其他不可重试错误，尝试下一个端点
 				}
 
-				// 重试
-				lifecycleManager.UpdateStatus("retry", currentAttemptCount, statusCode)
-				if attempt < retryMgr.GetMaxAttempts() {
-					time.Sleep(delay)
+				// 使用统一延迟
+				if attempt < retryMgr.GetMaxAttempts() && decision.Delay > 0 {
+					time.Sleep(decision.Delay)
 				}
-				// 注意：响应体已立即关闭（无defer），连接已释放可重用
+			}
+
+			// 如果需要组切换，跳出端点循环
+			if groupSwitchNeeded {
+				break
 			}
 		}
 
-		// 检查挂起 - 修复递归调用栈问题
-		// 使用循环而非递归避免栈溢出
-		if suspensionMgr.ShouldSuspend(ctx) {
-			currentEndpoints := retryMgr.GetHealthyEndpoints(ctx)
-			// 🔢 [语义修复] 使用真实的尝试次数而不是端点数量
-			actualAttemptCount := lifecycleManager.GetAttemptCount()
-			lifecycleManager.UpdateStatus("suspended", actualAttemptCount, 0)
-
-			// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
-			slog.Info(fmt.Sprintf("⏸️ [常规挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d",
-				connID, actualAttemptCount, len(currentEndpoints)))
-			if suspensionMgr.WaitForGroupSwitch(ctx, connID) {
-				// 使用循环重入而非递归
-				continue // 重新获取端点列表并继续处理
-			}
+		// 如果需要组切换，重新开始外层循环
+		if groupSwitchNeeded {
+			continue
 		}
 
-		// 无法恢复，退出
+		// 所有端点都失败了，终止处理
 		break
 	}
 
-	// 最终失败 - 使用最后获取的端点数量
-	// ✅ 注意：对于所有尝试过的HTTP错误，Token已在第119-120行处理
-	// 此处为最终的全部端点失败情况，无额外Token可提取
-	lastEndpoints := retryMgr.GetHealthyEndpoints(ctx)
-	// 🔢 [语义修复] 使用真实的尝试次数而不是端点数量，在日志中记录端点信息
-	finalAttemptCount := lifecycleManager.GetAttemptCount()
-	slog.Info(fmt.Sprintf("❌ [全部端点失败] [%s] 尝试次数: %d, 健康端点数: %d",
-		connID, finalAttemptCount, len(lastEndpoints)))
-	lifecycleManager.UpdateStatus("error", finalAttemptCount, http.StatusBadGateway)
+	// 最终失败处理
+	currentAttemptCount := lifecycleManager.GetAttemptCount()
+	lifecycleManager.UpdateStatus("error", currentAttemptCount, http.StatusBadGateway)
 	http.Error(w, "All endpoints failed", http.StatusBadGateway)
 }
 

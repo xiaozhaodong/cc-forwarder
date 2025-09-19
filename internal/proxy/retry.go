@@ -16,10 +16,15 @@ import (
 )
 
 // RetryHandler handles retry logic with exponential backoff
-// @Deprecated: This struct is deprecated. Use RetryManager and SuspensionManager instead.
-// - RetryManager: 负责重试算法逻辑、基于错误分类的重试决策、指数退避延迟计算
-// - SuspensionManager: 负责请求挂起逻辑和等待组切换通知
-// 该结构体将在后续版本中被完全移除，当前仅作为过渡期兼容保留
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 internal/proxy/retry.RetryController 替代
+// 迁移指南: docs/migration/retry_v3.3.md
+//
+// 新的重试架构提供了以下优势：
+// - 统一的重试策略（常规和流式请求使用相同算法）
+// - 更好的错误分类和决策逻辑
+// - 支持限流错误的特殊处理
+// - 更清晰的代码结构和可测试性
 type RetryHandler struct {
 	config          *config.Config
 	endpointManager *endpoint.Manager
@@ -34,7 +39,9 @@ type RetryHandler struct {
 }
 
 // NewRetryHandler creates a new retry handler
-// @Deprecated: Use NewRetryManager and NewSuspensionManager instead
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 internal/proxy/retry.NewRetryController 替代
+// 迁移指南: docs/migration/retry_v3.3.md
 func NewRetryHandler(cfg *config.Config) *RetryHandler {
 	return &RetryHandler{
 		config: cfg,
@@ -77,11 +84,17 @@ func (re *RetryableError) Error() string {
 }
 
 // Execute executes an operation with retry and fallback logic
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 RetryController.ExecuteWithRetry 替代
+// 迁移指南: docs/migration/retry_v3.3.md
 func (rh *RetryHandler) Execute(operation Operation, connID string) (*http.Response, error) {
 	return rh.ExecuteWithContext(context.Background(), operation, connID)
 }
 
 // ExecuteWithContext executes an operation with context, retry and fallback logic with dynamic group management
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 RetryController.ExecuteWithRetry 替代
+// 迁移指南: docs/migration/retry_v3.3.md
 func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operation, connID string) (*http.Response, error) {
 	var lastErr error
 	var lastResp *http.Response
@@ -381,6 +394,9 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 }
 
 // calculateDelay calculates the delay for exponential backoff
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 RetryController.CalculateBackoff 替代
+// 迁移指南: docs/migration/retry_v3.3.md
 func (rh *RetryHandler) calculateDelay(attempt int) time.Duration {
 	// Calculate exponential backoff: base_delay * (multiplier ^ (attempt - 1))
 	multiplier := math.Pow(rh.config.Retry.Multiplier, float64(attempt-1))
@@ -395,6 +411,9 @@ func (rh *RetryHandler) calculateDelay(attempt int) time.Duration {
 }
 
 // shouldRetryStatusCode determines if an HTTP status code should trigger a retry
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 RetryController.ShouldRetry 替代
+// 迁移指南: docs/migration/retry_v3.3.md
 func (rh *RetryHandler) shouldRetryStatusCode(statusCode int) *RetryableError {
 	switch {
 	case statusCode >= 200 && statusCode < 400:
@@ -464,6 +483,9 @@ func (rh *RetryHandler) shouldRetryStatusCode(statusCode int) *RetryableError {
 }
 
 // IsRetryableError determines if an error should trigger a retry
+// @Deprecated: 将在v3.3.0版本中完全移除
+// 请使用 RetryController.ShouldRetry 替代
+// 迁移指南: docs/migration/retry_v3.3.md
 func (rh *RetryHandler) IsRetryableError(err error) bool {
 	if err == nil {
 		return false

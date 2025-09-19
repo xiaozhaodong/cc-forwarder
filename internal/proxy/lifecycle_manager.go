@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
 )
@@ -15,6 +16,23 @@ import (
 type MonitoringMiddlewareInterface interface {
 	RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 	RecordFailedRequestTokens(connID, endpoint string, tokens *monitor.TokenUsage, failureReason string) // 新增方法
+}
+
+// RetryDecision 重试决策结果
+type RetryDecision struct {
+	RetrySameEndpoint bool   // 是否重试同一端点
+	FinalStatus       string // 最终状态
+	Reason            string // 决策原因
+}
+
+// RetryContext 重试上下文信息
+type RetryContext struct {
+	RequestID     string              // 请求ID
+	Endpoint      *endpoint.Endpoint  // 端点信息
+	Attempt       int                 // 当前尝试次数
+	AttemptGlobal int                 // 全局尝试次数
+	Error         *ErrorContext       // 错误上下文
+	IsStreaming   bool                // 是否为流式请求
 }
 
 // RequestLifecycleManager 请求生命周期管理器
@@ -382,18 +400,8 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 		rlm.UpdateStatus("error", rlm.retryCount, 0)
 	}
 	
-	slog.Error(fmt.Sprintf("⚠️ [生命周期错误] [%s] 错误类型: %s, 错误: %v", 
+	slog.Error(fmt.Sprintf("⚠️ [生命周期错误] [%s] 错误类型: %s, 错误: %v",
 		rlm.requestID, rlm.errorRecovery.getErrorTypeName(errorCtx.ErrorType), err))
-}
-
-// ShouldRetry 判断是否应该重试
-func (rlm *RequestLifecycleManager) ShouldRetry() bool {
-	if rlm.lastError == nil {
-		return false
-	}
-	
-	errorCtx := rlm.errorRecovery.ClassifyError(rlm.lastError, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
-	return rlm.errorRecovery.ShouldRetry(errorCtx)
 }
 
 // IncrementRetry 增加重试计数
@@ -476,4 +484,34 @@ func (rlm *RequestLifecycleManager) GetAttemptCount() int {
 	rlm.attemptMu.Lock()
 	defer rlm.attemptMu.Unlock()
 	return rlm.attemptCounter
+}
+
+// OnRetryDecision 处理重试决策结果
+func (rlm *RequestLifecycleManager) OnRetryDecision(decision RetryDecision, httpStatus int) {
+	actualRetryCount := rlm.GetAttemptCount()
+
+	if decision.RetrySameEndpoint {
+		rlm.UpdateStatus("retry", actualRetryCount, httpStatus)
+	} else if decision.FinalStatus != "" {
+		rlm.UpdateStatus(decision.FinalStatus, actualRetryCount, httpStatus)
+	}
+
+	// 记录决策原因
+	slog.Debug(fmt.Sprintf("📋 [重试决策记录] [%s] 状态: %s, 原因: %s",
+		rlm.requestID, decision.FinalStatus, decision.Reason))
+}
+
+// GetRetryContext 获取重试上下文信息
+func (rlm *RequestLifecycleManager) GetRetryContext(endpoint *endpoint.Endpoint, err error, attempt int) RetryContext {
+	errorRecovery := rlm.errorRecovery
+	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, attempt-1)
+
+	return RetryContext{
+		RequestID:     rlm.requestID,
+		Endpoint:      endpoint,
+		Attempt:       attempt,
+		AttemptGlobal: rlm.GetAttemptCount(),
+		Error:         errorCtx,
+		IsStreaming:   false, // 由调用方设置
+	}
 }

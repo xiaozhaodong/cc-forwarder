@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/proxy/retry"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -130,7 +131,8 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	// 🔧 [重试逻辑修复] 对每个端点进行max_attempts次重试，而不是只尝试一次
 	// 尝试端点直到成功
 	var lastErr error // 声明在外层作用域，供最终错误处理使用
-	var currentAttemptCount int // 🔢 [语义修复] 声明在外层作用域，用于追踪真实尝试次数
+	var lastResp *http.Response // 🔧 [修复] 添加lastResp变量，用于获取真实HTTP状态码
+	// 🔢 [重构] 移除currentAttemptCount变量，统一由RetryController管理计数
 	for i := 0; i < len(endpoints); i++ {
 		ep := endpoints[i]
 		// 更新生命周期管理器信息
@@ -141,8 +143,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 		endpointSuccess := false
 
 		for attempt := 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
-			// 🔢 [语义修复] 每次尝试端点时增加真实的尝试计数
-			currentAttemptCount = lifecycleManager.IncrementAttempt()
+			// 🔢 [重构] 移除预先计数，统一由RetryController管理
+			// 获取当前计数用于日志，但不增加计数
+			currentAttemptCount := lifecycleManager.GetAttemptCount()
 
 			// 检查是否被取消
 			select {
@@ -157,7 +160,20 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 			// 尝试连接端点
 			resp, err := sh.forwarder.ForwardRequestToEndpoint(ctx, r, bodyBytes, ep)
+			// 🔧 [修复] 保存最后的响应，用于获取真实HTTP状态码
+			lastResp = resp
 			if err == nil && IsSuccessStatus(resp.StatusCode) {
+				// 🔢 [关键修复] 成功时也需要通过RetryController计数，确保一致性
+				// 成功的尝试也是真实的HTTP调用，应该被计数
+				retryController := sh.createRetryController(lifecycleManager)
+				_, ctrlErr := retryController.OnAttemptResult(ctx, ep, nil, attempt, true) // 流式：isStreaming=true
+				if ctrlErr != nil {
+					slog.Error(fmt.Sprintf("❌ [流式成功计数错误] [%s] 端点: %s, 错误: %v", connID, ep.Config.Name, ctrlErr))
+				}
+
+				// 获取更新后的计数
+				currentAttemptCount := lifecycleManager.GetAttemptCount()
+
 				// ✅ 成功！开始处理响应
 				endpointSuccess = true
 				slog.Info(fmt.Sprintf("✅ [流式成功] [%s] 端点: %s (组: %s), 尝试次数: %d",
@@ -245,63 +261,129 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// ❌ 出现错误，进行错误分类
 			lastErr = err
 
-			// ❌ 处理非成功HTTP状态码 - 修复响应体资源泄漏
+			// 错误处理 - 先构造HTTP状态码错误（保持现有逻辑）
 			if err == nil && resp != nil && !IsSuccessStatus(resp.StatusCode) {
-				closeErr := resp.Body.Close() // 立即关闭非成功响应体，避免连接池耗尽
+				closeErr := resp.Body.Close() // 立即关闭非成功响应体
 				if closeErr != nil {
-					// Close失败时记录日志但继续处理HTTP错误
 					slog.Warn(fmt.Sprintf("⚠️ [响应体关闭失败] [%s] 端点: %s, Close错误: %v", connID, ep.Config.Name, closeErr))
 				}
+				// 构造HTTP状态码错误，确保RetryController能正确分类429等状态
 				lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 			} else if err != nil && resp != nil {
-				// HTTP客户端在某些错误情况下仍会返回响应体，必须关闭避免泄漏
-				closeErr := resp.Body.Close() // 立即关闭错误响应体
+				closeErr := resp.Body.Close()
 				if closeErr != nil {
-					// Close失败时记录日志但继续处理原错误
 					slog.Warn(fmt.Sprintf("⚠️ [错误响应体关闭失败] [%s] 端点: %s, Close错误: %v", connID, ep.Config.Name, closeErr))
 				}
 			}
 
-			errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
-			errorCtx := errorRecovery.ClassifyError(lastErr, connID, ep.Config.Name, ep.Config.Group, attempt-1)
+			// 使用统一重试控制器
+			retryController := sh.createRetryController(lifecycleManager)
 
-			// 检查是否为客户端取消错误
-			if errorCtx.ErrorType == ErrorTypeClientCancel {
-				slog.Info(fmt.Sprintf("🚫 [客户端取消检测] [%s] 检测到客户端取消，立即停止重试", connID))
+			decision, ctrlErr := retryController.OnAttemptResult(ctx, ep, lastErr, attempt, true) // 流式请求：isStreaming=true
+			if ctrlErr != nil {
+				slog.Error(fmt.Sprintf("❌ [重试控制器错误] [%s] 端点: %s, 错误: %v",
+					connID, ep.Config.Name, ctrlErr))
+				fmt.Fprintf(w, "data: error: 重试控制器错误: %v\n\n", ctrlErr)
+				flusher.Flush()
+				return
+			}
+
+			// 检查决策结果
+			if decision.FinalStatus == "cancelled" {
+				// 🔧 [修复] 添加生命周期状态更新
+				currentAttemptCount := lifecycleManager.GetAttemptCount()
 				lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
+				slog.Info(fmt.Sprintf("🚫 [客户端取消检测] [%s] 检测到客户端取消，立即停止重试", connID))
 				fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
 				flusher.Flush()
 				return
 			}
 
-			// 非取消错误：记录重试状态
-			lifecycleManager.HandleError(lastErr)
-			lifecycleManager.UpdateStatus("retry", currentAttemptCount, 0)
+			// 处理挂起决策
+			if decision.SuspendRequest {
+				if sh.sharedSuspensionManager.ShouldSuspend(ctx) {
+					lifecycleManager.UpdateStatus("suspended", -1, 0)
+					slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 原因: %s", connID, decision.Reason))
+					fmt.Fprintf(w, "data: suspend: 请求已挂起，等待组切换...\n\n")
+					flusher.Flush()
 
-			slog.Warn(fmt.Sprintf("🔄 [流式重试] [%s] 端点: %s, 尝试: %d/%d, 错误: %v",
-				connID, ep.Config.Name, attempt, sh.config.Retry.MaxAttempts, lastErr))
+					if sh.sharedSuspensionManager.WaitForGroupSwitch(ctx, connID) {
+						slog.Info(fmt.Sprintf("📡 [组切换成功] [%s] 重新获取端点列表", connID))
+						fmt.Fprintf(w, "data: resume: 组切换成功，重新开始处理...\n\n")
+						flusher.Flush()
+						// 重新开始executeStreamingWithRetry
+						sh.executeStreamingWithRetry(ctx, w, r, bodyBytes, lifecycleManager, flusher)
+						return
+					} else {
+						// 🔧 [修复] 添加生命周期状态更新
+						currentAttemptCount := lifecycleManager.GetAttemptCount()
+						lifecycleManager.UpdateStatus("error", currentAttemptCount, http.StatusBadGateway)
+						slog.Warn(fmt.Sprintf("⏰ [挂起失败] [%s] 等待组切换超时或被取消", connID))
+						fmt.Fprintf(w, "data: error: 挂起等待组切换失败\n\n")
+						flusher.Flush()
+						return
+					}
+				}
+			}
+
+			if !decision.RetrySameEndpoint {
+				if decision.SwitchEndpoint {
+					slog.Info(fmt.Sprintf("🔀 [切换端点] [%s] 当前端点: %s, 原因: %s",
+						connID, ep.Config.Name, decision.Reason))
+					break // 尝试下一个端点
+				} else {
+					// 🔧 [修复] 终止重试时使用真实HTTP状态码，而不是硬编码映射
+					currentAttemptCount := lifecycleManager.GetAttemptCount()
+
+					// 使用GetStatusCodeFromError获取真实的HTTP状态码
+					// 这确保了404、400、503等真实状态码不会被错误映射成502
+					statusCode := GetStatusCodeFromError(lastErr, lastResp)
+
+					// 如果无法获取状态码，使用合理的默认值
+					if statusCode == 0 {
+						switch decision.FinalStatus {
+						case "cancelled":
+							// 🔧 [修复] 客户端取消使用499状态码，避免误报为502
+							// 499是nginx风格的客户端取消码，保持监控数据准确性
+							statusCode = 499
+						case "auth_error":
+							statusCode = http.StatusUnauthorized
+						case "rate_limited":
+							statusCode = http.StatusTooManyRequests
+						default:
+							statusCode = http.StatusBadGateway
+						}
+					}
+
+					lifecycleManager.UpdateStatus(decision.FinalStatus, currentAttemptCount, statusCode)
+
+					// 终止重试
+					slog.Info(fmt.Sprintf("🛑 [终止重试] [%s] 端点: %s, 状态: %s, 状态码: %d, 原因: %s",
+						connID, ep.Config.Name, decision.FinalStatus, statusCode, decision.Reason))
+					fmt.Fprintf(w, "data: error: %s\n\n", decision.Reason)
+					flusher.Flush()
+					return
+				}
+			}
 
 			// 如果不是最后一次尝试，等待重试延迟
 			if attempt < sh.config.Retry.MaxAttempts {
-				// 计算重试延迟
-				delay := sh.calculateRetryDelay(attempt)
-				slog.Info(fmt.Sprintf("⏳ [等待重试] [%s] 端点: %s, 延迟: %v",
-					connID, ep.Config.Name, delay))
+				slog.Info(fmt.Sprintf("⏳ [等待重试] [%s] 端点: %s, 延迟: %v, 原因: %s",
+					connID, ep.Config.Name, decision.Delay, decision.Reason))
 
 				// 向客户端发送重试信息
 				fmt.Fprintf(w, "data: retry: 重试端点 %s (尝试 %d/%d)，等待 %v...\n\n",
-					ep.Config.Name, attempt+1, sh.config.Retry.MaxAttempts, delay)
+					ep.Config.Name, attempt+1, sh.config.Retry.MaxAttempts, decision.Delay)
 				flusher.Flush()
 
 				// 等待延迟，同时检查取消
 				select {
 				case <-ctx.Done():
 					slog.Info(fmt.Sprintf("🚫 [重试取消] [%s] 等待重试期间检测到取消", connID))
-					lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
 					fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
 					flusher.Flush()
 					return
-				case <-time.After(delay):
+				case <-time.After(decision.Delay):
 					// 继续下一次重试
 				}
 			}
@@ -401,18 +483,26 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	flusher.Flush()
 }
 
-// calculateRetryDelay 计算重试延迟（指数退避算法）
-// 与RetryHandler保持一致的计算逻辑
-func (sh *StreamingHandler) calculateRetryDelay(attempt int) time.Duration {
-	baseDelay := sh.config.Retry.BaseDelay
-	maxDelay := sh.config.Retry.MaxDelay
-	multiplier := sh.config.Retry.Multiplier
-
-	// 计算指数延迟
-	delay := time.Duration(float64(baseDelay) * float64(attempt) * multiplier)
-
-	// 限制在最大延迟范围内
-	delay = min(delay, maxDelay)
-
-	return delay
+// createRetryController 创建重试控制器（流式专用）
+func (sh *StreamingHandler) createRetryController(lifecycleManager RequestLifecycleManager) *retry.RetryController {
+	policy := retry.NewDefaultRetryPolicy(sh.config)
+	// 创建适配器接口实现
+	adaptedErrorRecoveryFactory := &errorRecoveryFactoryAdapter{
+		factory: sh.errorRecoveryFactory,
+	}
+	// 创建适配器类型的lifecycleManager
+	adaptedLifecycleManager := &lifecycleManagerAdapter{
+		manager: lifecycleManager,
+	}
+	// 创建适配器类型的suspensionManager
+	adaptedSuspensionManager := &suspensionManagerAdapter{
+		manager: sh.sharedSuspensionManager,
+	}
+	return retry.NewRetryController(
+		policy,
+		adaptedSuspensionManager,
+		adaptedErrorRecoveryFactory,
+		adaptedLifecycleManager,
+		sh.usageTracker,
+	)
 }
