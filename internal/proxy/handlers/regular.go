@@ -179,6 +179,9 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 				// 🔧 使用增强的RetryManager进行统一决策
 				errorCtx := errorRecovery.ClassifyError(err, connID, endpoint.Config.Name, endpoint.Config.Group, attempt-1)
+
+				// 🚀 [改进版方案1] 预设错误上下文，避免 HandleError 中重复分类
+				lifecycleManager.PrepareErrorContext(&errorCtx)
 				lifecycleManager.HandleError(err)
 
 				// 🔢 [关键修复] 分离局部和全局计数语义

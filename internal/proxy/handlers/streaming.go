@@ -167,6 +167,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 		// ✅ [同端点重试] 对当前端点进行max_attempts次重试
 		endpointSuccess := false
 		var attempt int // 声明在外部，循环结束后仍可访问
+		var lastDecision *RetryDecision // 保存最后的重试决策，用于外层逻辑
 
 		for attempt = 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
 			// 🔢 [重构] 移除预先计数，统一由LifecycleManager管理
@@ -303,6 +304,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// 🔧 使用增强的RetryManager进行统一决策
 			errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
 			errorCtx := errorRecovery.ClassifyError(lastErr, connID, ep.Config.Name, ep.Config.Group, attempt-1)
+
+			// 🚀 [改进版方案1] 预设错误上下文，避免 HandleError 中重复分类
+			lifecycleManager.PrepareErrorContext(&errorCtx)
 			lifecycleManager.HandleError(lastErr)
 
 			// 创建重试管理器
@@ -311,6 +315,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// attempt: 当前端点内的尝试次数，用于退避计算
 			// globalAttemptCount: 全局尝试次数，用于限流策略
 			decision := retryMgr.ShouldRetryWithDecision(&errorCtx, attempt, globalAttemptCount, true) // 流式请求: isStreaming=true
+			lastDecision = &decision // 保存决策，供外层逻辑使用
 
 			// 检查决策结果
 			if decision.FinalStatus == "cancelled" {
@@ -418,27 +423,17 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// 使用实际的重试次数，而不是配置的最大重试次数
 			actualAttempts := attempt - 1 // attempt从1开始，减1得到实际尝试次数
 
-			// 检查最后的错误类型，决定是否尝试其他端点
+			// 🚀 [改进版方案1] 使用已保存的重试决策，避免重复错误分类
 			var willSwitchEndpoint bool = true
-			if lastErr != nil {
-				errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
-				errorCtx := errorRecovery.ClassifyError(lastErr, connID, ep.Config.Name, ep.Config.Group, 0)
+			if lastDecision != nil {
+				willSwitchEndpoint = lastDecision.SwitchEndpoint
 
-				// 对于HTTP错误和流式错误，立即失败而不尝试其他端点
-				if errorCtx.ErrorType == ErrorTypeHTTP {
-					willSwitchEndpoint = false
-					slog.Info(fmt.Sprintf("❌ [HTTP错误终止] [%s] HTTP错误不尝试其他端点: %v", connID, lastErr))
-					// 🔧 [语义修复] 使用-1参数让内部计数器处理
-					lifecycleManager.UpdateStatus("error", -1, 0)
-					fmt.Fprintf(w, "data: error: HTTP错误，终止处理: %v\n\n", lastErr)
-					flusher.Flush()
-					return
-				} else if errorCtx.ErrorType == ErrorTypeStream {
-					willSwitchEndpoint = false
-					slog.Info(fmt.Sprintf("❌ [流式错误终止] [%s] 流式解析错误不尝试其他端点: %v", connID, lastErr))
-					// 🔧 [语义修复] 使用-1参数让内部计数器处理
-					lifecycleManager.UpdateStatus("stream_error", -1, 0)
-					fmt.Fprintf(w, "data: error: 流式解析错误，终止处理: %v\n\n", lastErr)
+				// 对于不切换端点的决策（如HTTP错误、流式错误等），直接终止
+				if !willSwitchEndpoint && lastDecision.FinalStatus != "" {
+					slog.Info(fmt.Sprintf("❌ [决策终止] [%s] %s，不尝试其他端点", connID, lastDecision.Reason))
+					// 🔧 [语义修复] 使用-1参数让内部计数器处理，状态码由生命周期管理器处理
+					lifecycleManager.UpdateStatus(lastDecision.FinalStatus, -1, 0)
+					fmt.Fprintf(w, "data: error: %s\n\n", lastDecision.Reason)
 					flusher.Flush()
 					return
 				}
