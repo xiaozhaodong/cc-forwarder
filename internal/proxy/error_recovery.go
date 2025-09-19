@@ -18,16 +18,17 @@ import (
 type ErrorType int
 
 const (
-	ErrorTypeUnknown      ErrorType = iota
-	ErrorTypeNetwork                // 网络错误
-	ErrorTypeTimeout                // 超时错误
-	ErrorTypeHTTP                   // HTTP错误
-	ErrorTypeServerError            // 服务器错误（5xx）
-	ErrorTypeStream                 // 流式处理错误
-	ErrorTypeAuth                   // 认证错误
-	ErrorTypeRateLimit              // 限流错误
-	ErrorTypeParsing                // 解析错误
-	ErrorTypeClientCancel           // 客户端取消错误
+	ErrorTypeUnknown              ErrorType = iota
+	ErrorTypeNetwork                      // 网络错误
+	ErrorTypeTimeout                      // 超时错误
+	ErrorTypeHTTP                         // HTTP错误
+	ErrorTypeServerError                  // 服务器错误（5xx）
+	ErrorTypeStream                       // 流式处理错误
+	ErrorTypeAuth                         // 认证错误
+	ErrorTypeRateLimit                    // 限流错误
+	ErrorTypeParsing                      // 解析错误
+	ErrorTypeClientCancel                 // 客户端取消错误
+	ErrorTypeNoHealthyEndpoints           // 没有健康端点可用
 )
 
 // ErrorContext 错误上下文信息
@@ -169,6 +170,15 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		errorCtx.ErrorType = ErrorTypeStream
 		errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
 		slog.Warn(fmt.Sprintf("🌊 [流处理错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
+			requestID, endpoint, attempt, err))
+		return errorCtx
+	}
+
+	// 没有健康端点可用错误分类 - 在未知错误之前检查
+	if strings.Contains(errStr, "no healthy endpoints available") {
+		errorCtx.ErrorType = ErrorTypeNoHealthyEndpoints
+		errorCtx.RetryableAfter = 0 // 立即重试，不需要退避
+		slog.Warn(fmt.Sprintf("🏥 [健康检查限制] [%s] 端点: %s, 尝试: %d, 建议尝试实际转发, 错误: %v",
 			requestID, endpoint, attempt, err))
 		return errorCtx
 	}

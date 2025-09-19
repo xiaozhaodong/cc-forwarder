@@ -20,6 +20,7 @@ type RequestLifecycleManager interface {
 	HasModel() bool                                          // 检查是否已有模型
 	UpdateStatus(status string, endpointIndex, statusCode int)
 	HandleError(err error)
+	PrepareErrorContext(errorCtx *ErrorContext)
 	// 新增方法：统一的请求完成入口
 	CompleteRequest(tokens *tracking.TokenUsage)
 	HandleNonTokenResponse(responseContent string)
@@ -63,6 +64,7 @@ const (
 	ErrorTypeRateLimit
 	ErrorTypeParsing
 	ErrorTypeClientCancel
+	ErrorTypeNoHealthyEndpoints
 )
 
 // TokenParser Token解析器接口

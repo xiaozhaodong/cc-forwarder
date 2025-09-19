@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -55,6 +57,9 @@ type RequestLifecycleManager struct {
 	modelUpdateMu       sync.Mutex                    // 保护模型更新标记
 	attemptCounter      int                           // 内部尝试计数器（语义修复：统一重试计数）
 	attemptMu           sync.Mutex                    // 保护尝试计数器的互斥锁
+	pendingErrorContext *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
+	pendingErrorOriginal error                        // 预先计算上下文对应的原始错误，用于校验匹配
+	pendingErrorMu      sync.Mutex                    // 保护预先计算错误上下文的互斥锁
 }
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
@@ -371,6 +376,59 @@ func (rlm *RequestLifecycleManager) GetStats() map[string]any {
 	return stats
 }
 
+// PrepareErrorContext 预先注入错误上下文，在下次 HandleError 时复用
+// 仅针对同一个错误对象有效，避免重复分类与重复日志
+func (rlm *RequestLifecycleManager) PrepareErrorContext(errorCtx *handlers.ErrorContext) {
+	rlm.pendingErrorMu.Lock()
+	defer rlm.pendingErrorMu.Unlock()
+
+	if errorCtx == nil {
+		rlm.pendingErrorContext = nil
+		rlm.pendingErrorOriginal = nil
+		return
+	}
+
+	// 将 handlers.ErrorContext 转换为 proxy.ErrorContext，避免跨包指针依赖
+	converted := &ErrorContext{
+		RequestID:      errorCtx.RequestID,
+		EndpointName:   errorCtx.EndpointName,
+		GroupName:      errorCtx.GroupName,
+		AttemptCount:   errorCtx.AttemptCount,
+		ErrorType:      ErrorType(errorCtx.ErrorType),
+		OriginalError:  errorCtx.OriginalError,
+		RetryableAfter: errorCtx.RetryableAfter,
+		MaxRetries:     errorCtx.MaxRetries,
+	}
+
+	rlm.pendingErrorContext = converted
+	rlm.pendingErrorOriginal = errorCtx.OriginalError
+}
+
+// consumePreparedErrorContext 尝试取出与指定错误匹配的预计算上下文
+func (rlm *RequestLifecycleManager) consumePreparedErrorContext(err error) *ErrorContext {
+	rlm.pendingErrorMu.Lock()
+	defer rlm.pendingErrorMu.Unlock()
+
+	if rlm.pendingErrorContext == nil || err == nil {
+		return nil
+	}
+
+	// 只有当错误对象匹配时才复用，确保不跨错误复用
+	if rlm.pendingErrorOriginal != nil {
+		if err == rlm.pendingErrorOriginal || errors.Is(err, rlm.pendingErrorOriginal) {
+			ctx := rlm.pendingErrorContext
+			rlm.pendingErrorContext = nil
+			rlm.pendingErrorOriginal = nil
+			return ctx
+		}
+	}
+
+	// 不匹配则丢弃预计算结果，避免影响后续错误
+	rlm.pendingErrorContext = nil
+	rlm.pendingErrorOriginal = nil
+	return nil
+}
+
 // HandleError 处理请求过程中的错误
 func (rlm *RequestLifecycleManager) HandleError(err error) {
 	if err == nil {
@@ -378,9 +436,12 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 	}
 	
 	rlm.lastError = err
-	
-	// 使用错误恢复管理器分类错误
-	errorCtx := rlm.errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
+
+	// 优先复用预计算的错误分类，避免重复日志
+	errorCtx := rlm.consumePreparedErrorContext(err)
+	if errorCtx == nil {
+		errorCtx = rlm.errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
+	}
 	
 	// 根据错误类型更新状态
 	switch errorCtx.ErrorType {

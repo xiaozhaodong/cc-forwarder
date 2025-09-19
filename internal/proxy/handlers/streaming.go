@@ -118,11 +118,37 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	}
 
 	if len(endpoints) == 0 {
-		lifecycleManager.HandleError(fmt.Errorf("no healthy endpoints available"))
-		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "data: error: No healthy endpoints available\n\n")
-		flusher.Flush()
-		return
+		// 创建特殊错误，交给错误分类和重试系统处理
+		noHealthyErr := fmt.Errorf("no healthy endpoints available")
+		errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
+		errorCtx := errorRecovery.ClassifyError(noHealthyErr, connID, "", "", 0)
+
+		if errorCtx.ErrorType == ErrorTypeNoHealthyEndpoints {
+			// 尝试获取所有活跃端点，忽略健康状态
+			allActiveEndpoints := sh.endpointManager.GetGroupManager().FilterEndpointsByActiveGroups(
+				sh.endpointManager.GetAllEndpoints())
+
+			if len(allActiveEndpoints) > 0 {
+				slog.InfoContext(ctx, fmt.Sprintf("🔄 [健康检查回退] [%s] 忽略健康状态，尝试 %d 个活跃端点",
+					connID, len(allActiveEndpoints)))
+				endpoints = allActiveEndpoints
+				// 继续正常处理流程
+			} else {
+				// 真的没有端点
+				lifecycleManager.HandleError(noHealthyErr)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprintf(w, "data: error: No endpoints available in active groups\n\n")
+				flusher.Flush()
+				return
+			}
+		} else {
+			// 按原来逻辑处理
+			lifecycleManager.HandleError(noHealthyErr)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, "data: error: No healthy endpoints available\n\n")
+			flusher.Flush()
+			return
+		}
 	}
 
 	slog.Info(fmt.Sprintf("🌊 [流式开始] [%s] 流式请求开始，端点数: %d", connID, len(endpoints)))
@@ -140,8 +166,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 		// ✅ [同端点重试] 对当前端点进行max_attempts次重试
 		endpointSuccess := false
+		var attempt int // 声明在外部，循环结束后仍可访问
 
-		for attempt := 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
+		for attempt = 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
 			// 🔢 [重构] 移除预先计数，统一由LifecycleManager管理
 			// 获取当前计数用于日志，但不增加计数
 			currentAttemptCount := lifecycleManager.GetAttemptCount()
@@ -388,24 +415,47 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 		// 🔧 当前端点所有重试都失败了
 		if !endpointSuccess {
-			slog.Warn(fmt.Sprintf("❌ [端点失败] [%s] 端点: %s 所有 %d 次重试均失败",
-				connID, ep.Config.Name, sh.config.Retry.MaxAttempts))
+			// 使用实际的重试次数，而不是配置的最大重试次数
+			actualAttempts := attempt - 1 // attempt从1开始，减1得到实际尝试次数
 
 			// 检查最后的错误类型，决定是否尝试其他端点
+			var willSwitchEndpoint bool = true
 			if lastErr != nil {
 				errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
 				errorCtx := errorRecovery.ClassifyError(lastErr, connID, ep.Config.Name, ep.Config.Group, 0)
 
-				// 对于HTTP错误（如404 Not Found），立即失败而不尝试其他端点
-				// 因为这类错误与端点健康状况无关，资源不存在问题不会因为更换端点而解决
+				// 对于HTTP错误和流式错误，立即失败而不尝试其他端点
 				if errorCtx.ErrorType == ErrorTypeHTTP {
+					willSwitchEndpoint = false
 					slog.Info(fmt.Sprintf("❌ [HTTP错误终止] [%s] HTTP错误不尝试其他端点: %v", connID, lastErr))
 					// 🔧 [语义修复] 使用-1参数让内部计数器处理
 					lifecycleManager.UpdateStatus("error", -1, 0)
 					fmt.Fprintf(w, "data: error: HTTP错误，终止处理: %v\n\n", lastErr)
 					flusher.Flush()
 					return
+				} else if errorCtx.ErrorType == ErrorTypeStream {
+					willSwitchEndpoint = false
+					slog.Info(fmt.Sprintf("❌ [流式错误终止] [%s] 流式解析错误不尝试其他端点: %v", connID, lastErr))
+					// 🔧 [语义修复] 使用-1参数让内部计数器处理
+					lifecycleManager.UpdateStatus("stream_error", -1, 0)
+					fmt.Fprintf(w, "data: error: 流式解析错误，终止处理: %v\n\n", lastErr)
+					flusher.Flush()
+					return
 				}
+			}
+
+			// 根据是否会切换端点来显示不同的日志
+			if actualAttempts == 1 {
+				if willSwitchEndpoint {
+					slog.Warn(fmt.Sprintf("❌ [端点失败] [%s] 端点: %s 第1次尝试失败，切换端点",
+						connID, ep.Config.Name))
+				} else {
+					slog.Warn(fmt.Sprintf("❌ [端点失败] [%s] 端点: %s 第1次尝试失败，直接终止",
+						connID, ep.Config.Name))
+				}
+			} else {
+				slog.Warn(fmt.Sprintf("❌ [端点失败] [%s] 端点: %s 共尝试 %d 次均失败",
+					connID, ep.Config.Name, actualAttempts))
 			}
 
 			// 如果不是最后一个端点，尝试下一个端点

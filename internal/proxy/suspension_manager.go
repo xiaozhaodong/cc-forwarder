@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -74,7 +75,7 @@ func (sm *SuspensionManager) ShouldSuspend(ctx context.Context) bool {
 	// 检查是否存在可用的备用组
 	allGroups := sm.groupManager.GetAllGroups()
 	hasAvailableBackupGroups := false
-	availableGroups := []string{}
+	var availableGroups []string
 
 	slog.InfoContext(ctx, fmt.Sprintf("🔍 [挂起检查] 开始检查可用备用组，总共 %d 个组", len(allGroups)))
 
@@ -185,7 +186,7 @@ func (sm *SuspensionManager) WaitForGroupSwitch(ctx context.Context, connID stri
 
 	case <-timeoutCtx.Done():
 		// 挂起超时
-		if timeoutCtx.Err() == context.DeadlineExceeded {
+		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
 			slog.WarnContext(ctx, fmt.Sprintf("⏰ [挂起超时] 连接 %s 挂起等待超时 (%v)，停止等待", connID, timeout))
 		} else {
 			slog.InfoContext(ctx, fmt.Sprintf("🔄 [上下文取消] 连接 %s 挂起期间上下文被取消", connID))
@@ -194,10 +195,10 @@ func (sm *SuspensionManager) WaitForGroupSwitch(ctx context.Context, connID stri
 
 	case <-ctx.Done():
 		// 原始请求被取消
-		switch ctxErr := ctx.Err(); ctxErr {
-		case context.Canceled:
+		switch ctxErr := ctx.Err(); {
+		case errors.Is(ctxErr, context.Canceled):
 			slog.InfoContext(ctx, fmt.Sprintf("❌ [请求取消] 连接 %s 原始请求被客户端取消，结束挂起", connID))
-		case context.DeadlineExceeded:
+		case errors.Is(ctxErr, context.DeadlineExceeded):
 			slog.InfoContext(ctx, fmt.Sprintf("⏰ [请求超时] 连接 %s 原始请求上下文超时，结束挂起", connID))
 		default:
 			slog.InfoContext(ctx, fmt.Sprintf("❌ [请求异常] 连接 %s 原始请求上下文异常: %v，结束挂起", connID, ctxErr))

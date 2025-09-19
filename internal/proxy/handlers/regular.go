@@ -97,9 +97,33 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		// 获取端点列表
 		endpoints := retryMgr.GetHealthyEndpoints(ctx)
 		if len(endpoints) == 0 {
-			lifecycleManager.HandleError(fmt.Errorf("no healthy endpoints available"))
-			http.Error(w, "No healthy endpoints available", http.StatusServiceUnavailable)
-			return
+			// 创建特殊错误，交给错误分类和重试系统处理
+			noHealthyErr := fmt.Errorf("no healthy endpoints available")
+			errorRecovery := rh.errorRecoveryFactory.NewErrorRecoveryManager(rh.usageTracker)
+			errorCtx := errorRecovery.ClassifyError(noHealthyErr, connID, "", "", 0)
+
+			if errorCtx.ErrorType == ErrorTypeNoHealthyEndpoints {
+				// 尝试获取所有活跃端点，忽略健康状态
+				allActiveEndpoints := rh.endpointManager.GetGroupManager().FilterEndpointsByActiveGroups(
+					rh.endpointManager.GetAllEndpoints())
+
+				if len(allActiveEndpoints) > 0 {
+					slog.InfoContext(ctx, fmt.Sprintf("🔄 [健康检查回退] [%s] 忽略健康状态，尝试 %d 个活跃端点",
+						connID, len(allActiveEndpoints)))
+					endpoints = allActiveEndpoints
+					// 继续正常处理流程
+				} else {
+					// 真的没有端点
+					lifecycleManager.HandleError(noHealthyErr)
+					http.Error(w, "No endpoints available in active groups", http.StatusServiceUnavailable)
+					return
+				}
+			} else {
+				// 按原来逻辑处理
+				lifecycleManager.HandleError(noHealthyErr)
+				http.Error(w, "No healthy endpoints available", http.StatusServiceUnavailable)
+				return
+			}
 		}
 
 		// 内层循环处理端点重试
