@@ -203,6 +203,45 @@ class ReactModuleLoader {
         }
     }
 
+    // 转换export function（支持嵌套大括号）
+    _transformExportFunctions(code) {
+        const regex = /export\s+function\s+(\w+)\s*\([^)]*\)\s*\{/g;
+        let result = '';
+        let lastIndex = 0;
+        let match;
+
+        while ((match = regex.exec(code)) !== null) {
+            const functionName = match[1];
+            const functionStart = match.index;
+            const openBracePos = match.index + match[0].length - 1; // 减1因为{是匹配的最后一个字符
+
+            // 找到匹配的闭合大括号
+            let braceCount = 1;
+            let pos = openBracePos + 1;
+
+            while (pos < code.length && braceCount > 0) {
+                if (code[pos] === '{') {
+                    braceCount++;
+                } else if (code[pos] === '}') {
+                    braceCount--;
+                }
+                pos++;
+            }
+
+            if (braceCount === 0) {
+                // 找到了完整的函数
+                result += code.substring(lastIndex, functionStart);
+                const fullFunction = code.substring(functionStart, pos);
+                const functionDef = fullFunction.replace(/^export\s+/, '');
+                result += `${functionDef}\nmodule.exports.${functionName} = ${functionName};`;
+                lastIndex = pos;
+            }
+        }
+
+        result += code.substring(lastIndex);
+        return result;
+    }
+
     // 完整的import/export转换
     _transformImportExport(code, resolvedDependencies = [], currentModulePath = '') {
         console.log('🔄 [模块转换] 开始转换import/export语法...');
@@ -314,10 +353,14 @@ class ReactModuleLoader {
         );
 
         // 4. 转换 export const/function/class
+        // 首先处理 export function - 使用平衡大括号匹配
+        code = this._transformExportFunctions(code);
+
+        // 处理 export const
         code = code.replace(
-            /export\s+(const|function|class)\s+(\w+)/g,
-            (match, type, name) => {
-                return `${type} ${name}; module.exports.${name} = ${name};`;
+            /export\s+(const)\s+(\w+)\s*=\s*([^;]+);?/g,
+            (match, type, name, value) => {
+                return `${type} ${name} = ${value};\nmodule.exports.${name} = ${name};`;
             }
         );
 

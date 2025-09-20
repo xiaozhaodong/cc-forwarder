@@ -204,8 +204,8 @@ window.WebInterface = class {
                 }
                 break;
             case 'config':
-                // 配置数据总是重新加载以确保最新
-                this.loadConfig();
+                // 配置页面已迁移到React，跳过传统配置数据加载
+                console.log('配置页面已迁移到React，跳过传统配置数据加载');
                 break;
             default:
                 // 后备方案，使用原有逻辑
@@ -219,8 +219,8 @@ window.WebInterface = class {
             this.loadOverview(),
             // this.endpointsManager.loadEndpoints(), // 端点页面已迁移到React
             // this.groupsManager.loadGroups(), // 组页面已迁移到React
-            this.requestsManager.loadRequests(),
-            this.loadConfig()
+            this.requestsManager.loadRequests()
+            // this.loadConfig() // 配置页面已迁移到React
         ]).catch(error => {
             console.error('加载初始数据失败:', error);
         });
@@ -243,7 +243,8 @@ window.WebInterface = class {
                 this.requestsManager.loadRequests();
                 break;
             case 'config':
-                this.loadConfig();
+                // 配置页面已迁移到React，跳过传统配置数据加载
+                console.log('配置页面已迁移到React，跳过传统配置数据加载');
                 break;
         }
     }

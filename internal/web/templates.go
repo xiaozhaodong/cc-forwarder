@@ -1295,10 +1295,11 @@ const indexHTML = `<!DOCTYPE html>
 
             <!-- 配置标签页 -->
             <div id="config" class="tab-content">
-                <div class="section">
-                    <h2>⚙️ 当前配置</h2>
-                    <div id="config-display">
-                        <p>加载中...</p>
+                <!-- React配置页面容器 -->
+                <div id="react-config-container">
+                    <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                        <p>React配置页面加载中...</p>
                     </div>
                 </div>
             </div>
@@ -1360,6 +1361,16 @@ const indexHTML = `<!DOCTYPE html>
                                 const container = document.getElementById('react-groups-container');
                                 if (container && !container.querySelector('[data-reactroot]')) {
                                     await renderGroupsPage();
+                                }
+                            }, 100);
+                        }
+
+                        // 当切换到配置标签时，确保React组件已渲染
+                        if (tabName === 'config') {
+                            setTimeout(async () => {
+                                const container = document.getElementById('react-config-container');
+                                if (container && !container.querySelector('[data-reactroot]')) {
+                                    await renderConfigPage();
                                 }
                             }, 100);
                         }
@@ -1498,6 +1509,46 @@ const indexHTML = `<!DOCTYPE html>
 
                         } catch (error) {
                             console.error('❌ [模块渲染] 组管理页面渲染失败:', error);
+
+                            // 显示错误信息
+                            container.innerHTML =
+                                '<div style="text-align: center; padding: 48px 24px; color: #ef4444;">' +
+                                    '<div style="font-size: 48px; margin-bottom: 16px;">❌</div>' +
+                                    '<h3 style="margin: 0 0 8px 0;">模块加载失败</h3>' +
+                                    '<p style="margin: 0; font-size: 14px;">' + error.message + '</p>' +
+                                '</div>';
+                        }
+                    }
+
+                    // React配置页面渲染函数（模块化版本）
+                    async function renderConfigPage() {
+                        const container = document.getElementById('react-config-container');
+                        if (!container) {
+                            console.error('❌ 找不到React配置页面容器');
+                            return;
+                        }
+
+                        try {
+                            console.log('📦 [模块加载] 开始加载配置页面模块...');
+
+                            // 使用模块加载器动态导入配置页面组件
+                            const ConfigPageModule = await window.importReactModule('pages/config/index.jsx');
+                            const ConfigPage = ConfigPageModule.default || ConfigPageModule;
+
+                            if (!ConfigPage) {
+                                throw new Error('配置页面模块加载失败');
+                            }
+
+                            console.log('✅ [模块加载] 配置页面模块加载成功');
+
+                            // 创建并渲染React组件
+                            const configComponent = React.createElement(ConfigPage);
+                            window.ReactComponents.renderComponent(configComponent, container);
+
+                            console.log('✅ [模块渲染] 配置页面渲染成功');
+
+                        } catch (error) {
+                            console.error('❌ [模块渲染] 配置页面渲染失败:', error);
 
                             // 显示错误信息
                             container.innerHTML =
