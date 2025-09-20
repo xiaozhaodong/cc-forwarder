@@ -431,7 +431,7 @@ func (mm *MonitoringMiddleware) RecordFailedRequestTokens(connID, endpoint strin
 	}
 
 	// 广播失败请求Token事件
-	if mm.eventBroadcaster != nil {
+	if mm.eventBus != nil {
 		// 安全处理 nil tokens
 		var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
 		if tokens != nil {
@@ -441,16 +441,21 @@ func (mm *MonitoringMiddleware) RecordFailedRequestTokens(connID, endpoint strin
 			cacheReadTokens = tokens.CacheReadTokens
 		}
 
-		mm.eventBroadcaster.BroadcastLogEvent(map[string]interface{}{
-			"type":                  "failed_request_tokens",
-			"conn_id":               connID,
-			"endpoint":              endpoint,
-			"input_tokens":          inputTokens,
-			"output_tokens":         outputTokens,
-			"cache_creation_tokens": cacheCreationTokens,
-			"cache_read_tokens":     cacheReadTokens,
-			"failure_reason":        failureReason,
-			"timestamp":             time.Now(),
+		mm.eventBus.Publish(events.Event{
+			Type:      events.EventSystemStatsUpdated, // 使用系统统计更新事件类型
+			Source:    "monitoring_middleware",
+			Timestamp: time.Now(),
+			Priority:  events.PriorityNormal,
+			Data: map[string]interface{}{
+				"event_type":            "failed_request_tokens",
+				"conn_id":               connID,
+				"endpoint":              endpoint,
+				"input_tokens":          inputTokens,
+				"output_tokens":         outputTokens,
+				"cache_creation_tokens": cacheCreationTokens,
+				"cache_read_tokens":     cacheReadTokens,
+				"failure_reason":        failureReason,
+			},
 		})
 	}
 
