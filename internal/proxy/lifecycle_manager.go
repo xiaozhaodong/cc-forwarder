@@ -1,20 +1,41 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/tracking"
 )
 
-// MonitoringMiddlewareInterface 定义监控中间件接口
+// MonitoringMiddlewareInterface 定义监控中间件接口（扩展版）
 type MonitoringMiddlewareInterface interface {
 	RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
+	RecordFailedRequestTokens(connID, endpoint string, tokens *monitor.TokenUsage, failureReason string) // 新增方法
+}
+
+// RetryDecision 重试决策结果
+type RetryDecision struct {
+	RetrySameEndpoint bool   // 是否重试同一端点
+	FinalStatus       string // 最终状态
+	Reason            string // 决策原因
+}
+
+// RetryContext 重试上下文信息
+type RetryContext struct {
+	RequestID     string              // 请求ID
+	Endpoint      *endpoint.Endpoint  // 端点信息
+	Attempt       int                 // 当前尝试次数
+	AttemptGlobal int                 // 全局尝试次数
+	Error         *ErrorContext       // 错误上下文
+	IsStreaming   bool                // 是否为流式请求
 }
 
 // RequestLifecycleManager 请求生命周期管理器
@@ -33,8 +54,14 @@ type RequestLifecycleManager struct {
 	retryCount          int                           // 重试计数
 	lastStatus          string                        // 最后状态
 	lastError           error                         // 最后一次错误
+	finalStatusCode     int                           // 最终状态码
 	modelUpdatedInDB    bool                          // 标记是否已在数据库中更新过模型
 	modelUpdateMu       sync.Mutex                    // 保护模型更新标记
+	attemptCounter      int                           // 内部尝试计数器（语义修复：统一重试计数）
+	attemptMu           sync.Mutex                    // 保护尝试计数器的互斥锁
+	pendingErrorContext *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
+	pendingErrorOriginal error                        // 预先计算上下文对应的原始错误，用于校验匹配
+	pendingErrorMu      sync.Mutex                    // 保护预先计算错误上下文的互斥锁
 }
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
@@ -80,43 +107,50 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 
 // UpdateStatus 更新请求状态
 // 调用 RecordRequestUpdate 记录状态变化，并实现模型信息搭便车更新机制
+// 如果retryCount为-1，则使用内部attemptCounter
 func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, httpStatus int) {
+	// 处理特殊的-1标记，使用内部计数器
+	actualRetryCount := retryCount
+	if retryCount == -1 {
+		actualRetryCount = rlm.GetAttemptCount()
+	}
+
 	// 更新内部状态 (总是更新，不管usageTracker是否为nil)
-	rlm.retryCount = retryCount
+	rlm.retryCount = actualRetryCount
 	rlm.lastStatus = status
-	
+
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		// 获取当前的模型信息（线程安全）
 		currentModel := rlm.GetModelName()
-		
+
 		// 搭便车机制：检查是否需要更新模型到数据库
 		rlm.modelUpdateMu.Lock()
-		shouldUpdateModel := currentModel != "" && 
-							currentModel != "unknown" && 
+		shouldUpdateModel := currentModel != "" &&
+							currentModel != "unknown" &&
 							!rlm.modelUpdatedInDB
 		if shouldUpdateModel {
 			rlm.modelUpdatedInDB = true // 标记为已更新，避免重复
 		}
 		rlm.modelUpdateMu.Unlock()
-		
+
 		if shouldUpdateModel {
 			// 第一次有模型信息时，执行带模型的更新
 			rlm.usageTracker.RecordRequestUpdateWithModel(
-				rlm.requestID, rlm.endpointName, rlm.groupName, 
-				status, retryCount, httpStatus, currentModel)
+				rlm.requestID, rlm.endpointName, rlm.groupName,
+				status, actualRetryCount, httpStatus, currentModel)
 		} else {
 			// 正常状态更新（模型已更新过或尚未就绪）
-			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName, 
-				rlm.groupName, status, retryCount, httpStatus)
+			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, rlm.endpointName,
+				rlm.groupName, status, actualRetryCount, httpStatus)
 		}
 	}
-	
+
 	// 发布请求状态更新事件
 	if rlm.eventBus != nil {
 		// 根据状态确定优先级
 		priority := events.PriorityNormal
 		changeType := "status_changed"
-		
+
 		switch status {
 		case "error", "timeout":
 			priority = events.PriorityHigh
@@ -128,7 +162,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 		case "completed":
 			changeType = "request_completed"
 		}
-		
+
 		rlm.eventBus.Publish(events.Event{
 			Type:     events.EventRequestUpdated,
 			Source:   "lifecycle_manager",
@@ -145,29 +179,29 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 			},
 		})
 	}
-	
+
 	// 记录状态变更日志
 	switch status {
 	case "forwarding":
-		slog.Info(fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s (组: %s)", 
+		slog.Info(fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s (组: %s)",
 			rlm.requestID, rlm.endpointName, rlm.groupName))
 	case "retry":
-		slog.Info(fmt.Sprintf("🔄 [需要重试] [%s] 端点: %s (重试次数: %d)", 
-			rlm.requestID, rlm.endpointName, retryCount))
+		slog.Info(fmt.Sprintf("🔄 [需要重试] [%s] 端点: %s (重试次数: %d)",
+			rlm.requestID, rlm.endpointName, actualRetryCount))
 	case "processing":
-		slog.Info(fmt.Sprintf("⚙️ [请求处理] [%s] 端点: %s, 状态码: %d", 
+		slog.Info(fmt.Sprintf("⚙️ [请求处理] [%s] 端点: %s, 状态码: %d",
 			rlm.requestID, rlm.endpointName, httpStatus))
 	case "suspended":
-		slog.Warn(fmt.Sprintf("⏸️ [请求挂起] [%s] 端点: %s (组: %s)", 
+		slog.Warn(fmt.Sprintf("⏸️ [请求挂起] [%s] 端点: %s (组: %s)",
 			rlm.requestID, rlm.endpointName, rlm.groupName))
 	case "cancelled":
-		slog.Info(fmt.Sprintf("🚫 [请求取消] [%s] 端点: %s (组: %s)", 
+		slog.Info(fmt.Sprintf("🚫 [请求取消] [%s] 端点: %s (组: %s)",
 			rlm.requestID, rlm.endpointName, rlm.groupName))
 	case "error":
-		slog.Error(fmt.Sprintf("❌ [请求错误] [%s] 端点: %s, 状态码: %d", 
+		slog.Error(fmt.Sprintf("❌ [请求错误] [%s] 端点: %s, 状态码: %d",
 			rlm.requestID, rlm.endpointName, httpStatus))
 	case "timeout":
-		slog.Error(fmt.Sprintf("⏰ [请求超时] [%s] 端点: %s", 
+		slog.Error(fmt.Sprintf("⏰ [请求超时] [%s] 端点: %s",
 			rlm.requestID, rlm.endpointName))
 	}
 }
@@ -206,14 +240,14 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 		if tokens != nil {
 			totalTokens := tokens.InputTokens + tokens.OutputTokens
 			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
-			
-			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 状态码: 200 (总尝试 %d 个端点)", 
+
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (组: %s) (总尝试 %d 个端点)",
 				rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount+1))
-			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms", 
-				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens, 
+			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
+				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
 		} else {
-			slog.Info(fmt.Sprintf("✅ [请求成功] [%s] 端点: %s (组: %s), 模型: %s, 耗时: %dms (无Token统计)", 
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (组: %s), 模型: %s, 耗时: %dms (无Token统计)",
 				rlm.requestID, rlm.endpointName, rlm.groupName, modelName, duration.Milliseconds()))
 		}
 		
@@ -446,6 +480,59 @@ func (rlm *RequestLifecycleManager) GetStats() map[string]any {
 	return stats
 }
 
+// PrepareErrorContext 预先注入错误上下文，在下次 HandleError 时复用
+// 仅针对同一个错误对象有效，避免重复分类与重复日志
+func (rlm *RequestLifecycleManager) PrepareErrorContext(errorCtx *handlers.ErrorContext) {
+	rlm.pendingErrorMu.Lock()
+	defer rlm.pendingErrorMu.Unlock()
+
+	if errorCtx == nil {
+		rlm.pendingErrorContext = nil
+		rlm.pendingErrorOriginal = nil
+		return
+	}
+
+	// 将 handlers.ErrorContext 转换为 proxy.ErrorContext，避免跨包指针依赖
+	converted := &ErrorContext{
+		RequestID:      errorCtx.RequestID,
+		EndpointName:   errorCtx.EndpointName,
+		GroupName:      errorCtx.GroupName,
+		AttemptCount:   errorCtx.AttemptCount,
+		ErrorType:      ErrorType(errorCtx.ErrorType),
+		OriginalError:  errorCtx.OriginalError,
+		RetryableAfter: errorCtx.RetryableAfter,
+		MaxRetries:     errorCtx.MaxRetries,
+	}
+
+	rlm.pendingErrorContext = converted
+	rlm.pendingErrorOriginal = errorCtx.OriginalError
+}
+
+// consumePreparedErrorContext 尝试取出与指定错误匹配的预计算上下文
+func (rlm *RequestLifecycleManager) consumePreparedErrorContext(err error) *ErrorContext {
+	rlm.pendingErrorMu.Lock()
+	defer rlm.pendingErrorMu.Unlock()
+
+	if rlm.pendingErrorContext == nil || err == nil {
+		return nil
+	}
+
+	// 只有当错误对象匹配时才复用，确保不跨错误复用
+	if rlm.pendingErrorOriginal != nil {
+		if err == rlm.pendingErrorOriginal || errors.Is(err, rlm.pendingErrorOriginal) {
+			ctx := rlm.pendingErrorContext
+			rlm.pendingErrorContext = nil
+			rlm.pendingErrorOriginal = nil
+			return ctx
+		}
+	}
+
+	// 不匹配则丢弃预计算结果，避免影响后续错误
+	rlm.pendingErrorContext = nil
+	rlm.pendingErrorOriginal = nil
+	return nil
+}
+
 // HandleError 处理请求过程中的错误
 func (rlm *RequestLifecycleManager) HandleError(err error) {
 	if err == nil {
@@ -453,9 +540,12 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 	}
 	
 	rlm.lastError = err
-	
-	// 使用错误恢复管理器分类错误
-	errorCtx := rlm.errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
+
+	// 优先复用预计算的错误分类，避免重复日志
+	errorCtx := rlm.consumePreparedErrorContext(err)
+	if errorCtx == nil {
+		errorCtx = rlm.errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
+	}
 	
 	// 根据错误类型更新状态
 	switch errorCtx.ErrorType {
@@ -475,18 +565,8 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 		rlm.UpdateStatus("error", rlm.retryCount, 0)
 	}
 	
-	slog.Error(fmt.Sprintf("⚠️ [生命周期错误] [%s] 错误类型: %s, 错误: %v", 
+	slog.Error(fmt.Sprintf("⚠️ [生命周期错误] [%s] 错误类型: %s, 错误: %v",
 		rlm.requestID, rlm.errorRecovery.getErrorTypeName(errorCtx.ErrorType), err))
-}
-
-// ShouldRetry 判断是否应该重试
-func (rlm *RequestLifecycleManager) ShouldRetry() bool {
-	if rlm.lastError == nil {
-		return false
-	}
-	
-	errorCtx := rlm.errorRecovery.ClassifyError(rlm.lastError, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
-	return rlm.errorRecovery.ShouldRetry(errorCtx)
 }
 
 // IncrementRetry 增加重试计数
@@ -505,10 +585,111 @@ func (rlm *RequestLifecycleManager) calculateCost(tokens *tracking.TokenUsage, p
 	if tokens == nil {
 		return 0.0
 	}
-	
+
 	inputCost := float64(tokens.InputTokens) * pricing.Input / 1000000
 	outputCost := float64(tokens.OutputTokens) * pricing.Output / 1000000
 	cacheCost := float64(tokens.CacheCreationTokens) * pricing.CacheCreation / 1000000
-	
+
 	return inputCost + outputCost + cacheCost
+}
+
+// SetFinalStatusCode 设置最终状态码
+// 用于记录请求的实际HTTP状态码，替代硬编码的状态码
+func (rlm *RequestLifecycleManager) SetFinalStatusCode(statusCode int) {
+	rlm.finalStatusCode = statusCode
+}
+
+// GetFinalStatusCode 获取最终状态码
+func (rlm *RequestLifecycleManager) GetFinalStatusCode() int {
+	return rlm.finalStatusCode
+}
+
+// RecordTokensForFailedRequest 为失败请求记录Token信息
+// 与 CompleteRequest 的区别：只记录Token统计，不改变请求状态
+func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string) {
+	if rlm.requestID != "" && tokens != nil {
+		// ✅ 检查是否有真实的Token使用
+		hasRealTokens := tokens.InputTokens > 0 || tokens.OutputTokens > 0 ||
+			tokens.CacheCreationTokens > 0 || tokens.CacheReadTokens > 0
+
+		if !hasRealTokens {
+			// 空Token信息不记录
+			slog.Debug(fmt.Sprintf("⏭️ [跳过空Token] [%s] 失败请求无实际Token消耗", rlm.requestID))
+			return
+		}
+
+		duration := time.Since(rlm.startTime)
+		modelName := rlm.GetModelName()
+		if modelName == "" {
+			modelName = "unknown"
+		}
+
+		// ✅ 只记录Token统计到UsageTracker，不调用 RecordRequestComplete
+		if rlm.usageTracker != nil {
+			rlm.usageTracker.RecordFailedRequestTokens(rlm.requestID, modelName, tokens, duration, failureReason)
+		}
+
+		// ✅ 记录到监控中间件（总是调用，即使usageTracker为nil）
+		if rlm.monitoringMiddleware != nil {
+			monitorTokens := &monitor.TokenUsage{
+				InputTokens:         tokens.InputTokens,
+				OutputTokens:        tokens.OutputTokens,
+				CacheCreationTokens: tokens.CacheCreationTokens,
+				CacheReadTokens:     tokens.CacheReadTokens,
+			}
+			// 新增失败请求Token记录方法
+			rlm.monitoringMiddleware.RecordFailedRequestTokens(rlm.requestID, rlm.endpointName, monitorTokens, failureReason)
+		}
+
+		slog.Info(fmt.Sprintf("💾 [失败请求Token记录] [%s] 端点: %s, 原因: %s, 模型: %s, 输入: %d, 输出: %d",
+			rlm.requestID, rlm.endpointName, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
+	}
+}
+
+// IncrementAttempt 线程安全地增加尝试计数
+// 用于统一重试计数语义，每次端点切换或重试时调用
+func (rlm *RequestLifecycleManager) IncrementAttempt() int {
+	rlm.attemptMu.Lock()
+	defer rlm.attemptMu.Unlock()
+	rlm.attemptCounter++
+	slog.Debug(fmt.Sprintf("🔢 [尝试计数] [%s] 当前尝试次数: %d", rlm.requestID, rlm.attemptCounter))
+	return rlm.attemptCounter
+}
+
+// GetAttemptCount 线程安全地获取当前尝试次数
+// 返回真实的尝试次数，用于数据库记录和监控
+func (rlm *RequestLifecycleManager) GetAttemptCount() int {
+	rlm.attemptMu.Lock()
+	defer rlm.attemptMu.Unlock()
+	return rlm.attemptCounter
+}
+
+// OnRetryDecision 处理重试决策结果
+func (rlm *RequestLifecycleManager) OnRetryDecision(decision RetryDecision, httpStatus int) {
+	actualRetryCount := rlm.GetAttemptCount()
+
+	if decision.RetrySameEndpoint {
+		rlm.UpdateStatus("retry", actualRetryCount, httpStatus)
+	} else if decision.FinalStatus != "" {
+		rlm.UpdateStatus(decision.FinalStatus, actualRetryCount, httpStatus)
+	}
+
+	// 记录决策原因
+	slog.Debug(fmt.Sprintf("📋 [重试决策记录] [%s] 状态: %s, 原因: %s",
+		rlm.requestID, decision.FinalStatus, decision.Reason))
+}
+
+// GetRetryContext 获取重试上下文信息
+func (rlm *RequestLifecycleManager) GetRetryContext(endpoint *endpoint.Endpoint, err error, attempt int) RetryContext {
+	errorRecovery := rlm.errorRecovery
+	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, attempt-1)
+
+	return RetryContext{
+		RequestID:     rlm.requestID,
+		Endpoint:      endpoint,
+		Attempt:       attempt,
+		AttemptGlobal: rlm.GetAttemptCount(),
+		Error:         errorCtx,
+		IsStreaming:   false, // 由调用方设置
+	}
 }

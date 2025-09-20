@@ -4,21 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v3.1.0 (2025-09-13)  
-**Major Update**: 异步模型解析与智能UI优化
+**Current Version**: v3.3.2 (2025-09-20)
+**Major Update**: 重试策略架构优化与错误处理增强
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v3.1**:
-- **异步模型解析**: 从请求体异步提取模型名称，零延迟转发
-- **智能模型对比**: 检测并警告请求体与响应模型不一致
-- **优化的Web界面**: 简化请求追踪UI，支持点击行查看详情
-- **完整流式识别**: 多模式检测流式请求，精确标记处理方式
+**Key Features v3.3**:
+- **统一重试策略**: 简化重试架构，移除复杂适配器，提升性能
+- **错误处理优化**: 消除重复日志，完善错误分类系统
+- **Token管理增强**: 失败请求Token保存，重复计费防护机制
+- **流式请求修复**: 修复挂起状态存储，统一状态管理语义
+- **监控指标修复**: 修复错误类型断言，防止监控降级问题
 - **Modular Architecture**: Complete handler.go refactoring with single responsibility principle
 - **Dual Processing**: Streaming v2 and Unified v2 request processing
-- **Intelligent Error Recovery**: Smart error classification and recovery strategies  
+- **Intelligent Error Recovery**: Smart error classification and recovery strategies
 - **Complete Lifecycle Tracking**: End-to-end request monitoring and analytics
 - **Advanced Streaming**: Real-time SSE processing with cancellation support
 - **Comprehensive Testing**: 25+ test files with extensive coverage
@@ -224,6 +225,14 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-09-20**: Major v3.3.2 架构优化版本
+- 重试策略统一：移除复杂适配器架构，简化重试逻辑，提升性能
+- 错误处理增强：消除重复错误分类日志，完善错误分类系统
+- Token管理改进：失败请求Token保存机制，重复计费防护
+- 流式请求修复：修复挂起状态存储bug，统一RetryCount语义
+- 监控指标修复：修复错误类型断言失败导致的监控降级问题
+- 开发规范：添加AGENTS.md项目开发规范文档
 
 **2025-09-13**: Major v3.1.0 功能增强版本
 - 异步模型解析：从请求体中零延迟提取模型名称，解决count_tokens端点显示"unknown"问题

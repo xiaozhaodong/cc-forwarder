@@ -335,8 +335,35 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 		if err == nil {
 			// ✅ 检查是否在处理过程中遇到了API错误
 			if sp.lastAPIError != nil {
-				// 流式处理成功，但遇到了API错误（如SSE错误事件）
-				return nil, "", sp.lastAPIError
+				// ✅ 流式处理成功，但遇到了API错误（如SSE错误事件）
+				// 保留已解析的Token信息而不是丢弃
+				modelName := sp.tokenParser.GetModelName()
+				if modelName == "" {
+					modelName = "unknown"
+				}
+
+				// ✅ 智能错误包装：检查API错误是否已被包装，避免重复包装
+				if strings.HasPrefix(sp.lastAPIError.Error(), "stream_status:") {
+					// 已经是包装后的错误，直接返回，保持原始状态信息
+					return finalTokenUsage, modelName, sp.lastAPIError
+				} else {
+					// 原始API错误，进行包装以确保状态传递
+					// ✅ 根据API错误内容智能确定状态，而非硬编码
+					status := "stream_error" // 默认流错误状态
+					errorMsg := sp.lastAPIError.Error()
+					if strings.Contains(errorMsg, "rate") || strings.Contains(errorMsg, "429") {
+						status = "rate_limited"
+					} else if strings.Contains(errorMsg, "timeout") || strings.Contains(errorMsg, "deadline") {
+						status = "timeout"
+					} else if strings.Contains(errorMsg, "cancel") {
+						status = "cancelled"
+					} else if strings.Contains(errorMsg, "auth") || strings.Contains(errorMsg, "401") {
+						status = "auth_error"
+					}
+
+					wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, sp.lastAPIError)
+					return finalTokenUsage, modelName, wrappedErr
+				}
 			}
 			
 			// 处理成功，获取模型名称
@@ -373,10 +400,36 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 			continue
 		}
 		
-	// 不可重试错误或重试次数已满，直接返回让上层处理
-		slog.Info(fmt.Sprintf("🛑 [重试停止] [%s] %d 次重试后停止，错误将由上层处理: %v", 
+	// 不可重试错误或重试次数已满，保留错误包装器，确保状态传递，避免重复包装
+		slog.Info(fmt.Sprintf("🛑 [重试停止] [%s] %d 次重试后停止，错误将由上层处理: %v",
 			sp.requestID, attempt, err))
-		return nil, "", err
+
+		// ✅ 获取已解析的Token信息（但不强制返回空结构体）
+		tokenUsage := sp.getFinalTokenUsage()
+		modelName := sp.tokenParser.GetModelName()
+		if modelName == "" {
+			modelName = "unknown"
+		}
+
+		// ✅ 智能错误包装：检查错误是否已被包装，避免重复包装
+		if strings.HasPrefix(err.Error(), "stream_status:") {
+			// 已经是包装后的错误，直接返回，保持错误链完整性
+			return tokenUsage, modelName, err
+		} else {
+			// 原始错误，进行包装以确保状态传递
+			// ✅ 根据错误内容智能确定状态，而非硬编码为"error"
+			status := "error" // 默认状态
+			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
+				status = "timeout"
+			} else if strings.Contains(err.Error(), "cancel") {
+				status = "cancelled"
+			} else if strings.Contains(err.Error(), "network") || strings.Contains(err.Error(), "connection") {
+				status = "network_error"
+			}
+
+			wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, err)
+			return tokenUsage, modelName, wrappedErr
+		}
 	}
 	
 	// 创建最终失败的错误上下文
@@ -520,31 +573,37 @@ func (sp *StreamProcessor) collectAvailableInfo(cancelErr error, status string) 
 	return cancelErr
 }
 
-// getFinalTokenUsage 获取最终的Token使用信息
-// 这个方法替代了原有的ensureRequestCompletion中的直接记录逻辑
+// getFinalTokenUsage 获取最终的Token使用信息（修复版）
 func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 	sp.parseMutex.Lock()
 	defer sp.parseMutex.Unlock()
-	
+
 	// 尝试从TokenParser获取最终使用统计
 	finalUsage := sp.tokenParser.GetFinalUsage()
-	
+
 	if finalUsage != nil {
-		// 有完整的token信息，记录详细日志
-		modelName := sp.tokenParser.GetModelName()
-		if modelName == "" {
-			modelName = "default"
+		// ✅ 检查是否有真实的Token使用
+		hasRealTokens := finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0 ||
+		                finalUsage.CacheCreationTokens > 0 || finalUsage.CacheReadTokens > 0
+
+		if hasRealTokens {
+			// 有真实token信息，记录详细日志
+			modelName := sp.tokenParser.GetModelName()
+			if modelName == "" {
+				modelName = "default"
+			}
+			slog.Info(fmt.Sprintf("🪙 [Token最终统计] [%s] 流式处理完成 - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+				sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.CacheCreationTokens, finalUsage.CacheReadTokens))
+			return finalUsage
+		} else {
+			// 有finalUsage结构但无实际token，返回nil
+			slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应包含空Token信息", sp.requestID))
+			return nil
 		}
-		slog.Info(fmt.Sprintf("🪙 [Token最终统计] [%s] 流式处理完成 - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d", 
-			sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.CacheCreationTokens, finalUsage.CacheReadTokens))
-		return finalUsage
 	} else {
-		// 没有token信息，返回空的token使用统计
+		// 没有token信息，返回nil
 		slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应不包含token信息", sp.requestID))
-		return &tracking.TokenUsage{
-			InputTokens: 0, OutputTokens: 0, 
-			CacheCreationTokens: 0, CacheReadTokens: 0,
-		}
+		return nil
 	}
 }
 
