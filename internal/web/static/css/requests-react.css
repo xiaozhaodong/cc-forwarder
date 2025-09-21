@@ -1,0 +1,1020 @@
+/**
+ * React Requests Page CSS
+ * React请求页面专用样式文件
+ * 创建时间: 2025-09-20 20:07:17
+ *
+ * 包含所有React请求页面组件的样式定义
+ * 与Go项目环境兼容，直接通过HTML模板加载
+ */
+
+/* =================================================================
+   RequestsPage 主页面组件样式
+   ================================================================= */
+
+.requests-page {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    min-height: 100vh;
+}
+
+/* 原版section容器样式 */
+.requests-page .section {
+    background: transparent;
+}
+
+.requests-page .section h2 {
+    margin: 0 0 20px 0;
+    font-size: 28px;
+    font-weight: 700;
+    color: #2563eb;  /* 使用原版的蓝色 */
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.filter-badge {
+    background: #3b82f6;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.requests-content {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    margin-top: 20px;
+}
+
+/* =================================================================
+   StatsOverview 统计概览卡片样式
+   ================================================================= */
+
+.stats-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin: 20px 0;
+}
+
+.stats-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stats-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.stats-card.success {
+    border-left: 4px solid #10b981;
+}
+
+.stats-card.warning {
+    border-left: 4px solid #f59e0b;
+}
+
+.stats-card.info {
+    border-left: 4px solid #3b82f6;
+}
+
+.stat-icon {
+    font-size: 32px;
+    opacity: 0.8;
+    min-width: 40px;
+    text-align: center;
+}
+
+.stat-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.2;
+}
+
+.stat-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* 加载状态样式 */
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 16px;
+}
+
+.loading-container p {
+    margin: 0;
+    font-size: 16px;
+    color: #64748b;
+    font-weight: 500;
+}
+
+/* 错误状态样式 */
+.error-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    gap: 20px;
+}
+
+.error-icon {
+    font-size: 48px;
+    opacity: 0.6;
+}
+
+.error-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 500px;
+}
+
+.error-content h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #dc2626;
+}
+
+.error-content p {
+    margin: 0;
+    font-size: 16px;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    min-height: 40px;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: #3b82f6;
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #2563eb;
+    transform: translateY(-1px);
+}
+
+.btn-secondary {
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #e2e8f0;
+    border-color: #cbd5e1;
+}
+
+/* =================================================================
+   FiltersPanel 筛选面板组件样式
+   ================================================================= */
+
+/* 筛选面板主容器 - 完全匹配现有样式 */
+.filters-panel {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e5e7eb;
+}
+
+/* 筛选器网格布局 - 匹配现有的filters-grid样式 */
+.filters-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+/* 筛选器组 - 匹配现有的filter-group样式 */
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.filter-group label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 筛选器输入 - 匹配现有样式 */
+.filter-input {
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    transition: border-color 0.2s ease;
+}
+
+.filter-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* 自定义时间范围 */
+#custom-date-range .filter-input {
+    margin-top: 4px;
+}
+
+/* 自定义时间范围优化布局 */
+
+/* 让自定义时间组占据两个网格单元，给输入框更多空间 */
+@media (min-width: 768px) {
+    .custom-time-range {
+        grid-column: span 2;
+    }
+}
+
+/* 使用三列网格：开始时间、分隔符、结束时间 */
+.custom-time-range .datetime-inputs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.custom-time-range .datetime-field input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    transition: border-color 0.15s ease;
+}
+
+.custom-time-range .datetime-field input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* 控制分隔符样式，避免占用过多空间 */
+.custom-time-range .datetime-separator {
+    padding: 0 4px;
+    text-align: center;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* 保持输入框自适应宽度 */
+.custom-time-range .datetime-field {
+    min-width: auto;
+}
+
+/* 小屏幕继续堆叠显示 */
+@media (max-width: 767px) {
+    .custom-time-range {
+        grid-column: span 1;
+    }
+    .custom-time-range .datetime-inputs {
+        grid-template-columns: 1fr;
+    }
+    .custom-time-range .datetime-separator {
+        padding: 4px 0;
+    }
+}
+
+/* 筛选器操作按钮区域 */
+.filter-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 16px;
+}
+
+/* =================================================================
+   RequestsTable 数据表格组件样式
+   ================================================================= */
+
+/* 表格顶部操作区域样式 */
+.requests-table {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.table-header {
+    background: white;
+    padding: 16px 20px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    border-radius: 8px 8px 0 0;
+}
+
+.table-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.table-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.requests-count-info {
+    font-size: 14px;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+.requests-table-container {
+    background: white;
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+}
+
+.requests-table .table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+}
+
+.requests-table .table th {
+    background: #f8fafc;
+    padding: 12px 8px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    color: #374151;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+}
+
+.requests-table .table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 13px;
+    color: #374151;
+    vertical-align: middle;
+}
+
+.requests-table .table tbody tr:hover {
+    background: #f8fafc;
+    cursor: pointer;
+}
+
+/* Token列样式 */
+.requests-table .token-cell {
+    text-align: right;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    min-width: 60px;
+}
+
+/* 成本列样式 */
+.requests-table .cost-cell {
+    text-align: right;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: #059669;
+    min-width: 70px;
+}
+
+/* 请求ID列样式 */
+.requests-table .request-id-cell {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 流式请求图标 */
+.requests-table .streaming-icon {
+    margin-left: 4px;
+    opacity: 0.8;
+}
+
+/* 时间列样式 */
+.requests-table .time-cell {
+    font-size: 12px;
+    color: #6b7280;
+    white-space: nowrap;
+    min-width: 90px;
+}
+
+/* 耗时列样式 */
+.requests-table .duration-cell {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    text-align: right;
+    color: #6b7280;
+    min-width: 60px;
+}
+
+/* 模型名称样式 */
+.requests-table .model-name {
+    font-weight: 500;
+    color: #1e40af;
+}
+
+/* 端点名称样式 */
+.requests-table .endpoint-name {
+    font-weight: 500;
+    color: #059669;
+}
+
+/* 组名样式 */
+.requests-table .group-name {
+    color: #7c3aed;
+    font-size: 0.9em;
+}
+
+/* 成本值金色显示 */
+.requests-table td.cost {
+    color: #d97706 !important;
+}
+
+/* =================================================================
+   PaginationControl 分页控制组件样式
+   ================================================================= */
+
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #f8fafc;
+    border-top: 1px solid #e5e7eb;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.pagination-info {
+    font-size: 14px;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pagination-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pagination-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 14px;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.pagination-btn:disabled {
+    background: #f9fafb;
+    color: #d1d5db;
+    cursor: not-allowed;
+}
+
+.page-display {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 8px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+}
+
+.page-display:hover {
+    background: #f3f4f6;
+}
+
+.page-input {
+    width: 50px;
+    padding: 4px 6px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    text-align: center;
+    font-size: 14px;
+}
+
+.page-size-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.page-size-select {
+    padding: 4px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: white;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+/* =================================================================
+   StatusBadge 状态徽章组件样式 - 完全匹配原版style.css的设计
+   ================================================================= */
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;         /* 与master完全一致 */
+    font-weight: 600;        /* 与master完全一致 */
+    text-transform: uppercase;
+    letter-spacing: 0.05em;  /* 与master完全一致 */
+    white-space: nowrap;
+    width: 64px;             /* 固定宽度稍微宽一些，确保所有徽章尺寸完全一致 */
+    text-align: center;
+}
+
+.status-badge .status-icon {
+    font-size: 0.875rem;
+    line-height: 1;
+}
+
+.status-badge .status-text {
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+/* 转发状态 - 蓝色渐变 + 脉冲动画 (与master完全一致) */
+.status-badge.status-forwarding {
+    background: linear-gradient(135deg, #60a5fa, #3b82f6);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+/* 处理/流式状态 - 橙色渐变 + 脉冲动画 (与master完全一致) */
+.status-badge.status-processing {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #92400e;
+    animation: pulse 2s infinite;
+}
+
+/* 成功/完成状态 - 绿色渐变 (与master完全一致) */
+.status-badge.status-completed,
+.status-badge.status-success {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+}
+
+/* 错误状态 - 红色渐变 (与master完全一致) */
+.status-badge.status-error {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+}
+
+/* 取消状态 - 紫色渐变 (与master完全一致) */
+.status-badge.status-cancelled {
+    background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+    color: white;
+}
+
+/* 挂起状态 - 蓝紫色渐变 + 脉冲动画 (与master完全一致) */
+.status-badge.status-suspended {
+    background: linear-gradient(135deg, #6366f1, #4f46e5);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+/* 超时状态 - 橙红色渐变 (与master完全一致) */
+.status-badge.status-timeout {
+    background: linear-gradient(135deg, #f97316, #ea580c);
+    color: white;
+}
+
+/* 等待状态 - 蓝色渐变 (类似转发状态) */
+.status-badge.status-pending {
+    background: linear-gradient(135deg, #60a5fa, #3b82f6);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+
+/* 重试状态 - 黄色渐变 */
+.status-badge.status-retry {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #92400e;
+}
+
+/* 未知状态 - 灰色渐变 */
+.status-badge.status-unknown {
+    background: linear-gradient(135deg, #9ca3af, #6b7280);
+    color: white;
+}
+
+/* 脉冲动画 - 温和的透明度变化，轻微可感知 */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* 模态框滑入动画 - 与原版一致 */
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* =================================================================
+   RequestDetailModal 详情模态框组件样式
+   ================================================================= */
+
+.modal-overlay,
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    width: 100%;
+    max-width: 800px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    border-radius: 12px 12px 0 0;
+    flex-shrink: 0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: #2563eb;
+    font-size: 1.4em;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #3b82f6;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+    background: rgba(59, 130, 246, 0.1);
+    color: #2563eb;
+}
+
+.modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.detail-section {
+    margin-bottom: 24px;
+}
+
+.detail-section:last-child {
+    margin-bottom: 0;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+/* 模态框中的状态徽章自适应宽度 */
+.modal-content .status-badge {
+    width: auto;
+    min-width: 64px;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.detail-value {
+    font-size: 14px;
+    color: #1f2937;
+    word-break: break-all;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px 20px;
+    border-top: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-radius: 0 0 12px 12px;
+    flex-shrink: 0;
+}
+
+/* 模态框底部按钮特定样式 - 蓝色主题 */
+.modal-footer .btn-secondary {
+    background: #3b82f6;
+    color: white;
+    border: 1px solid #3b82f6;
+}
+
+.modal-footer .btn-secondary:hover:not(:disabled) {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+/* =================================================================
+   LoadingSpinner 加载动画组件样式
+   ================================================================= */
+
+.loading-spinner {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border: 3px solid #f3f4f6;
+    border-radius: 50%;
+    border-top-color: #3b82f6;
+    animation: spin 1s ease-in-out infinite;
+}
+
+.loading-spinner.large {
+    width: 48px;
+    height: 48px;
+    border-width: 4px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* =================================================================
+   响应式设计
+   ================================================================= */
+
+/* 平板设备 */
+@media (max-width: 768px) {
+    .requests-page {
+        padding: 16px;
+    }
+
+    .page-header {
+        padding: 20px;
+        margin-bottom: 16px;
+    }
+
+    .page-header h1 {
+        font-size: 24px;
+    }
+
+    .page-description p {
+        font-size: 14px;
+    }
+
+    .loading-container,
+    .error-message {
+        padding: 40px 16px;
+    }
+
+    .error-content h3 {
+        font-size: 18px;
+    }
+
+    .error-content p {
+        font-size: 14px;
+    }
+
+    .filters-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pagination-container {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+
+    .pagination-controls {
+        justify-content: center;
+    }
+
+    .modal-content {
+        margin: 10px;
+        max-height: calc(100vh - 20px);
+    }
+
+    .detail-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 手机设备 */
+@media (max-width: 480px) {
+    .requests-page {
+        padding: 12px;
+    }
+
+    .page-header {
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+
+    .page-header h1 {
+        font-size: 20px;
+        flex-direction: column;
+        text-align: center;
+        gap: 8px;
+    }
+
+    .active-filters-info {
+        justify-content: center;
+    }
+
+    .btn {
+        padding: 8px 16px;
+        font-size: 13px;
+        min-height: 36px;
+    }
+
+    .requests-table .table {
+        font-size: 12px;
+    }
+
+    .requests-table .table th,
+    .requests-table .table td {
+        padding: 8px 4px;
+    }
+}
+
+/* =================================================================
+   无障碍和特殊模式支持
+   ================================================================= */
+
+/* 减少动画模式 */
+@media (prefers-reduced-motion: reduce) {
+    .btn,
+    .filter-badge,
+    .pagination-btn,
+    .loading-spinner {
+        transition: none;
+        animation: none;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        transform: none;
+    }
+}
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+    .page-header {
+        border: 2px solid #000;
+    }
+
+    .requests-content {
+        border: 1px solid #000;
+    }
+
+    .filter-badge {
+        border: 1px solid #000;
+    }
+
+    .status-badge {
+        border-width: 2px;
+    }
+}
+
