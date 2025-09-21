@@ -1,0 +1,17 @@
+{
+  "name": "cc-forwarder-react-test",
+  "version": "1.0.0",
+  "description": "React页面迁移测试和兼容性验证",
+  "main": "tests/react_migration_test.js",
+  "scripts": {
+    "test:react": "node tests/react_migration_test.js",
+    "test:react:verbose": "DEBUG=1 node tests/react_migration_test.js"
+  },
+  "dependencies": {
+    "jsdom": "^22.1.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

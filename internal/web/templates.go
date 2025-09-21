@@ -8,6 +8,7 @@ const indexHTML = `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Claude Request Forwarder - Web界面</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/requests-react.css">
     <!-- Chart.js with fallback and timeout -->
     <script>
     window.chartLoadTimeout = setTimeout(() => {
@@ -52,11 +53,11 @@ const indexHTML = `<!DOCTYPE html>
         }
         .connection-indicator.connecting {
             color: #f59e0b;
-            animation: pulse 1s infinite;
+            animation: globalPulse 1s infinite;
         }
         .connection-indicator.reconnecting {
             color: #f97316;
-            animation: pulse 1.5s infinite;
+            animation: globalPulse 1.5s infinite;
         }
         .connection-indicator.error {
             color: #ef4444;
@@ -67,7 +68,7 @@ const indexHTML = `<!DOCTYPE html>
         .connection-indicator.disconnected {
             color: #9ca3af;
         }
-        @keyframes pulse {
+        @keyframes globalPulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
@@ -630,31 +631,6 @@ const indexHTML = `<!DOCTYPE html>
             white-space: nowrap;
         }
         
-        .requests-table th.sortable {
-            cursor: pointer;
-            user-select: none;
-            transition: background-color 0.2s ease;
-        }
-        
-        .requests-table th.sortable:hover {
-            background: #f1f5f9;
-        }
-        
-        .requests-table th.sortable:after {
-            content: ' ⇅';
-            opacity: 0.4;
-            font-size: 11px;
-        }
-        
-        .requests-table th.sort-asc:after {
-            content: ' ↑';
-            opacity: 1;
-        }
-        
-        .requests-table th.sort-desc:after {
-            content: ' ↓';
-            opacity: 1;
-        }
         
         .requests-table td {
             padding: 12px 8px;
@@ -721,66 +697,7 @@ const indexHTML = `<!DOCTYPE html>
             color: #5b21b6;
         }
         
-        /* 状态徽章样式 - 用于请求追踪页面 */
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            white-space: nowrap;
-        }
-        
-        .status-badge.status-forwarding {
-            background: linear-gradient(135deg, #60a5fa, #3b82f6);
-            color: white;
-            animation: pulse 2s infinite;
-        }
-        
-        .status-badge.status-processing {
-            background: linear-gradient(135deg, #fbbf24, #f59e0b);
-            color: #92400e;
-            animation: pulse 2s infinite;
-        }
-        
-        .status-badge.status-completed {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-        }
-        
-        .status-badge.status-success {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-        }
-        
-        .status-badge.status-error {
-            background: linear-gradient(135deg, #ef4444, #dc2626);
-            color: white;
-        }
-        
-        .status-badge.status-cancelled {
-            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-            color: white;
-        }
-        
-        .status-badge.status-suspended {
-            background: linear-gradient(135deg, #6366f1, #4f46e5);
-            color: white;
-            animation: pulse 2s infinite;
-        }
-        
-        .status-badge.status-timeout {
-            background: linear-gradient(135deg, #f97316, #ea580c);
-            color: white;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
+        /* 状态徽章样式已移动到 requests-react.css */
         
         /* 分页样式 */
         .pagination-container {
@@ -1104,10 +1021,20 @@ const indexHTML = `<!DOCTYPE html>
 
             <!-- 请求追踪标签页 -->
             <div id="requests" class="tab-content">
+                <!-- React请求追踪页面容器 -->
+                <div id="react-requests-container">
+                    <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                        <p>React请求追踪页面加载中...</p>
+                    </div>
+                </div>
+
+                <!-- 原始HTML版本 (已迁移到React，保留作为备份) -->
+                <!--
                 <div class="section">
                     <h2>📊 请求追踪</h2>
-                    
-                    <!-- 筛选面板 -->
+
+                    <!- 筛选面板 ->
                     <div class="filters-panel">
                         <div class="filters-grid">
                             <div class="filter-group">
@@ -1122,14 +1049,14 @@ const indexHTML = `<!DOCTYPE html>
                                     <option value="custom">自定义</option>
                                 </select>
                             </div>
-                            
+
                             <div class="filter-group" id="custom-date-range" style="display: none;">
                                 <label>自定义时间:</label>
                                 <input type="datetime-local" id="start-date" class="filter-input">
                                 <span>至</span>
                                 <input type="datetime-local" id="end-date" class="filter-input">
                             </div>
-                            
+
                             <div class="filter-group">
                                 <label>状态:</label>
                                 <select id="status-filter">
@@ -1140,37 +1067,37 @@ const indexHTML = `<!DOCTYPE html>
                                     <option value="suspended">挂起</option>
                                 </select>
                             </div>
-                            
+
                             <div class="filter-group">
                                 <label>模型:</label>
                                 <select id="model-filter">
                                     <option value="all">全部模型</option>
-                                    <!-- 模型选项将通过JavaScript动态加载 -->
+                                    <!- 模型选项将通过JavaScript动态加载 ->
                                 </select>
                             </div>
-                            
+
                             <div class="filter-group">
                                 <label>端点:</label>
                                 <select id="endpoint-filter">
                                     <option value="all">全部端点</option>
                                 </select>
                             </div>
-                            
+
                             <div class="filter-group">
                                 <label>组:</label>
                                 <select id="group-filter">
                                     <option value="all">全部组</option>
                                 </select>
                             </div>
-                            
+
                             <div class="filter-actions">
                                 <button class="btn btn-primary" onclick="applyFilters()">🔍 搜索</button>
                                 <button class="btn btn-secondary" onclick="resetFilters()">🔄 重置</button>
                             </div>
                         </div>
                     </div>
-                    
-                    <!-- 统计概览卡片 -->
+
+                    <!- 统计概览卡片 ->
                     <div class="stats-overview">
                         <div class="stats-card">
                             <div class="stat-icon">🚀</div>
@@ -1179,7 +1106,7 @@ const indexHTML = `<!DOCTYPE html>
                                 <div class="stat-label">总请求数</div>
                             </div>
                         </div>
-                        
+
                         <div class="stats-card success">
                             <div class="stat-icon">✅</div>
                             <div class="stat-content">
@@ -1187,7 +1114,7 @@ const indexHTML = `<!DOCTYPE html>
                                 <div class="stat-label">成功率</div>
                             </div>
                         </div>
-                        
+
                         <div class="stats-card">
                             <div class="stat-icon">⏱️</div>
                             <div class="stat-content">
@@ -1195,7 +1122,7 @@ const indexHTML = `<!DOCTYPE html>
                                 <div class="stat-label">平均响应时间</div>
                             </div>
                         </div>
-                        
+
                         <div class="stats-card cost">
                             <div class="stat-icon">💰</div>
                             <div class="stat-content">
@@ -1203,7 +1130,7 @@ const indexHTML = `<!DOCTYPE html>
                                 <div class="stat-label">总成本 (USD)</div>
                             </div>
                         </div>
-                        
+
                         <div class="stats-card">
                             <div class="stat-icon">🪙</div>
                             <div class="stat-content">
@@ -1211,7 +1138,7 @@ const indexHTML = `<!DOCTYPE html>
                                 <div class="stat-label">总Token数 (M)</div>
                             </div>
                         </div>
-                        
+
                         <div class="stats-card warning">
                             <div class="stat-icon">⏸️</div>
                             <div class="stat-content">
@@ -1220,8 +1147,8 @@ const indexHTML = `<!DOCTYPE html>
                             </div>
                         </div>
                     </div>
-                    
-                    <!-- 请求列表表格 -->
+
+                    <!- 请求列表表格 ->
                     <div class="requests-table-container">
                         <div class="table-header">
                             <h3>请求详情列表</h3>
@@ -1230,23 +1157,23 @@ const indexHTML = `<!DOCTYPE html>
                                 <button class="btn btn-sm" onclick="webInterface.requestsManager.loadRequests()">🔄 刷新</button>
                             </div>
                         </div>
-                        
+
                         <div class="table-wrapper">
                             <table class="requests-table">
                                 <thead>
                                     <tr>
-                                        <th class="sortable" data-sort="request_id">请求ID</th>
-                                        <th class="sortable" data-sort="timestamp">时间</th>
-                                        <th class="sortable" data-sort="status">状态</th>
-                                        <th class="sortable" data-sort="model">模型</th>
-                                        <th class="sortable" data-sort="endpoint">端点</th>
-                                        <th class="sortable" data-sort="group">组</th>
-                                        <th class="sortable" data-sort="duration">耗时</th>
-                                        <th class="sortable" data-sort="input_tokens">输入</th>
-                                        <th class="sortable" data-sort="output_tokens">输出</th>
-                                        <th class="sortable" data-sort="cache_creation_tokens">缓存创建</th>
-                                        <th class="sortable" data-sort="cache_read_tokens">缓存读取</th>
-                                        <th class="sortable" data-sort="cost">成本</th>
+                                        <th data-sort="request_id">请求ID</th>
+                                        <th data-sort="timestamp">时间</th>
+                                        <th data-sort="status">状态</th>
+                                        <th data-sort="model">模型</th>
+                                        <th data-sort="endpoint">端点</th>
+                                        <th data-sort="group">组</th>
+                                        <th data-sort="duration">耗时</th>
+                                        <th data-sort="input_tokens">输入</th>
+                                        <th data-sort="output_tokens">输出</th>
+                                        <th data-sort="cache_creation_tokens">缓存创建</th>
+                                        <th data-sort="cache_read_tokens">缓存读取</th>
+                                        <th data-sort="cost">成本</th>
                                     </tr>
                                 </thead>
                                 <tbody id="requests-table-body">
@@ -1260,8 +1187,8 @@ const indexHTML = `<!DOCTYPE html>
                             </table>
                         </div>
                     </div>
-                    
-                    <!-- 分页控制 -->
+
+                    <!- 分页控制 ->
                     <div class="pagination-container">
                         <div class="pagination-info">
                             <span>每页显示：</span>
@@ -1273,11 +1200,11 @@ const indexHTML = `<!DOCTYPE html>
                             </select>
                             <span>条记录</span>
                         </div>
-                        
+
                         <div class="pagination-controls">
                             <button class="btn btn-pagination" onclick="goToFirstPage()" disabled>⏮️ 首页</button>
                             <button class="btn btn-pagination" onclick="goToPrevPage()" disabled>⏪ 上一页</button>
-                            
+
                             <div class="page-input-group">
                                 <span>第</span>
                                 <input type="number" id="current-page-input" value="1" min="1" onchange="goToPage()">
@@ -1285,12 +1212,13 @@ const indexHTML = `<!DOCTYPE html>
                                 <span id="total-pages">1</span>
                                 <span>页</span>
                             </div>
-                            
+
                             <button class="btn btn-pagination" onclick="goToNextPage()">下一页 ⏩</button>
                             <button class="btn btn-pagination" onclick="goToLastPage()">末页 ⏭️</button>
                         </div>
                     </div>
                 </div>
+                -->
             </div>
 
             <!-- 配置标签页 -->
@@ -1313,7 +1241,7 @@ const indexHTML = `<!DOCTYPE html>
     <!-- 模块化JavaScript文件 -->
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/sseManager.js"></script>
-    <script src="/static/js/requestsManager.js"></script>
+    <!-- <script src="/static/js/requestsManager.js"></script> 请求管理已迁移到React -->
     <!-- <script src="/static/js/groupsManager.js"></script> 组管理已迁移到React -->
     <script src="/static/js/endpointsManager.js"></script>
     <script src="/static/js/webInterface.js"></script>
@@ -1361,6 +1289,16 @@ const indexHTML = `<!DOCTYPE html>
                                 const container = document.getElementById('react-groups-container');
                                 if (container && !container.querySelector('[data-reactroot]')) {
                                     await renderGroupsPage();
+                                }
+                            }, 100);
+                        }
+
+                        // 当切换到请求追踪标签时，确保React组件已渲染
+                        if (tabName === 'requests') {
+                            setTimeout(async () => {
+                                const container = document.getElementById('react-requests-container');
+                                if (container && !container.querySelector('[data-reactroot]')) {
+                                    await renderRequestsPage();
                                 }
                             }, 100);
                         }
@@ -1509,6 +1447,46 @@ const indexHTML = `<!DOCTYPE html>
 
                         } catch (error) {
                             console.error('❌ [模块渲染] 组管理页面渲染失败:', error);
+
+                            // 显示错误信息
+                            container.innerHTML =
+                                '<div style="text-align: center; padding: 48px 24px; color: #ef4444;">' +
+                                    '<div style="font-size: 48px; margin-bottom: 16px;">❌</div>' +
+                                    '<h3 style="margin: 0 0 8px 0;">模块加载失败</h3>' +
+                                    '<p style="margin: 0; font-size: 14px;">' + error.message + '</p>' +
+                                '</div>';
+                        }
+                    }
+
+                    // React请求追踪页面渲染函数（模块化版本）
+                    async function renderRequestsPage() {
+                        const container = document.getElementById('react-requests-container');
+                        if (!container) {
+                            console.error('❌ 找不到React请求追踪页面容器');
+                            return;
+                        }
+
+                        try {
+                            console.log('📦 [模块加载] 开始加载请求追踪页面模块...');
+
+                            // 使用模块加载器动态导入请求追踪页面组件
+                            const RequestsPageModule = await window.importReactModule('pages/requests/index.jsx');
+                            const RequestsPage = RequestsPageModule.default || RequestsPageModule;
+
+                            if (!RequestsPage) {
+                                throw new Error('请求追踪页面模块加载失败');
+                            }
+
+                            console.log('✅ [模块加载] 请求追踪页面模块加载成功');
+
+                            // 创建并渲染React组件
+                            const requestsComponent = React.createElement(RequestsPage);
+                            window.ReactComponents.renderComponent(requestsComponent, container);
+
+                            console.log('✅ [模块渲染] 请求追踪页面渲染成功');
+
+                        } catch (error) {
+                            console.error('❌ [模块渲染] 请求追踪页面渲染失败:', error);
 
                             // 显示错误信息
                             container.innerHTML =

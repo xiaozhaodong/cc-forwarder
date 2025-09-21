@@ -18,7 +18,7 @@ window.WebInterface = class {
         
         // 初始化管理器
         this.sseManager = new SSEManager(this);
-        this.requestsManager = new RequestsManager(this);
+        // this.requestsManager = new RequestsManager(this); // 请求管理已迁移到React，禁用传统请求管理器
         // this.groupsManager = new GroupsManager(this); // 组管理已迁移到React，禁用传统组管理器
         // this.endpointsManager = new EndpointsManager(this); // 已迁移到React，禁用传统端点管理器
         
@@ -78,6 +78,10 @@ window.WebInterface = class {
         if (previousTab === 'groups' && tabName !== 'groups') {
             this.cleanupReactGroupsPage();
         }
+        // 如果从React请求页面离开，先卸载React根，避免外部DOM变更导致警告
+        if (previousTab === 'requests' && tabName !== 'requests') {
+            this.cleanupReactRequestsPage();
+        }
 
         this.currentTab = tabName;
 
@@ -99,6 +103,24 @@ window.WebInterface = class {
             <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
                 <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
                 <p>React组管理页面加载中...</p>
+            </div>
+        `;
+    }
+
+    cleanupReactRequestsPage() {
+        const requestsContainer = document.getElementById('react-requests-container');
+        if (!requestsContainer || !window.ReactComponents) {
+            return;
+        }
+
+        // 卸载React组件，避免外部DOM操作触发React警告
+        window.ReactComponents.unmountComponent(requestsContainer);
+
+        // 恢复占位内容，保持与初始模板一致
+        requestsContainer.innerHTML = `
+            <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                <p>React请求页面加载中...</p>
             </div>
         `;
     }
@@ -154,6 +176,57 @@ window.WebInterface = class {
         }
     }
 
+    // 加载React请求页面
+    async loadReactRequestsPage() {
+        try {
+            console.log('🔄 [React组件] 开始加载React请求页面...');
+
+            // 确保React模块加载器已初始化
+            if (!window.ReactModuleLoader || !window.ReactModuleLoader.initialized) {
+                await window.ReactModuleLoader.initialize();
+            }
+
+            // 加载React请求页面组件
+            const RequestsPageModule = await window.importReactModule('pages/requests/index.jsx');
+            const RequestsPage = RequestsPageModule.default || RequestsPageModule;
+
+            if (!RequestsPage) {
+                throw new Error('无法获取RequestsPage组件');
+            }
+
+            // 获取React请求页面容器DOM元素
+            const requestsContainer = document.getElementById('react-requests-container');
+            if (!requestsContainer) {
+                throw new Error('找不到react-requests-container容器元素');
+            }
+
+            // 使用React组件注册系统的渲染方法（不需要手动卸载，React会自动管理）
+            const requestsPageElement = React.createElement(RequestsPage);
+            window.ReactComponents.renderComponent(requestsPageElement, requestsContainer);
+
+            console.log('✅ [React组件] React请求页面加载成功');
+
+        } catch (error) {
+            console.error('❌ [React组件] React请求页面加载失败:', error);
+
+            // 显示错误信息而不是回退到传统管理器
+            const requestsContainer = document.getElementById('react-requests-container');
+            if (requestsContainer) {
+                requestsContainer.innerHTML = `
+                    <div style="text-align: center; padding: 48px 24px; color: #ef4444;">
+                        <div style="font-size: 48px; margin-bottom: 16px;">❌</div>
+                        <h3 style="margin: 0 0 8px 0;">React组件加载失败</h3>
+                        <p style="margin: 0; font-size: 14px; color: #6b7280;">${error.message}</p>
+                        <button onclick="window.webInterface.loadReactRequestsPage()"
+                                style="margin-top: 16px; padding: 8px 16px; border: none; border-radius: 6px; background: #3b82f6; color: white; cursor: pointer;">
+                            🔄 重试加载
+                        </button>
+                    </div>
+                `;
+            }
+        }
+    }
+
     loadTabDataFromCache(tabName) {
         console.log('[Cache] 尝试从缓存加载标签页数据:', tabName);
         
@@ -171,26 +244,30 @@ window.WebInterface = class {
                 this.loadReactGroupsPage();
                 break;
             case 'requests':
-                if (this.cachedData.requests) {
-                    console.log('[Cache] 使用缓存数据显示requests');
-                    const tbody = document.getElementById('requests-table-body');
-                    if (tbody && this.cachedData.requests.data) {
-                        tbody.innerHTML = this.requestsManager.generateRequestsRows(this.cachedData.requests.data);
-                        this.requestsManager.updateRequestsCountInfo(this.cachedData.requests.total, this.requestsManager.state.currentPage);
-                        this.requestsManager.bindRequestsEvents();
-                    }
-                } else {
-                    console.log('[Cache] 无缓存数据，请求requests API');
-                    this.requestsManager.loadRequests();
-                }
-                
-                // 初始化下拉框
-                const self = this;
-                setTimeout(function() {
-                    if (typeof self.initializeRequestsFilters === 'function') {
-                        self.initializeRequestsFilters();
-                    }
-                }, 100);
+                // 请求页面已迁移到React，使用React组件渲染
+                this.loadReactRequestsPage();
+                break;
+                // 以下是原有的传统 requestsManager 代码，已禁用
+                // if (this.cachedData.requests) {
+                //     console.log('[Cache] 使用缓存数据显示requests');
+                //     const tbody = document.getElementById('requests-table-body');
+                //     if (tbody && this.cachedData.requests.data) {
+                //         tbody.innerHTML = this.requestsManager.generateRequestsRows(this.cachedData.requests.data);
+                //         this.requestsManager.updateRequestsCountInfo(this.cachedData.requests.total, this.requestsManager.state.currentPage);
+                //         this.requestsManager.bindRequestsEvents();
+                //     }
+                // } else {
+                //     console.log('[Cache] 无缓存数据，请求requests API');
+                //     this.requestsManager.loadRequests();
+                // }
+                //
+                // // 初始化下拉框
+                // const self = this;
+                // setTimeout(function() {
+                //     if (typeof self.initializeRequestsFilters === 'function') {
+                //         self.initializeRequestsFilters();
+                //     }
+                // }, 100);
                 break;
             case 'charts':
                 // 图表页面依赖chart.js，使用SSE数据进行实时更新
@@ -219,7 +296,7 @@ window.WebInterface = class {
             this.loadOverview(),
             // this.endpointsManager.loadEndpoints(), // 端点页面已迁移到React
             // this.groupsManager.loadGroups(), // 组页面已迁移到React
-            this.requestsManager.loadRequests()
+            // this.requestsManager.loadRequests() // 请求页面已迁移到React
             // this.loadConfig() // 配置页面已迁移到React
         ]).catch(error => {
             console.error('加载初始数据失败:', error);
@@ -240,7 +317,9 @@ window.WebInterface = class {
                 this.loadReactGroupsPage();
                 break;
             case 'requests':
-                this.requestsManager.loadRequests();
+                // 请求页面已迁移到React，使用React组件渲染
+                this.loadReactRequestsPage();
+                // this.requestsManager.loadRequests();
                 break;
             case 'config':
                 // 配置页面已迁移到React，跳过传统配置数据加载
@@ -481,9 +560,11 @@ window.WebInterface = class {
         container.innerHTML = html;
     }
 
-    // 分页控制（委托给requestsManager）
+    // 分页控制（已迁移到React，原有委托给requestsManager的方法已禁用）
     changePage(page) {
-        this.requestsManager.changePage(page);
+        // 请求页面已迁移到React，不再使用传统的requestsManager
+        console.log('请求页面已迁移到React，分页功能由React组件处理');
+        // this.requestsManager.changePage(page);
     }
 
     startAutoRefresh() {
@@ -702,108 +783,121 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// 全局筛选函数 - 用于HTML按钮调用
+// 全局筛选函数 - 用于HTML按钮调用（请求页面已迁移到React，保留原有接口但禁用功能）
 window.applyFilters = function() {
+    // 请求页面已迁移到React，不再使用传统的requestsManager
+    console.log('请求页面已迁移到React，筛选功能由React组件处理');
+    return;
+
+    // 以下是原有的requestsManager相关代码，已禁用
+    /*
     if (!window.webInterface || !window.webInterface.requestsManager) {
         console.error('WebInterface或RequestsManager未初始化');
         return;
     }
-    
     // 获取筛选条件
-    const timeRange = document.getElementById('time-range-filter')?.value;
-    const status = document.getElementById('status-filter')?.value;
-    const model = document.getElementById('model-filter')?.value;
-    const endpoint = document.getElementById('endpoint-filter')?.value;
-    const group = document.getElementById('group-filter')?.value;
-    
-    // 处理时间范围
-    let startDate = '', endDate = '';
-    if (timeRange === 'custom') {
-        startDate = document.getElementById('start-date')?.value || '';
-        endDate = document.getElementById('end-date')?.value || '';
-    } else if (timeRange && timeRange !== 'all' && timeRange !== '') {
-        const now = new Date();
-        // 使用本地时间而不是UTC时间
-        const formatLocalDateTime = (date) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            const seconds = String(date.getSeconds()).padStart(2, '0');
-            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+08:00`;
-        };
-        
-        endDate = formatLocalDateTime(now);
-        
-        switch(timeRange) {
-            case '1h':
-                startDate = formatLocalDateTime(new Date(now.getTime() - 1 * 60 * 60 * 1000));
-                break;
-            case '6h':
-                startDate = formatLocalDateTime(new Date(now.getTime() - 6 * 60 * 60 * 1000));
-                break;
-            case '24h':
-                startDate = formatLocalDateTime(new Date(now.getTime() - 24 * 60 * 60 * 1000));
-                break;
-            case '7d':
-                startDate = formatLocalDateTime(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-                break;
-            case '30d':
-                startDate = formatLocalDateTime(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
-                break;
-        }
-    }
-    
-    // 更新RequestsManager的筛选条件
-    window.webInterface.requestsManager.state.filters = {
-        start_date: startDate || '',
-        end_date: endDate || '', 
-        status: status === 'all' ? '' : status,
-        model: model === 'all' ? '' : model || '',
-        endpoint: endpoint === 'all' ? '' : endpoint || '',
-        group: group === 'all' ? '' : group || ''
-    };
-    
-    // 重置到第一页
-    window.webInterface.requestsManager.state.currentPage = 1;
-    
-    // 加载数据和统计信息
-    window.webInterface.requestsManager.loadRequests();
+    // const timeRange = document.getElementById('time-range-filter')?.value;
+    // const status = document.getElementById('status-filter')?.value;
+    // const model = document.getElementById('model-filter')?.value;
+    // const endpoint = document.getElementById('endpoint-filter')?.value;
+    // const group = document.getElementById('group-filter')?.value;
+    //
+    // // 处理时间范围
+    // let startDate = '', endDate = '';
+    // if (timeRange === 'custom') {
+    //     startDate = document.getElementById('start-date')?.value || '';
+    //     endDate = document.getElementById('end-date')?.value || '';
+    // } else if (timeRange && timeRange !== 'all' && timeRange !== '') {
+    //     const now = new Date();
+    //     // 使用本地时间而不是UTC时间
+    //     const formatLocalDateTime = (date) => {
+    //         const year = date.getFullYear();
+    //         const month = String(date.getMonth() + 1).padStart(2, '0');
+    //         const day = String(date.getDate()).padStart(2, '0');
+    //         const hours = String(date.getHours()).padStart(2, '0');
+    //         const minutes = String(date.getMinutes()).padStart(2, '0');
+    //         const seconds = String(date.getSeconds()).padStart(2, '0');
+    //         return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+08:00`;
+    //     };
+    //
+    //     endDate = formatLocalDateTime(now);
+    //
+    //     switch(timeRange) {
+    //         case '1h':
+    //             startDate = formatLocalDateTime(new Date(now.getTime() - 1 * 60 * 60 * 1000));
+    //             break;
+    //         case '6h':
+    //             startDate = formatLocalDateTime(new Date(now.getTime() - 6 * 60 * 60 * 1000));
+    //             break;
+    //         case '24h':
+    //             startDate = formatLocalDateTime(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    //             break;
+    //         case '7d':
+    //             startDate = formatLocalDateTime(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+    //             break;
+    //         case '30d':
+    //             startDate = formatLocalDateTime(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
+    //             break;
+    //     }
+    // }
+    //
+    // // 更新RequestsManager的筛选条件
+    // window.webInterface.requestsManager.state.filters = {
+    //     start_date: startDate || '',
+    //     end_date: endDate || '',
+    //     status: status === 'all' ? '' : status,
+    //     model: model === 'all' ? '' : model || '',
+    //     endpoint: endpoint === 'all' ? '' : endpoint || '',
+    //     group: group === 'all' ? '' : group || ''
+    // };
+    //
+    // // 重置到第一页
+    // window.webInterface.requestsManager.state.currentPage = 1;
+    //
+    // // 加载数据和统计信息
+    // window.webInterface.requestsManager.loadRequests();
+    */
 };
 
-// 重置筛选条件
+// 重置筛选条件（请求页面已迁移到React，保留原有接口但禁用功能）
 window.resetFilters = function() {
+    // 请求页面已迁移到React，不再使用传统的requestsManager
+    console.log('请求页面已迁移到React，重置筛选功能由React组件处理');
+    return;
+
+    // 以下是原有的requestsManager相关代码，已禁用
+    /*
     if (!window.webInterface || !window.webInterface.requestsManager) {
         console.error('WebInterface或RequestsManager未初始化');
         return;
     }
-    
+
     // 重置表单元素
-    const timeRangeFilter = document.getElementById('time-range-filter');
-    const statusFilter = document.getElementById('status-filter');
-    const modelFilter = document.getElementById('model-filter');
-    const endpointFilter = document.getElementById('endpoint-filter');
-    const groupFilter = document.getElementById('group-filter');
-    const startDate = document.getElementById('start-date');
-    const endDate = document.getElementById('end-date');
-    
-    if (timeRangeFilter) timeRangeFilter.value = '';
-    if (statusFilter) statusFilter.value = 'all';
-    if (modelFilter) modelFilter.value = 'all';
-    if (endpointFilter) endpointFilter.value = 'all';
-    if (groupFilter) groupFilter.value = 'all';
-    if (startDate) startDate.value = '';
-    if (endDate) endDate.value = '';
-    
-    // 隐藏自定义时间范围
-    const customDateRange = document.getElementById('custom-date-range');
-    if (customDateRange) {
-        customDateRange.style.display = 'none';
-    }
-    
-    // 重置RequestsManager的筛选条件
-    window.webInterface.requestsManager.resetFilters();
+    // const timeRangeFilter = document.getElementById('time-range-filter');
+    // const statusFilter = document.getElementById('status-filter');
+    // const modelFilter = document.getElementById('model-filter');
+    // const endpointFilter = document.getElementById('endpoint-filter');
+    // const groupFilter = document.getElementById('group-filter');
+    // const startDate = document.getElementById('start-date');
+    // const endDate = document.getElementById('end-date');
+    //
+    // if (timeRangeFilter) timeRangeFilter.value = '';
+    // if (statusFilter) statusFilter.value = 'all';
+    // if (modelFilter) modelFilter.value = 'all';
+    // if (endpointFilter) endpointFilter.value = 'all';
+    // if (groupFilter) groupFilter.value = 'all';
+    // if (startDate) startDate.value = '';
+    // if (endDate) endDate.value = '';
+    //
+    // // 隐藏自定义时间范围
+    // const customDateRange = document.getElementById('custom-date-range');
+    // if (customDateRange) {
+    //     customDateRange.style.display = 'none';
+    // }
+    //
+    // // 重置RequestsManager的筛选条件
+    // window.webInterface.requestsManager.resetFilters();
+    */
 };
 
 // 加载并填充端点下拉框

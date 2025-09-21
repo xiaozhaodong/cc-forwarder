@@ -1,5 +1,5 @@
 // React ES6模块加载器 - 支持现代import/export语法
-// 2025-09-15 15:58:44
+// 2025-09-20 21:15:29
 
 console.log('🚀 初始化React ES6模块加载器...');
 
@@ -77,18 +77,16 @@ class ReactModuleLoader {
             let sourceCode = await response.text();
             console.log(`📄 [模块加载器] 源码获取成功: ${modulePath} (${sourceCode.length} 字符)`);
 
-            // 如果是JSX文件，进行Babel编译
-            if (modulePath.endsWith('.jsx')) {
-                sourceCode = this._transformJSX(sourceCode);
-            }
-
-            // 解析并预加载依赖
+            // 解析并预加载依赖（在Babel转换前进行，因为转换后import语句会消失）
             const dependencies = this._parseDependencies(sourceCode);
             const resolvedDependencies = dependencies.map(dep => this._resolveModulePath(dep, modulePath));
             await this._loadDependencies(resolvedDependencies);
 
-            // 转换import/export语法为CommonJS
-            sourceCode = this._transformImportExport(sourceCode, resolvedDependencies, modulePath);
+            // 使用Babel进行JSX和ES6模块转换（统一处理所有.jsx文件）
+            if (modulePath.endsWith('.jsx')) {
+                sourceCode = this._transformWithBabel(sourceCode);
+                console.log(`🔄 [模块加载器] Babel转换完成: ${modulePath}`);
+            }
 
             // 创建模块执行环境
             const moduleExports = {};
@@ -104,7 +102,38 @@ class ReactModuleLoader {
                 setTimeout: window.setTimeout,
                 setInterval: window.setInterval,
                 clearTimeout: window.clearTimeout,
-                clearInterval: window.clearInterval
+                clearInterval: window.clearInterval,
+                // 实现 require 函数来支持 CommonJS
+                require: (requirePath) => {
+                    try {
+                        console.log(`🔗 [require调用] 模块请求: ${requirePath} (来自 ${modulePath})`);
+
+                        // 处理 React 相关导入
+                        if (requirePath === 'react') {
+                            return window.React;
+                        }
+
+                        // 解析相对路径
+                        const resolvedPath = this._resolveModulePath(requirePath, modulePath);
+
+                        // 从缓存中获取模块
+                        const cachedModule = this.modules.get(resolvedPath);
+                        if (cachedModule) {
+                            console.log(`✅ [require调用] 缓存命中: ${resolvedPath}`);
+                            return cachedModule;
+                        }
+
+                        // 如果模块还未加载，抛出错误（因为依赖应该已经预加载）
+                        console.error(`❌ [require调用] 模块未找到: ${resolvedPath}`);
+                        console.log(`📋 [require调用] 当前已加载模块:`, Array.from(this.modules.keys()));
+
+                        // 返回空对象避免程序崩溃
+                        return {};
+                    } catch (error) {
+                        console.error(`❌ [require调用] 模块加载错误: ${requirePath}`, error);
+                        return {};
+                    }
+                }
             };
 
             // 执行模块代码
@@ -123,10 +152,11 @@ class ReactModuleLoader {
         }
     }
 
-    // 解析依赖关系
+    // 解析依赖关系（支持多行import语句）
     _parseDependencies(code) {
         const dependencies = [];
-        const importRegex = /import\s+(.*?)\s+from\s+['"`](.+?)['"`];?/g;
+        // 修复正则表达式，使用 [\s\S]*? 来匹配包括换行符在内的所有字符
+        const importRegex = /import\s+([\s\S]*?)\s+from\s+['"`](.+?)['"`];?/g;
         let match;
 
         while ((match = importRegex.exec(code)) !== null) {
@@ -189,183 +219,22 @@ class ReactModuleLoader {
         }
     }
 
-    // JSX转换
-    _transformJSX(code) {
+    // JSX和ES6模块转换（使用Babel统一处理）
+    _transformWithBabel(code) {
         try {
             const transformed = Babel.transform(code, {
-                presets: ['react'],
-                plugins: []
+                sourceType: 'module', // 告诉 Babel 输入是 ES Module
+                presets: [
+                    ['env', { modules: 'commonjs', targets: { esmodules: false } }],
+                    'react'
+                ]
             });
+            console.log('✅ [Babel转换] JSX 和模块语法已完成转换');
             return transformed.code;
         } catch (error) {
-            console.error('❌ [模块加载器] JSX编译失败:', error);
+            console.error('❌ [Babel转换] 转换失败:', error);
             throw error;
         }
-    }
-
-    // 转换export function（支持嵌套大括号）
-    _transformExportFunctions(code) {
-        const regex = /export\s+function\s+(\w+)\s*\([^)]*\)\s*\{/g;
-        let result = '';
-        let lastIndex = 0;
-        let match;
-
-        while ((match = regex.exec(code)) !== null) {
-            const functionName = match[1];
-            const functionStart = match.index;
-            const openBracePos = match.index + match[0].length - 1; // 减1因为{是匹配的最后一个字符
-
-            // 找到匹配的闭合大括号
-            let braceCount = 1;
-            let pos = openBracePos + 1;
-
-            while (pos < code.length && braceCount > 0) {
-                if (code[pos] === '{') {
-                    braceCount++;
-                } else if (code[pos] === '}') {
-                    braceCount--;
-                }
-                pos++;
-            }
-
-            if (braceCount === 0) {
-                // 找到了完整的函数
-                result += code.substring(lastIndex, functionStart);
-                const fullFunction = code.substring(functionStart, pos);
-                const functionDef = fullFunction.replace(/^export\s+/, '');
-                result += `${functionDef}\nmodule.exports.${functionName} = ${functionName};`;
-                lastIndex = pos;
-            }
-        }
-
-        result += code.substring(lastIndex);
-        return result;
-    }
-
-    // 完整的import/export转换
-    _transformImportExport(code, resolvedDependencies = [], currentModulePath = '') {
-        console.log('🔄 [模块转换] 开始转换import/export语法...');
-
-        // 创建原路径到解析路径的映射
-        const pathMap = new Map();
-        const importRegex = /import\s+(.*?)\s+from\s+['"`](.+?)['"`];?/g;
-        let match;
-        let index = 0;
-
-        // 先建立路径映射关系
-        while ((match = importRegex.exec(code)) !== null) {
-            const [, imports, originalPath] = match;
-            if (!imports.includes('React') && !originalPath.startsWith('react')) {
-                if (index < resolvedDependencies.length) {
-                    pathMap.set(originalPath, resolvedDependencies[index]);
-                    index++;
-                }
-            }
-        }
-
-        // 重置正则表达式
-        importRegex.lastIndex = 0;
-
-        // 1. 转换 import 语句
-        code = code.replace(
-            /import\s+(.*?)\s+from\s+['"`](.+?)['"`];?/g,
-            (match, imports, modulePath) => {
-                console.log(`📥 [模块转换] 转换import: ${imports} from ${modulePath}`);
-
-                // 处理不同的import模式
-                if (imports.includes('React') || modulePath === 'react') {
-                    // 处理React相关导入
-                    if (imports.startsWith('{') && imports.endsWith('}')) {
-                        // import { useState, useEffect } from 'react'
-                        const reactImports = imports.slice(1, -1).split(',').map(s => s.trim());
-                        return reactImports.map(imp => `const ${imp} = React.${imp};`).join('\n');
-                    } else if (imports === 'React') {
-                        // import React from 'react' -> 已在全局可用
-                        return `// React 已在模块环境中可用`;
-                    } else if (imports.includes(',')) {
-                        // import React, { useState, useEffect } from 'react'
-                        const parts = imports.split(',').map(s => s.trim());
-                        const defaultImport = parts[0];
-                        const destructuredPart = parts.slice(1).join(',').trim();
-
-                        let result = [];
-                        if (defaultImport === 'React') {
-                            result.push(`// React 已在模块环境中可用`);
-                        }
-
-                        // 处理解构部分
-                        if (destructuredPart.startsWith('{') && destructuredPart.endsWith('}')) {
-                            const reactImports = destructuredPart.slice(1, -1).split(',').map(s => s.trim());
-                            result.push(...reactImports.map(imp => `const ${imp} = React.${imp};`));
-                        }
-
-                        return result.join('\n');
-                    } else {
-                        // 其他React相关导入
-                        return `// React 相关导入已处理`;
-                    }
-                } else {
-                    // 其他模块，从预加载的模块中获取
-                    const resolvedPath = pathMap.get(modulePath) || modulePath;
-
-                    if (imports.startsWith('{') && imports.endsWith('}')) {
-                        // 解构导入 { Component1, Component2 }
-                        const destructuredImports = imports.slice(1, -1).split(',').map(s => s.trim());
-                        return `const { ${destructuredImports.join(', ')} } = (function() {
-                            try {
-                                const module = window.ReactModuleLoader.modules.get('${resolvedPath}');
-                                return module.default || module;
-                            } catch (e) {
-                                console.error('模块获取失败:', '${resolvedPath}', e);
-                                return {};
-                            }
-                        })();`;
-                    } else {
-                        // 默认导入 Component
-                        const varName = imports.trim();
-                        return `const ${varName} = (function() {
-                            try {
-                                const module = window.ReactModuleLoader.modules.get('${resolvedPath}');
-                                return module.default || module;
-                            } catch (e) {
-                                console.error('模块获取失败:', '${resolvedPath}', e);
-                                return null;
-                            }
-                        })();`;
-                    }
-                }
-            }
-        );
-
-        // 2. 转换 export default
-        code = code.replace(
-            /export\s+default\s+(.+?)(?:;|$)/gm,
-            'module.exports = $1;'
-        );
-
-        // 3. 转换 export { name }
-        code = code.replace(
-            /export\s*\{\s*([^}]+)\s*\}(?:;|$)/gm,
-            (match, exports) => {
-                const exportList = exports.split(',').map(e => e.trim());
-                return exportList.map(exp => `module.exports.${exp} = ${exp};`).join('\n');
-            }
-        );
-
-        // 4. 转换 export const/function/class
-        // 首先处理 export function - 使用平衡大括号匹配
-        code = this._transformExportFunctions(code);
-
-        // 处理 export const
-        code = code.replace(
-            /export\s+(const)\s+(\w+)\s*=\s*([^;]+);?/g,
-            (match, type, name, value) => {
-                return `${type} ${name} = ${value};\nmodule.exports.${name} = ${name};`;
-            }
-        );
-
-        console.log('✅ [模块转换] import/export转换完成');
-        return code;
     }
 
     // 获取模块状态
