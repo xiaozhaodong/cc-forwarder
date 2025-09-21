@@ -119,28 +119,41 @@ export const useFilters = (initialFilters = {}) => {
     const applyFilters = useCallback(() => {
         const queryParams = {};
 
-        // 工具函数：将Date转换为后端可解析的ISO字符串（去掉毫秒部分）
-        const toApiISOString = (value) => {
+        // 工具函数：将Date转换为本地时区的时间字符串（解决时区偏差问题）
+        const toLocalOffsetString = (value) => {
             if (!value) return null;
-            const iso = new Date(value).toISOString();
-            return iso.replace(/\.\d{3}Z$/, 'Z');
+            const date = new Date(value); // 浏览器会按用户本地时区解析
+            if (Number.isNaN(date.getTime())) return null;
+
+            const pad = (num) => String(num).padStart(2, '0');
+            const year = date.getFullYear();
+            const month = pad(date.getMonth() + 1);
+            const day = pad(date.getDate());
+            const hours = pad(date.getHours());
+            const minutes = pad(date.getMinutes());
+            const seconds = pad(date.getSeconds());
+
+            const offsetMinutes = -date.getTimezoneOffset();    // 东八区得到 +480
+            const sign = offsetMinutes >= 0 ? '+' : '-';
+            const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
+            const offsetMins = pad(Math.abs(offsetMinutes) % 60);
+
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
         };
 
         // 处理时间筛选
         if (filters.timeRange && TIME_RANGES[filters.timeRange]) {
             const endTime = new Date();
             const startTime = new Date(endTime.getTime() - TIME_RANGES[filters.timeRange].value);
-            queryParams.start_date = toApiISOString(startTime);
-            queryParams.end_date = toApiISOString(endTime);
-        } else if (filters.startDate || filters.endDate) {
-            if (filters.startDate) {
-                const iso = toApiISOString(filters.startDate);
-                if (iso) queryParams.start_date = iso;
-            }
-            if (filters.endDate) {
-                const iso = toApiISOString(filters.endDate);
-                if (iso) queryParams.end_date = iso;
-            }
+            const startLocal = toLocalOffsetString(startTime);
+            const endLocal = toLocalOffsetString(endTime);
+            if (startLocal) queryParams.start_date = startLocal;
+            if (endLocal) queryParams.end_date = endLocal;
+        } else {
+            const startLocal = toLocalOffsetString(filters.startDate);
+            const endLocal = toLocalOffsetString(filters.endDate);
+            if (startLocal) queryParams.start_date = startLocal;
+            if (endLocal) queryParams.end_date = endLocal;
         }
 
         // 处理状态筛选

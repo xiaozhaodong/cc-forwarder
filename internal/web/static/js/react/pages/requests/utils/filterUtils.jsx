@@ -19,6 +19,28 @@
 
 import { getTimeRangeConfig } from './requestsConstants.jsx';
 
+// 工具函数：将Date转换为本地时区的时间字符串（解决时区偏差问题）
+const toLocalOffsetString = (value) => {
+    if (!value) return null;
+    const date = new Date(value); // 浏览器会按用户本地时区解析
+    if (Number.isNaN(date.getTime())) return null;
+
+    const pad = (num) => String(num).padStart(2, '0');
+    const year = date.getFullYear();
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    const seconds = pad(date.getSeconds());
+
+    const offsetMinutes = -date.getTimezoneOffset();    // 东八区得到 +480
+    const sign = offsetMinutes >= 0 ? '+' : '-';
+    const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
+    const offsetMins = pad(Math.abs(offsetMinutes) % 60);
+
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
+};
+
 // 根据状态筛选请求
 export const filterByStatus = (requests, status) => {
     if (!status || status === '') return requests;
@@ -317,8 +339,8 @@ export const buildFilterParams = (filters, pagination) => {
         if (rangeConfig) {
             const endTime = new Date();
             const startTime = new Date(endTime.getTime() - rangeConfig.value);
-            params.start_date = startTime.toISOString();
-            params.end_date = endTime.toISOString();
+            params.start_date = toLocalOffsetString(startTime);
+            params.end_date = toLocalOffsetString(endTime);
         }
     }
 
