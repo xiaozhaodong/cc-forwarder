@@ -138,7 +138,7 @@ export const useFilters = (initialFilters = {}) => {
             const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
             const offsetMins = pad(Math.abs(offsetMinutes) % 60);
 
-            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
+            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
         };
 
         // 处理时间筛选
