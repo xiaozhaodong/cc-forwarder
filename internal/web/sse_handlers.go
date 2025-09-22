@@ -246,16 +246,23 @@ func (ws *WebServer) sendSSEGroupsUpdate(c *gin.Context) error {
 func (ws *WebServer) sendSSEConnectionsUpdate(c *gin.Context) error {
 	metrics := ws.monitoringMiddleware.GetMetrics()
 	stats := metrics.GetMetrics()
-	
+
+	// 计算总Token使用量
+	totalTokens := stats.TotalTokenUsage.InputTokens +
+		stats.TotalTokenUsage.OutputTokens +
+		stats.TotalTokenUsage.CacheCreationTokens +
+		stats.TotalTokenUsage.CacheReadTokens
+
 	connectionData := map[string]interface{}{
 		"total_requests":       stats.TotalRequests,
 		"active_connections":   len(stats.ActiveConnections),
 		"successful_requests":  stats.SuccessfulRequests,
 		"failed_requests":      stats.FailedRequests,
 		"average_response_time": formatResponseTime(stats.GetAverageResponseTime()),
+		"total_tokens":         totalTokens,
 		"timestamp":            time.Now().Format("2006-01-02 15:04:05"),
 	}
-	
+
 	return ws.sendSSEEvent(c, "connections", connectionData)
 }
 

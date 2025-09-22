@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -78,15 +79,15 @@ func (ws *WebServer) handleResponseTimes(c *gin.Context) {
 	
 	// 转换为Chart.js格式
 	labels := make([]string, len(responseHistory))
-	avgData := make([]int64, len(responseHistory))
-	minData := make([]int64, len(responseHistory))
-	maxData := make([]int64, len(responseHistory))
-	
+	avgData := make([]float64, len(responseHistory))
+	minData := make([]float64, len(responseHistory))
+	maxData := make([]float64, len(responseHistory))
+
 	for i, point := range responseHistory {
 		labels[i] = point.Timestamp.Format("15:04")
-		avgData[i] = point.AverageTime.Milliseconds()
-		minData[i] = point.MinTime.Milliseconds()
-		maxData[i] = point.MaxTime.Milliseconds()
+		avgData[i] = float64(point.AverageTime) / float64(time.Millisecond)
+		minData[i] = float64(point.MinTime) / float64(time.Millisecond)
+		maxData[i] = float64(point.MaxTime) / float64(time.Millisecond)
 	}
 	
 	c.JSON(http.StatusOK, map[string]interface{}{

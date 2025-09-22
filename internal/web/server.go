@@ -23,6 +23,68 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
+// HistoryCollector 负责定期收集历史数据点
+type HistoryCollector struct {
+	metrics   *middleware.MonitoringMiddleware
+	ticker    *time.Ticker
+	stopChan  chan struct{}
+	logger    *slog.Logger
+	running   bool
+}
+
+// NewHistoryCollector 创建新的历史数据收集器
+func NewHistoryCollector(middleware *middleware.MonitoringMiddleware, logger *slog.Logger) *HistoryCollector {
+	return &HistoryCollector{
+		metrics:  middleware,
+		stopChan: make(chan struct{}),
+		logger:   logger,
+	}
+}
+
+// Start 启动历史数据收集器
+func (hc *HistoryCollector) Start() {
+	if hc.running {
+		return
+	}
+
+	hc.running = true
+	hc.ticker = time.NewTicker(30 * time.Second) // 每30秒收集一次
+
+	go func() {
+		hc.logger.Info("📊 历史数据收集器已启动 (30秒间隔)")
+
+		for {
+			select {
+			case <-hc.ticker.C:
+				hc.collectData()
+			case <-hc.stopChan:
+				hc.logger.Info("📊 历史数据收集器已停止")
+				return
+			}
+		}
+	}()
+}
+
+// Stop 停止历史数据收集器
+func (hc *HistoryCollector) Stop() {
+	if !hc.running {
+		return
+	}
+
+	hc.running = false
+	if hc.ticker != nil {
+		hc.ticker.Stop()
+	}
+	close(hc.stopChan)
+}
+
+// collectData 收集历史数据点
+func (hc *HistoryCollector) collectData() {
+	if hc.metrics != nil {
+		hc.metrics.GetMetrics().AddHistoryDataPoints()
+	}
+}
+
 // WebServer represents the Web UI server
 type WebServer struct {
 	server              *http.Server
@@ -36,6 +98,7 @@ type WebServer struct {
 	eventManager        *SmartEventManager
 	startTime           time.Time
 	configPath          string
+	historyCollector    *HistoryCollector
 }
 
 // NewWebServer creates a new Web UI server
@@ -60,6 +123,7 @@ func NewWebServer(cfg *config.Config, endpointManager *endpoint.Manager, monitor
 		eventManager:        NewSmartEventManager(logger),
 		startTime:           startTime,
 		configPath:          configPath,
+		historyCollector:    NewHistoryCollector(monitoringMiddleware, logger),
 	}
 	
 	// 设置EventBus的SSE适配器
@@ -98,16 +162,21 @@ func (ws *WebServer) Start() error {
 	
 	// 给服务器一点启动时间
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// 注意：已移除所有定时推送机制，改为纯事件驱动架构
 	// 原先移除的函数：
 	// - startPeriodicBroadcast(): 15秒定时广播
-	// - startHistoryDataCollection(): 30秒数据收集  
+	// - startHistoryDataCollection(): 30秒数据收集
 	// - startChartDataBroadcast(): 60秒图表广播
 	// - startStatusUpdateLoop(): 30秒状态更新循环（新移除）
 	//
 	// 运行时间现在由前端实时计算，无需服务器推送
-	
+
+	// 启动历史数据收集器 (修复请求趋势图表数据问题)
+	if ws.historyCollector != nil {
+		ws.historyCollector.Start()
+	}
+
 	ws.logger.Info(fmt.Sprintf("✅ Web界面启动成功！访问地址: http://%s", addr))
 	
 	return nil
@@ -120,7 +189,12 @@ func (ws *WebServer) Stop(ctx context.Context) error {
 	}
 	
 	ws.logger.Info("🛑 正在关闭Web服务器...")
-	
+
+	// 停止历史数据收集器
+	if ws.historyCollector != nil {
+		ws.historyCollector.Stop()
+	}
+
 	// 停止事件管理器
 	if ws.eventManager != nil {
 		ws.eventManager.Stop()
@@ -468,12 +542,19 @@ func (ws *WebServer) broadcastCurrentData() {
 		}
 	}
 
+	// 计算总Token使用量
+	totalTokens := stats.TotalTokenUsage.InputTokens +
+		stats.TotalTokenUsage.OutputTokens +
+		stats.TotalTokenUsage.CacheCreationTokens +
+		stats.TotalTokenUsage.CacheReadTokens
+
 	ws.BroadcastConnectionUpdate(map[string]interface{}{
 		"total_requests":       stats.TotalRequests,
 		"active_connections":   len(stats.ActiveConnections),
 		"successful_requests":  stats.SuccessfulRequests,
 		"failed_requests":      stats.FailedRequests,
 		"average_response_time": utils.FormatResponseTime(stats.GetAverageResponseTime()),
+		"total_tokens":         totalTokens,
 		"success_rate":         stats.GetSuccessRate(),
 		"suspended":            suspendedStats,
 		"group_suspended_counts": groupSuspendedCounts,

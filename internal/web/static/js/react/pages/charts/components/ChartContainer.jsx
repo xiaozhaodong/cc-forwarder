@@ -1,7 +1,7 @@
 // ChartContainer组件 - 精确复制现有HTML结构和CSS类名
 // 🎯 确保100%样式一致性，使用完全相同的CSS类名和DOM结构
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import TimeRangeSelector from './TimeRangeSelector.jsx';
 import ExportButton from './ExportButton.jsx';
 import ActualChart from './ActualChart.jsx';
@@ -19,6 +19,35 @@ const ChartContainer = ({
 }) => {
     const [chartConfig, setChartConfig] = useState(null);
     const [chartInstance, setChartInstance] = useState(null);
+
+    // 解析默认时间范围
+    const resolveDefaultRange = useCallback(
+        () => timeRangeOptions?.find(opt => opt.selected)?.value ?? timeRangeOptions?.[0]?.value ?? null,
+        [timeRangeOptions]
+    );
+
+    // 本地状态管理选中的时间范围
+    const [selectedRange, setSelectedRange] = useState(() =>
+        typeof timeRange === 'number' ? timeRange : resolveDefaultRange()
+    );
+
+    // 同步外部timeRange变化
+    useEffect(() => {
+        if (typeof timeRange === 'number') {
+            setSelectedRange(timeRange);
+        } else if (selectedRange == null) {
+            setSelectedRange(resolveDefaultRange());
+        }
+    }, [timeRange, resolveDefaultRange, selectedRange]);
+
+    // 处理时间范围变化
+    const handleRangeChange = useCallback(
+        (minutes) => {
+            setSelectedRange(minutes);
+            onTimeRangeChange?.(minutes);
+        },
+        [onTimeRangeChange]
+    );
 
     // 获取图表配置
     useEffect(() => {
@@ -43,8 +72,8 @@ const ChartContainer = ({
                 <div className="chart-controls">
                     {timeRangeOptions && (
                         <TimeRangeSelector
-                            value={timeRange}
-                            onChange={onTimeRangeChange}
+                            value={selectedRange}
+                            onChange={handleRangeChange}
                             chartType={chartType}
                             options={timeRangeOptions}
                         />
