@@ -868,130 +868,11 @@ const indexHTML = `<!DOCTYPE html>
 
             <!-- 图表标签页 -->
             <div id="charts" class="tab-content">
-                <div class="section">
-                    <h2>📈 数据可视化</h2>
-                    <div class="charts-grid">
-                        <!-- 请求趋势图 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">请求趋势</div>
-                                <div class="chart-controls">
-                                    <select id="requestTrendTimeRange" onchange="updateChartTimeRange('requestTrend', this.value)">
-                                        <option value="15">15分钟</option>
-                                        <option value="30" selected>30分钟</option>
-                                        <option value="60">1小时</option>
-                                        <option value="180">3小时</option>
-                                    </select>
-                                    <button onclick="exportChart('requestTrend', '请求趋势图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="requestTrendChart"></canvas>
-                                <div id="requestTrendLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
-
-                        <!-- 响应时间图 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">响应时间</div>
-                                <div class="chart-controls">
-                                    <select id="responseTimeTimeRange" onchange="updateChartTimeRange('responseTime', this.value)">
-                                        <option value="15">15分钟</option>
-                                        <option value="30" selected>30分钟</option>
-                                        <option value="60">1小时</option>
-                                        <option value="180">3小时</option>
-                                    </select>
-                                    <button onclick="exportChart('responseTime', '响应时间图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="responseTimeChart"></canvas>
-                                <div id="responseTimeLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
-
-                        <!-- Token使用统计 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">Token使用分布</div>
-                                <div class="chart-controls">
-                                    <button onclick="exportChart('tokenUsage', 'Token使用图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="tokenUsageChart"></canvas>
-                                <div id="tokenUsageLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
-
-                        <!-- 端点健康状态 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">端点健康状态</div>
-                                <div class="chart-controls">
-                                    <button onclick="exportChart('endpointHealth', '端点健康图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="endpointHealthChart"></canvas>
-                                <div id="endpointHealthLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
-
-                        <!-- 连接活动 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">连接活动</div>
-                                <div class="chart-controls">
-                                    <select id="connectionActivityTimeRange" onchange="updateChartTimeRange('connectionActivity', this.value)">
-                                        <option value="30">30分钟</option>
-                                        <option value="60" selected>1小时</option>
-                                        <option value="180">3小时</option>
-                                        <option value="360">6小时</option>
-                                    </select>
-                                    <button onclick="exportChart('connectionActivity', '连接活动图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="connectionActivityChart"></canvas>
-                                <div id="connectionActivityLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
-
-                        <!-- 端点性能对比 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">端点性能对比</div>
-                                <div class="chart-controls">
-                                    <button onclick="exportChart('endpointPerformance', '端点性能图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="endpointPerformanceChart"></canvas>
-                                <div id="endpointPerformanceLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
-                        
-                        <!-- 挂起请求趋势 -->
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">挂起请求趋势</div>
-                                <div class="chart-controls">
-                                    <select id="suspendedTrendTimeRange" onchange="updateChartTimeRange('suspendedTrend', this.value)">
-                                        <option value="15">15分钟</option>
-                                        <option value="30" selected>30分钟</option>
-                                        <option value="60">1小时</option>
-                                        <option value="180">3小时</option>
-                                    </select>
-                                    <button onclick="exportChart('suspendedTrend', '挂起请求趋势图.png')" title="导出图片">📷</button>
-                                </div>
-                            </div>
-                            <div class="chart-canvas">
-                                <canvas id="suspendedTrendChart"></canvas>
-                                <div id="suspendedTrendLoading" class="chart-loading">加载中...</div>
-                            </div>
-                        </div>
+                <!-- React图表页面容器 -->
+                <div id="react-charts-container">
+                    <div style="text-align: center; padding: 48px 24px; color: #6b7280;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                        <p>React图表页面加载中...</p>
                     </div>
                 </div>
             </div>
@@ -1313,9 +1194,14 @@ const indexHTML = `<!DOCTYPE html>
                             }, 100);
                         }
 
-                        // 当切换到图表标签时，确保图表已初始化并更新数据
+                        // 当切换到图表标签时，确保React组件已渲染
                         if (tabName === 'charts') {
-                            initializeCharts();
+                            setTimeout(async () => {
+                                const container = document.getElementById('react-charts-container');
+                                if (container && !container.querySelector('[data-reactroot]')) {
+                                    await renderChartsPage();
+                                }
+                            }, 100);
                         }
                     };
 
@@ -1527,6 +1413,46 @@ const indexHTML = `<!DOCTYPE html>
 
                         } catch (error) {
                             console.error('❌ [模块渲染] 配置页面渲染失败:', error);
+
+                            // 显示错误信息
+                            container.innerHTML =
+                                '<div style="text-align: center; padding: 48px 24px; color: #ef4444;">' +
+                                    '<div style="font-size: 48px; margin-bottom: 16px;">❌</div>' +
+                                    '<h3 style="margin: 0 0 8px 0;">模块加载失败</h3>' +
+                                    '<p style="margin: 0; font-size: 14px;">' + error.message + '</p>' +
+                                '</div>';
+                        }
+                    }
+
+                    // React图表页面渲染函数（模块化版本）
+                    async function renderChartsPage() {
+                        const container = document.getElementById('react-charts-container');
+                        if (!container) {
+                            console.error('❌ 找不到React图表页面容器');
+                            return;
+                        }
+
+                        try {
+                            console.log('📦 [模块加载] 开始加载图表页面模块...');
+
+                            // 使用模块加载器动态导入图表页面组件
+                            const ChartsPageModule = await window.importReactModule('pages/charts/index.jsx');
+                            const ChartsPage = ChartsPageModule.default || ChartsPageModule;
+
+                            if (!ChartsPage) {
+                                throw new Error('图表页面模块加载失败');
+                            }
+
+                            console.log('✅ [模块加载] 图表页面模块加载成功');
+
+                            // 创建并渲染React组件
+                            const chartsComponent = React.createElement(ChartsPage);
+                            window.ReactComponents.renderComponent(chartsComponent, container);
+
+                            console.log('✅ [模块渲染] 图表页面渲染成功');
+
+                        } catch (error) {
+                            console.error('❌ [模块渲染] 图表页面渲染失败:', error);
 
                             // 显示错误信息
                             container.innerHTML =
