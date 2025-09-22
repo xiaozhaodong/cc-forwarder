@@ -182,6 +182,79 @@ export const fetchSuspendedTrendData = async () => {
     }
 };
 
+// 获取端点成本数据 - 新增函数
+export const fetchEndpointCostsData = async () => {
+    try {
+        const response = await fetch('/api/v1/chart/endpoint-costs');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        // ✅ 检查数据是否为空
+        if (!data.labels || data.labels.length === 0) {
+            return {
+                labels: ['暂无数据'],
+                datasets: [
+                    {
+                        label: 'Token使用量',
+                        data: [0],
+                        backgroundColor: ['rgba(156, 163, 175, 0.5)'],
+                        borderColor: ['#9ca3af'],
+                        borderWidth: 1,
+                        yAxisID: 'tokens',
+                        type: 'bar'
+                    },
+                    {
+                        label: '成本 (USD)',
+                        data: [0],
+                        backgroundColor: 'transparent',
+                        borderColor: '#9ca3af',
+                        borderWidth: 2,
+                        pointBackgroundColor: ['#9ca3af'],
+                        pointBorderColor: ['#9ca3af'],
+                        pointRadius: 4,
+                        yAxisID: 'cost',
+                        type: 'line',
+                        fill: false,
+                        tension: 0.4
+                    }
+                ]
+            };
+        }
+
+        return data;
+    } catch (error) {
+        console.error('获取端点成本数据失败:', error);
+        return {
+            labels: ['加载失败'],
+            datasets: [
+                {
+                    label: 'Token使用量',
+                    data: [0],
+                    backgroundColor: ['rgba(239, 68, 68, 0.3)'],
+                    borderColor: ['#ef4444'],
+                    borderWidth: 1,
+                    yAxisID: 'tokens',
+                    type: 'bar'
+                },
+                {
+                    label: '成本 (USD)',
+                    data: [0],
+                    backgroundColor: 'transparent',
+                    borderColor: '#ef4444',
+                    borderWidth: 2,
+                    pointBackgroundColor: ['#ef4444'],
+                    pointBorderColor: ['#ef4444'],
+                    pointRadius: 4,
+                    yAxisID: 'cost',
+                    type: 'line',
+                    fill: false,
+                    tension: 0.4
+                }
+            ]
+        };
+    }
+};
+
 // 数据获取函数映射
 export const dataFetchers = {
     requestTrend: fetchRequestTrendData,
@@ -190,7 +263,8 @@ export const dataFetchers = {
     endpointHealth: fetchEndpointHealthData,
     connectionActivity: fetchConnectionActivityData,
     endpointPerformance: fetchEndpointPerformanceData,
-    suspendedTrend: fetchSuspendedTrendData
+    suspendedTrend: fetchSuspendedTrendData,
+    endpointCosts: fetchEndpointCostsData
 };
 
 // 批量获取所有图表数据

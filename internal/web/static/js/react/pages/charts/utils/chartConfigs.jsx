@@ -294,102 +294,93 @@ export const connectionActivityConfig = {
     }
 };
 
-// 6. 端点性能对比图配置
-export const endpointPerformanceConfig = {
-    type: 'bar',
+// 6. 端点Token使用成本分析图配置
+export const endpointCostsConfig = {
+    type: 'bar', // 基础类型为条形图，成本数据会覆盖为线图
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        indexAxis: 'y', // 水平条形图
         scales: {
             x: {
-                title: {
-                    display: true,
-                    text: '平均响应时间 (毫秒)'
-                },
-                beginAtZero: true
-            },
-            y: {
                 title: {
                     display: true,
                     text: '端点'
-                }
-            }
-        },
-        plugins: {
-            title: {
-                display: true,
-                text: '端点性能对比',
-                font: { size: 16, weight: 'bold' }
-            },
-            legend: {
-                display: false
-            },
-            tooltip: {
-                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                titleColor: '#1f2937',
-                bodyColor: '#374151',
-                borderColor: '#e5e7eb',
-                borderWidth: 1,
-                callbacks: {
-                    afterLabel: function(context) {
-                        const endpointData = context.raw.endpointData;
-                        if (endpointData) {
-                            return [
-                                `成功率: ${endpointData.success_rate.toFixed(1)}%`,
-                                `总请求数: ${endpointData.total_requests}`,
-                                `健康状态: ${endpointData.healthy ? '健康' : '不健康'}`
-                            ];
-                        }
-                        return [];
-                    }
-                }
-            }
-        },
-        animation: {
-            duration: 1000,
-            easing: 'easeInOutQuart'
-        }
-    }
-};
-
-// 7. 悬停趋势图配置 (基于请求趋势图，但数据源不同)
-export const suspendedTrendConfig = {
-    type: 'line',
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            x: {
-                title: {
-                    display: true,
-                    text: '时间'
                 },
                 grid: {
                     display: true,
                     color: 'rgba(0,0,0,0.1)'
+                },
+                ticks: {
+                    maxRotation: 45,     // 标签最大旋转角度
+                    minRotation: 0,      // 标签最小旋转角度
+                    autoSkip: false,     // 禁用自动跳过标签
+                    maxTicksLimit: 10,   // 最大显示标签数
+                    font: {
+                        size: 11         // 字体大小
+                    },
+                    callback: function(value) {
+                        // 处理长标签，超过20字符时截断
+                        const label = this.getLabelForValue(value);
+                        return label.length > 20 ? label.substring(0, 17) + '...' : label;
+                    }
                 }
             },
-            y: {
+            tokens: {
+                type: 'linear',
+                display: true,
+                position: 'left',
                 title: {
                     display: true,
-                    text: '悬停请求数'
+                    text: 'Token使用量',
+                    color: '#6366f1',
+                    font: { weight: 'bold' }
                 },
                 beginAtZero: true,
                 grid: {
                     display: true,
-                    color: 'rgba(0,0,0,0.1)'
+                    color: 'rgba(99, 102, 241, 0.1)'
+                },
+                ticks: {
+                    color: '#6366f1',
+                    callback: function(value) {
+                        return value.toLocaleString() + ' tokens';
+                    }
+                }
+            },
+            cost: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                title: {
+                    display: true,
+                    text: '成本 (USD)',
+                    color: '#dc2626',
+                    font: { weight: 'bold' }
+                },
+                beginAtZero: true,
+                grid: {
+                    drawOnChartArea: false,
+                },
+                ticks: {
+                    color: '#dc2626',
+                    callback: function(value) {
+                        return '$' + value.toFixed(2);
+                    }
                 }
             }
         },
         plugins: {
             title: {
                 display: true,
-                text: '悬停请求趋势',
+                text: '💰 当日端点Token使用成本',
                 font: { size: 16, weight: 'bold' }
             },
             legend: {
-                position: 'top'
+                position: 'top',
+                labels: {
+                    usePointStyle: true,
+                    padding: 20
+                }
             },
             tooltip: {
                 mode: 'index',
@@ -398,21 +389,37 @@ export const suspendedTrendConfig = {
                 titleColor: '#1f2937',
                 bodyColor: '#374151',
                 borderColor: '#e5e7eb',
-                borderWidth: 1
+                borderWidth: 1,
+                callbacks: {
+                    label: function(context) {
+                        const label = context.dataset.label || '';
+                        const value = context.parsed.y || 0;
+
+                        if (label.includes('Token')) {
+                            return `${label}: ${value.toLocaleString()} tokens`;
+                        } else if (label.includes('成本')) {
+                            return `${label}: $${value.toFixed(4)} USD`;
+                        }
+                        return `${label}: ${value}`;
+                    },
+                    afterLabel: function(context) {
+                        // 显示额外的端点信息
+                        const endpointData = context.raw?.endpointData;
+                        if (endpointData) {
+                            return [
+                                `请求总数: ${endpointData.total_requests}`,
+                                `成功率: ${endpointData.success_rate ? endpointData.success_rate.toFixed(1) : '0'}%`,
+                                `平均响应时间: ${endpointData.avg_response_time ? endpointData.avg_response_time.toFixed(0) : '0'}ms`
+                            ];
+                        }
+                        return [];
+                    }
+                }
             }
         },
         interaction: {
             intersect: false,
             mode: 'index'
-        },
-        elements: {
-            line: {
-                tension: 0.3
-            },
-            point: {
-                radius: 3,
-                hoverRadius: 6
-            }
         },
         animation: {
             duration: 1000,
@@ -428,8 +435,7 @@ export const chartConfigs = {
     tokenUsage: tokenUsageConfig,
     endpointHealth: endpointHealthConfig,
     connectionActivity: connectionActivityConfig,
-    endpointPerformance: endpointPerformanceConfig,
-    suspendedTrend: suspendedTrendConfig
+    endpointCosts: endpointCostsConfig
 };
 
 // 图表类型映射 (用于SSE事件处理)
@@ -439,8 +445,7 @@ export const chartTypeMapping = {
     'token_usage': 'tokenUsage',
     'endpoint_health': 'endpointHealth',
     'connection_activity': 'connectionActivity',
-    'endpoint_performance': 'endpointPerformance',
-    'suspended_trends': 'suspendedTrend'
+    'endpoint_costs': 'endpointCosts'
 };
 
 // 根据图表类型获取配置的主要函数
