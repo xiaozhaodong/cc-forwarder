@@ -276,6 +276,7 @@ func (ws *WebServer) setupRoutes() {
 		api.GET("/usage/endpoints", ws.handleUsageEndpointStats)
 		api.GET("/chart/usage-trends", ws.handleUsageChart)
 		api.GET("/chart/cost-analysis", ws.handleCostChart)
+		api.GET("/chart/endpoint-costs", ws.handleEndpointCosts)
 	}
 	
 	// WebSocket用于实时更新（暂时注释掉，使用SSE代替）
