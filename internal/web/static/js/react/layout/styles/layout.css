@@ -1,0 +1,185 @@
+/* 布局样式 - 从templates.go迁移而来 */
+
+/* 连接指示器样式 */
+.connection-indicator {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    font-size: 20px;
+    cursor: help;
+    transition: all 0.3s ease;
+}
+.connection-indicator.connected {
+    color: #10b981;
+}
+.connection-indicator.connecting {
+    color: #f59e0b;
+    animation: globalPulse 1s infinite;
+}
+.connection-indicator.reconnecting {
+    color: #f97316;
+    animation: globalPulse 1.5s infinite;
+}
+.connection-indicator.error {
+    color: #ef4444;
+}
+.connection-indicator.failed {
+    color: #6b7280;
+}
+.connection-indicator.disconnected {
+    color: #9ca3af;
+}
+
+@keyframes globalPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* 头部样式 */
+header {
+    position: relative;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 20px 0;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    margin: 0 0 8px 0;
+    color: #1f2937;
+    font-size: 28px;
+    font-weight: 600;
+}
+
+header p {
+    margin: 0;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+/* 导航标签样式 */
+.nav-tabs {
+    display: flex;
+    gap: 4px;
+    background: #f8fafc;
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 20px;
+    border: 1px solid #e5e7eb;
+}
+
+.nav-tab {
+    flex: 1;
+    padding: 12px 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #6b7280;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.nav-tab:hover {
+    background: #f1f5f9;
+    color: #374151;
+}
+
+.nav-tab.active {
+    background: #3b82f6;
+    color: white;
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+/* 主内容区域样式 */
+main {
+    min-height: 400px;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 通知动画 */
+.notification {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* 容器样式 */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 15px;
+    }
+
+    header h1 {
+        font-size: 24px;
+    }
+
+    .nav-tabs {
+        flex-wrap: wrap;
+        gap: 2px;
+    }
+
+    .nav-tab {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+
+    .connection-indicator {
+        top: 15px;
+        right: 15px;
+        font-size: 18px;
+    }
+}
+
+@media (max-width: 480px) {
+    .nav-tab {
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+
+    header {
+        padding: 15px 0;
+    }
+
+    header h1 {
+        font-size: 20px;
+    }
+}

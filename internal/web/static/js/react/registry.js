@@ -108,10 +108,22 @@ window.ReactComponents = {
                 // React 17 兼容
                 ReactDOM.unmountComponentAtNode(container);
                 console.log('✅ [React17] 组件已卸载');
+            } else {
+                // 如果都没有，尝试清空容器
+                container.innerHTML = '';
+                console.log('✅ [备用] 容器已清空');
             }
             return true;
         } catch (error) {
             console.error('❌ [React卸载] 卸载失败:', error);
+            // 出错时强制清空容器
+            try {
+                container.innerHTML = '';
+                this._roots.delete(container);
+                console.log('🔧 [强制清理] 容器已强制清空');
+            } catch (cleanupError) {
+                console.error('❌ [强制清理] 清理失败:', cleanupError);
+            }
             return false;
         }
     },

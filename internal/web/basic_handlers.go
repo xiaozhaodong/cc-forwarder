@@ -11,6 +11,7 @@ import (
 // handleIndex处理主页面
 func (ws *WebServer) handleIndex(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
+	ws.logger.Info("🚀 [Web界面] 使用React布局")
 	c.String(http.StatusOK, indexHTML)
 }
 

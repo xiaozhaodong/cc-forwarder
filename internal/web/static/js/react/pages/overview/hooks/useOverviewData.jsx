@@ -11,6 +11,24 @@
 import React from 'react';
 import useSSE from '../../../hooks/useSSE.jsx';
 
+// 格式化运行时间秒数为可读字符串
+const formatUptimeSeconds = (seconds) => {
+    if (typeof seconds !== 'number' || seconds <= 0) {
+        return seconds; // 如果不是数字或已经是字符串，直接返回
+    }
+
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    let result = '';
+    if (hours > 0) result += `${hours}小时 `;
+    if (minutes > 0) result += `${minutes}分钟 `;
+    if (secs > 0 || result === '') result += `${secs}秒`;
+
+    return result.trim();
+};
+
 // 自定义Hook：概览数据管理 + SSE实时更新
 //
 // 支持的事件类型:
@@ -54,6 +72,19 @@ const useOverviewData = () => {
 
     const [isInitialized, setIsInitialized] = React.useState(false);
 
+    // 保存服务器启动时间戳，用于本地实时计时
+    const [startTimestamp, setStartTimestamp] = React.useState(null);
+
+    // 实时计算运行时间
+    const calculateCurrentUptime = React.useCallback(() => {
+        if (!startTimestamp) return '加载中...';
+
+        const currentTime = Math.floor(Date.now() / 1000);
+        const uptimeSeconds = currentTime - startTimestamp;
+
+        return formatUptimeSeconds(uptimeSeconds);
+    }, [startTimestamp]);
+
     // SSE数据更新处理函数 - 支持分离的事件类型处理
     const handleSSEUpdate = React.useCallback((sseData, eventType) => {
         // 使用解构提取数据，优先从data字段中获取
@@ -62,6 +93,12 @@ const useOverviewData = () => {
         const { change_type: changeType } = actualData;
 
         console.log(`📡 [概览SSE] 收到${eventType || 'generic'}事件, 变更类型: ${changeType || 'none'}`, sseData);
+
+        // 检查并保存启动时间戳（用于本地实时计时）
+        if (sseData.start_timestamp) {
+            console.log('⏰ [概览SSE] 保存启动时间戳:', sseData.start_timestamp);
+            setStartTimestamp(sseData.start_timestamp);
+        }
 
         try {
             setData(prevData => {
@@ -77,13 +114,23 @@ const useOverviewData = () => {
                     // 提取系统级字段
                     systemFields.forEach(field => {
                         if (sseData[field] !== undefined) {
-                            systemUpdates[field] = sseData[field];
+                            // 特殊处理uptime字段 - 如果是数字则格式化
+                            if (field === 'uptime') {
+                                systemUpdates[field] = formatUptimeSeconds(sseData[field]);
+                            } else {
+                                systemUpdates[field] = sseData[field];
+                            }
                         }
                     });
 
                     // 处理嵌套的 status 对象
                     if (sseData.status) {
-                        Object.assign(systemUpdates, sseData.status);
+                        const statusData = { ...sseData.status };
+                        // 如果status对象中也有uptime，同样格式化
+                        if (statusData.uptime !== undefined) {
+                            statusData.uptime = formatUptimeSeconds(statusData.uptime);
+                        }
+                        Object.assign(systemUpdates, statusData);
                     }
 
                     if (Object.keys(systemUpdates).length > 0) {
@@ -151,7 +198,15 @@ const useOverviewData = () => {
                 // 5. 通用字段处理 - 向后兼容性支持
                 if (!changeType && (eventType === 'status' || sseData.status)) {
                     console.log('🔄 [概览SSE] 向后兼容 - 处理通用状态事件');
-                    newData.status = { ...newData.status, ...(sseData.status || sseData) };
+                    const statusData = sseData.status || sseData;
+                    const formattedStatusData = { ...statusData };
+
+                    // 格式化uptime字段
+                    if (formattedStatusData.uptime !== undefined) {
+                        formattedStatusData.uptime = formatUptimeSeconds(formattedStatusData.uptime);
+                    }
+
+                    newData.status = { ...newData.status, ...formattedStatusData };
                 }
 
                 // 更新时间戳
@@ -162,7 +217,7 @@ const useOverviewData = () => {
         } catch (error) {
             console.error('❌ [概览SSE] 事件处理失败:', error, '事件数据:', sseData);
         }
-    }, []);
+    }, [setStartTimestamp]);
 
     // 初始化SSE连接
     const { connectionStatus } = useSSE(handleSSEUpdate);
@@ -195,8 +250,27 @@ const useOverviewData = () => {
             ]);
 
             // 数据合并，保持原有结构，避免字段丢失
+            // 格式化status中的uptime字段
+            const formattedStatus = { ...status };
+            if (formattedStatus.uptime !== undefined) {
+                formattedStatus.uptime = formatUptimeSeconds(formattedStatus.uptime);
+            }
+
+            // 尝试解析start_time为Unix时间戳（如果SSE还未提供start_timestamp）
+            if (!startTimestamp && status.start_time) {
+                try {
+                    // 解析"2025-09-22 00:13:35"格式的时间
+                    const startDate = new Date(status.start_time);
+                    const startTimestampFromAPI = Math.floor(startDate.getTime() / 1000);
+                    console.log('⏰ [概览React] 从API解析启动时间戳:', startTimestampFromAPI);
+                    setStartTimestamp(startTimestampFromAPI);
+                } catch (error) {
+                    console.warn('⚠️ [概览React] 解析启动时间失败:', error);
+                }
+            }
+
             setData(prevData => ({
-                status: { ...prevData.status, ...status },
+                status: { ...prevData.status, ...formattedStatus },
                 endpoints: { ...prevData.endpoints, ...endpoints },
                 connections: {
                     ...prevData.connections,
@@ -240,6 +314,27 @@ const useOverviewData = () => {
             }
         };
     }, [connectionStatus, loadData]);
+
+    // 实时更新运行时间（每秒）
+    React.useEffect(() => {
+        if (!startTimestamp) return;
+
+        console.log('⏰ [概览React] 启动运行时间实时计时器');
+        const timer = setInterval(() => {
+            setData(prevData => ({
+                ...prevData,
+                status: {
+                    ...prevData.status,
+                    uptime: calculateCurrentUptime()
+                }
+            }));
+        }, 1000);
+
+        return () => {
+            clearInterval(timer);
+            console.log('⏰ [概览React] 清理运行时间计时器');
+        };
+    }, [startTimestamp, calculateCurrentUptime]);
 
     return {
         data,
