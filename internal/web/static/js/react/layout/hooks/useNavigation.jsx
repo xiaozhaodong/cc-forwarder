@@ -9,11 +9,11 @@ const TAB_CONFIG = {
         label: '📊 概览',
         component: 'overview/index.jsx'
     },
-    charts: {
-        name: 'charts',
-        label: '📈 图表',
-        component: 'charts/index.jsx'
-    },
+    // charts: {
+    //     name: 'charts',
+    //     label: '📈 图表',
+    //     component: 'charts/index.jsx'
+    // },
     endpoints: {
         name: 'endpoints',
         label: '📡 端点',

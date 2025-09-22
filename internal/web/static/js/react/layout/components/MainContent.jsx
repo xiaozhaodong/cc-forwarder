@@ -139,7 +139,8 @@ const TabContent = ({ tabName, isActive }) => {
 const MainContent = () => {
     const { activeTab } = useNavigation();
 
-    const tabs = ['overview', 'charts', 'endpoints', 'groups', 'requests', 'config'];
+    // 注释掉charts tab，因为图表功能已集成到概览页面
+    const tabs = ['overview', /* 'charts', */ 'endpoints', 'groups', 'requests', 'config'];
 
     return (
         <main>

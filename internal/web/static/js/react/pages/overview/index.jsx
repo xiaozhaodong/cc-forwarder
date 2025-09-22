@@ -1,15 +1,24 @@
 // 概览页面主组件 - 页面入口
 // 2025-09-15 17:17:04
+// 2025-09-22 更新：集成ChartsPanel图表融合方案
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import useOverviewData from './hooks/useOverviewData.jsx';
 import StatusCardsGrid from './components/StatusCardsGrid.jsx';
 import ConnectionDetails from './components/ConnectionDetails.jsx';
-import SuspendedRequestsMonitor from './components/SuspendedRequestsMonitor.jsx';
+import ChartsPanel from './components/ChartsPanel.jsx';
 import CollapsibleSection from '../../components/ui/CollapsibleSection.jsx';
 
 const OverviewPage = () => {
     const { data, refresh, isInitialized } = useOverviewData();
+
+    // 图表时间范围状态管理
+    const [chartTimeRange, setChartTimeRange] = useState(30); // 默认30分钟
+
+    // 处理图表时间范围变化
+    const handleTimeRangeChange = useCallback((newTimeRange) => {
+        setChartTimeRange(newTimeRange);
+    }, []);
 
     // 错误状态渲染
     if (data.error) {
@@ -45,11 +54,17 @@ const OverviewPage = () => {
         );
     }
 
-    // 主要内容渲染 - 与原始版本结构完全一致
+    // 主要内容渲染 - 包含图表融合方案
     return (
         <React.Fragment>
             {/* 状态卡片网格 - 直接使用原始结构，无额外标题 */}
             <StatusCardsGrid data={data} />
+
+            {/* 图表监控面板 - 包含两个独立折叠栏 */}
+            <ChartsPanel
+                timeRange={chartTimeRange}
+                onTimeRangeChange={handleTimeRangeChange}
+            />
 
             {/* 连接统计详情 - 可折叠区域 */}
             <CollapsibleSection
@@ -60,14 +75,6 @@ const OverviewPage = () => {
                 <ConnectionDetails data={data} isInitialized={isInitialized} />
             </CollapsibleSection>
 
-            {/* 挂起请求监控 - 可折叠区域，有挂起时自动展开 */}
-            <CollapsibleSection
-                id="suspended-monitoring"
-                title="⏸️ 挂起请求监控"
-                defaultExpanded={(data.connections.suspended?.suspended_requests || 0) > 0}
-            >
-                <SuspendedRequestsMonitor data={data} />
-            </CollapsibleSection>
         </React.Fragment>
     );
 };
