@@ -5,7 +5,6 @@
  *
  * 包含的常量:
  * - 请求状态: pending, forwarding, streaming, processing, completed, error, retry, cancelled
- * - 时间范围: 1h, 6h, 24h, 7d, 30d, all
  * - 页面大小: 20, 50, 100, 200 (默认50)
  * - HTTP方法和颜色映射
  * - API端点配置
@@ -106,34 +105,6 @@ export const METHOD_COLORS = {
     [HTTP_METHODS.OPTIONS]: '#06b6d4'
 };
 
-// 时间范围选项
-export const TIME_RANGES = {
-    '1h': {
-        label: '1小时内',
-        value: 1 * 60 * 60 * 1000
-    },
-    '6h': {
-        label: '6小时内',
-        value: 6 * 60 * 60 * 1000
-    },
-    '24h': {
-        label: '24小时内',
-        value: 24 * 60 * 60 * 1000
-    },
-    '7d': {
-        label: '7天内',
-        value: 7 * 24 * 60 * 60 * 1000
-    },
-    '30d': {
-        label: '30天内',
-        value: 30 * 24 * 60 * 60 * 1000
-    },
-    'all': {
-        label: '全部时间',
-        value: null
-    }
-};
-
 // 筛选器状态选项
 export const FILTER_STATUS_OPTIONS = [
     { value: '', label: '全部状态' },
@@ -209,9 +180,4 @@ export const getStatusConfig = (status) => {
 // 获取方法颜色的帮助函数
 export const getMethodColor = (method) => {
     return METHOD_COLORS[method?.toUpperCase()] || METHOD_COLORS[HTTP_METHODS.POST];
-};
-
-// 获取时间范围配置的帮助函数
-export const getTimeRangeConfig = (range) => {
-    return TIME_RANGES[range] || null;
 };

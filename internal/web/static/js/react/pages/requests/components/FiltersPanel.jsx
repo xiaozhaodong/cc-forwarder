@@ -4,8 +4,7 @@
  * 创建时间: 2025-09-20 18:03:21
  *
  * 功能特性:
- * - 时间范围筛选 (预设: 1h, 6h, 24h, 7d, 30d)
- * - 自定义时间范围 (datetime-local 输入)
+ * - 时间范围筛选 (开始时间、结束时间输入)
  * - 状态筛选 (all, success, failed, timeout, suspended)
  * - 模型筛选 (动态从 /api/v1/usage/models 加载)
  * - 端点筛选 (动态选项)
@@ -15,7 +14,6 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { TIME_RANGES } from '../utils/requestsConstants.jsx';
 import { fetchModels, fetchEndpoints, fetchGroups } from '../utils/apiService.jsx';
 
 const FiltersPanel = ({
@@ -37,10 +35,6 @@ const FiltersPanel = ({
         isLoading: true
     });
 
-    // 是否显示自定义时间选择器
-    const [showCustomDateRange, setShowCustomDateRange] = useState(
-        filters.timeRange === 'custom' || (!filters.timeRange && (filters.startDate || filters.endDate))
-    );
 
     // 初始化加载动态选项数据
     useEffect(() => {
@@ -78,22 +72,6 @@ const FiltersPanel = ({
         loadDynamicOptions();
     }, []);
 
-    // 监听时间范围变化
-    useEffect(() => {
-        setShowCustomDateRange(
-            filters.timeRange === 'custom' || (!filters.timeRange && (filters.startDate || filters.endDate))
-        );
-    }, [filters.timeRange, filters.startDate, filters.endDate]);
-
-    // 处理时间范围筛选器变化
-    const handleTimeRangeChange = (value) => {
-        updateFilter('timeRange', value);
-        if (value === 'custom') {
-            setShowCustomDateRange(true);
-        } else {
-            setShowCustomDateRange(false);
-        }
-    };
 
     // 处理筛选器应用
     const handleApplyFilters = () => {
@@ -106,7 +84,6 @@ const FiltersPanel = ({
     // 处理筛选器重置
     const handleResetFilters = () => {
         resetFilters();
-        setShowCustomDateRange(false);
         if (onResetFilters) {
             onResetFilters();
         }
@@ -116,57 +93,34 @@ const FiltersPanel = ({
         <div className="filters-panel">
             <div className="filters-grid">
                 {/* 时间范围筛选 */}
-                <div className="filter-group">
+                <div className="filter-group time-range-group">
                     <label>时间范围:</label>
-                    <select
-                        id="time-range-filter"
-                        value={filters.timeRange || ''}
-                        onChange={(e) => handleTimeRangeChange(e.target.value)}
-                    >
-                        <option value="">全部时间</option>
-                        {Object.entries(TIME_RANGES).map(([key, config]) => {
-                            if (key !== 'all') {
-                                return (
-                                    <option key={key} value={key}>
-                                        最近{config.label}
-                                    </option>
-                                );
-                            }
-                            return null;
-                        })}
-                        <option value="custom">自定义</option>
-                    </select>
-                </div>
-
-                {/* 自定义时间范围 */}
-                {showCustomDateRange && (
-                    <div className="filter-group custom-time-range" id="custom-date-range">
-                        <label>自定义时间:</label>
-                        <div className="datetime-inputs">
-                            <div className="datetime-field">
-                                <input
-                                    type="datetime-local"
-                                    id="start-date"
-                                    className="filter-input"
-                                    value={filters.startDate || ''}
-                                    onChange={(e) => updateFilter('startDate', e.target.value)}
-                                    placeholder="开始时间"
-                                />
-                            </div>
-                            <span className="datetime-separator">至</span>
-                            <div className="datetime-field">
-                                <input
-                                    type="datetime-local"
-                                    id="end-date"
-                                    className="filter-input"
-                                    value={filters.endDate || ''}
-                                    onChange={(e) => updateFilter('endDate', e.target.value)}
-                                    placeholder="结束时间"
-                                />
-                            </div>
+                    <div className="datetime-inputs">
+                        <div className="datetime-field">
+                            <input
+                                type="datetime-local"
+                                id="start-date"
+                                className="filter-input"
+                                value={filters.startDate || ''}
+                                onChange={(e) => updateFilter('startDate', e.target.value)}
+                                placeholder="开始时间"
+                                title="开始时间"
+                            />
+                        </div>
+                        <span className="datetime-separator">至</span>
+                        <div className="datetime-field">
+                            <input
+                                type="datetime-local"
+                                id="end-date"
+                                className="filter-input"
+                                value={filters.endDate || ''}
+                                onChange={(e) => updateFilter('endDate', e.target.value)}
+                                placeholder="结束时间"
+                                title="结束时间"
+                            />
                         </div>
                     </div>
-                )}
+                </div>
 
                 {/* 状态筛选 */}
                 <div className="filter-group">

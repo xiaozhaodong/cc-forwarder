@@ -278,25 +278,25 @@
     margin-top: 4px;
 }
 
-/* 自定义时间范围优化布局 */
-
-/* 让自定义时间组占据两个网格单元，给输入框更多空间 */
-@media (min-width: 768px) {
-    .custom-time-range {
-        grid-column: span 2;
-    }
+/* 时间范围组特殊样式 - 确保在一行显示 */
+.filter-group.time-range-group {
+    grid-column: span 2; /* 占据两个网格列，给时间输入框更多空间 */
 }
 
-/* 使用三列网格：开始时间、分隔符、结束时间 */
-.custom-time-range .datetime-inputs {
+/* 时间范围组的datetime-inputs样式 */
+.time-range-group .datetime-inputs {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     gap: 12px;
     align-items: center;
-    margin-top: 8px;
+    margin-top: 4px;
 }
 
-.custom-time-range .datetime-field input {
+.time-range-group .datetime-field {
+    min-width: 0;
+}
+
+.time-range-group .datetime-field input {
     width: 100%;
     padding: 8px 12px;
     border: 1px solid #d1d5db;
@@ -306,34 +306,31 @@
     transition: border-color 0.15s ease;
 }
 
-.custom-time-range .datetime-field input:focus {
+.time-range-group .datetime-field input:focus {
     outline: none;
     border-color: #3b82f6;
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-/* 控制分隔符样式，避免占用过多空间 */
-.custom-time-range .datetime-separator {
+.time-range-group .datetime-separator {
     padding: 0 4px;
     text-align: center;
     color: #6b7280;
     font-weight: 500;
+    white-space: nowrap;
 }
 
-/* 保持输入框自适应宽度 */
-.custom-time-range .datetime-field {
-    min-width: auto;
-}
-
-/* 小屏幕继续堆叠显示 */
+/* 小屏幕响应式处理 */
 @media (max-width: 767px) {
-    .custom-time-range {
+    .filter-group.time-range-group {
         grid-column: span 1;
     }
-    .custom-time-range .datetime-inputs {
+    .time-range-group .datetime-inputs {
         grid-template-columns: 1fr;
+        gap: 8px;
     }
-    .custom-time-range .datetime-separator {
+    .time-range-group .datetime-separator {
+        text-align: left;
         padding: 4px 0;
     }
 }
