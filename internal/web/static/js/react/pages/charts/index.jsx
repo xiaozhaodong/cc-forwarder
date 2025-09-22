@@ -14,8 +14,26 @@ const ChartsPage = () => {
         }
     };
 
-    // 图表配置示例 - 与原始HTML模板完全一致
+    // 图表配置示例 - 端点Token成本和健康状态优先显示
     const chartConfigs = [
+        {
+            chartType: 'endpointCosts',
+            title: '💰 当日端点Token使用成本',
+            hasTimeRange: false,
+            exportFilename: '端点Token成本图.png'
+        },
+        {
+            chartType: 'endpointHealth',
+            title: '端点健康状态',
+            hasTimeRange: false,
+            exportFilename: '端点健康图.png'
+        },
+        {
+            chartType: 'tokenUsage',
+            title: 'Token使用分布',
+            hasTimeRange: false,
+            exportFilename: 'Token使用图.png'
+        },
         {
             chartType: 'requestTrend',
             title: '请求趋势',
@@ -41,18 +59,6 @@ const ChartsPage = () => {
             ]
         },
         {
-            chartType: 'tokenUsage',
-            title: 'Token使用分布',
-            hasTimeRange: false,
-            exportFilename: 'Token使用图.png'
-        },
-        {
-            chartType: 'endpointHealth',
-            title: '端点健康状态',
-            hasTimeRange: false,
-            exportFilename: '端点健康图.png'
-        },
-        {
             chartType: 'connectionActivity',
             title: '连接活动',
             hasTimeRange: true,
@@ -62,24 +68,6 @@ const ChartsPage = () => {
                 { value: 60, label: '1小时', selected: true },
                 { value: 180, label: '3小时' },
                 { value: 360, label: '6小时' }
-            ]
-        },
-        {
-            chartType: 'endpointPerformance',
-            title: '端点性能对比',
-            hasTimeRange: false,
-            exportFilename: '端点性能图.png'
-        },
-        {
-            chartType: 'suspendedTrend',
-            title: '挂起请求趋势',
-            hasTimeRange: true,
-            exportFilename: '挂起请求趋势图.png',
-            timeRangeOptions: [
-                { value: 15, label: '15分钟' },
-                { value: 30, label: '30分钟', selected: true },
-                { value: 60, label: '1小时' },
-                { value: 180, label: '3小时' }
             ]
         }
     ];
