@@ -126,7 +126,10 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 	if strings.Contains(errStr, "endpoint returned error: 5") ||
 		strings.Contains(errStr, "500") || strings.Contains(errStr, "501") ||
 		strings.Contains(errStr, "502") || strings.Contains(errStr, "503") ||
-		strings.Contains(errStr, "504") || strings.Contains(errStr, "505") {
+		strings.Contains(errStr, "504") || strings.Contains(errStr, "505") ||
+		strings.Contains(errStr, "520") || strings.Contains(errStr, "521") ||
+		strings.Contains(errStr, "522") || strings.Contains(errStr, "523") ||
+		strings.Contains(errStr, "524") || strings.Contains(errStr, "525") {
 		errorCtx.ErrorType = ErrorTypeServerError
 		errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
 		slog.Warn(fmt.Sprintf("🚨 [服务器错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
