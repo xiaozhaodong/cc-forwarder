@@ -22,7 +22,11 @@ export const REQUEST_STATUS = {
     RETRY: 'retry',
     CANCELLED: 'cancelled',
     TIMEOUT: 'timeout',
-    SUSPENDED: 'suspended'
+    SUSPENDED: 'suspended',
+    NETWORK_ERROR: 'network_error',
+    AUTH_ERROR: 'auth_error',
+    RATE_LIMITED: 'rate_limited',
+    STREAM_ERROR: 'stream_error'
 };
 
 // 状态显示配置
@@ -52,10 +56,11 @@ export const STATUS_CONFIG = {
         color: '#10b981'
     },
     [REQUEST_STATUS.ERROR]: {
-        label: '错误',
+        label: '失败',
         type: 'error',
         icon: '✖️',
-        color: '#ef4444'
+        color: '#ef4444',
+        detailLabel: '请求错误'
     },
     [REQUEST_STATUS.RETRY]: {
         label: '重试中',
@@ -80,6 +85,34 @@ export const STATUS_CONFIG = {
         type: 'suspended',
         icon: '⏸️',
         color: '#6b7280'
+    },
+    [REQUEST_STATUS.NETWORK_ERROR]: {
+        label: '失败',
+        type: 'error',
+        icon: '✖️',
+        color: '#ef4444',
+        detailLabel: '网络错误'
+    },
+    [REQUEST_STATUS.AUTH_ERROR]: {
+        label: '失败',
+        type: 'error',
+        icon: '✖️',
+        color: '#ef4444',
+        detailLabel: '认证错误'
+    },
+    [REQUEST_STATUS.RATE_LIMITED]: {
+        label: '失败',
+        type: 'error',
+        icon: '✖️',
+        color: '#ef4444',
+        detailLabel: '限流错误'
+    },
+    [REQUEST_STATUS.STREAM_ERROR]: {
+        label: '失败',
+        type: 'error',
+        icon: '✖️',
+        color: '#ef4444',
+        detailLabel: '流式错误'
     }
 };
 
@@ -109,7 +142,7 @@ export const METHOD_COLORS = {
 export const FILTER_STATUS_OPTIONS = [
     { value: '', label: '全部状态' },
     { value: 'completed', label: '已完成' },
-    { value: 'error', label: '错误' },
+    { value: 'error', label: '失败' },
     { value: 'pending', label: '等待中' },
     { value: 'processing', label: '处理中' },
     { value: 'retry', label: '重试中' },
@@ -175,6 +208,12 @@ export const getStatusConfig = (status) => {
         icon: '❓',
         color: '#6b7280'
     };
+};
+
+// 获取详情页面显示的状态标签（显示具体错误类型）
+export const getDetailStatusLabel = (status) => {
+    const config = STATUS_CONFIG[status];
+    return (config && config.detailLabel) ? config.detailLabel : (config ? config.label : status || 'Unknown');
 };
 
 // 获取方法颜色的帮助函数

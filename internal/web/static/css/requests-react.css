@@ -646,7 +646,11 @@
 }
 
 /* 错误状态 - 红色渐变 (与master完全一致) */
-.status-badge.status-error {
+.status-badge.status-error,
+.status-badge.status-network_error,
+.status-badge.status-auth_error,
+.status-badge.status-rate_limited,
+.status-badge.status-stream_error {
     background: linear-gradient(135deg, #ef4444, #dc2626);
     color: white;
 }
@@ -760,12 +764,16 @@
 .modal-close {
     background: none;
     border: none;
-    font-size: 24px;
+    font-size: 14px;
     cursor: pointer;
     color: #3b82f6;
     padding: 4px 8px;
     border-radius: 4px;
     transition: all 0.2s ease;
+}
+
+.modal-close-x {
+    font-size: 18px;
 }
 
 .modal-close:hover {

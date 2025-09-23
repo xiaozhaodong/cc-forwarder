@@ -124,22 +124,33 @@ export const formatStatusCode = (statusCode) => {
     const code = parseInt(statusCode);
     if (isNaN(code)) return statusCode;
 
-    // 添加状态码含义
-    const statusMessages = {
-        200: 'OK',
-        201: 'Created',
-        400: 'Bad Request',
-        401: 'Unauthorized',
-        403: 'Forbidden',
-        404: 'Not Found',
-        429: 'Too Many Requests',
-        500: 'Internal Server Error',
-        502: 'Bad Gateway',
-        503: 'Service Unavailable'
+    // 直接返回状态码数字
+    return code.toString();
+};
+
+// 格式化请求状态（详情页显示：原始值 + 中文描述）
+export const formatRequestStatus = (status) => {
+    if (!status) return 'N/A';
+
+    // 状态中文描述映射
+    const statusDescriptions = {
+        'pending': '等待中',
+        'forwarding': '转发中',
+        'processing': '处理中',
+        'completed': '已完成',
+        'error': '请求错误',
+        'retry': '重试中',
+        'cancelled': '已取消',
+        'timeout': '超时',
+        'suspended': '挂起',
+        'network_error': '网络错误',
+        'auth_error': '认证错误',
+        'rate_limited': '限流错误',
+        'stream_error': '流式错误'
     };
 
-    const message = statusMessages[code];
-    return message ? `${code} ${message}` : code.toString();
+    const description = statusDescriptions[status];
+    return description ? `${status} (${description})` : status;
 };
 
 // 格式化端点名称

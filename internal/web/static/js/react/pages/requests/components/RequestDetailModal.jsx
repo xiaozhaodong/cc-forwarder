@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { formatTimestamp, formatDuration } from '../utils/requestsFormatter.jsx';
+import { formatTimestamp, formatDuration, formatRequestStatus } from '../utils/requestsFormatter.jsx';
 
 const RequestDetailModal = ({ request, isOpen, onClose }) => {
     if (!isOpen || !request) {
@@ -42,7 +42,7 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
             <div className="modal-content">
                 <div className="modal-header">
                     <h3>请求详情</h3>
-                    <span className="modal-close" onClick={handleClose}>
+                    <span className="modal-close modal-close-x" onClick={handleClose}>
                         &times;
                     </span>
                 </div>
@@ -59,7 +59,7 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
                             <div className="detail-item">
                                 <label>状态:</label>
                                 <span className={`status-badge status-${request.status}`}>
-                                    {request.status}
+                                    {formatRequestStatus(request.status)}
                                 </span>
                             </div>
                             <div className="detail-item">
@@ -125,10 +125,6 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
                             <div className="detail-item">
                                 <label>耗时:</label>
                                 <span className="detail-value">{formatDuration(request.duration)}</span>
-                            </div>
-                            <div className="detail-item">
-                                <label>状态码:</label>
-                                <span className="detail-value">{request.statusCode || request.status_code || 'N/A'}</span>
                             </div>
                         </div>
                     </div>

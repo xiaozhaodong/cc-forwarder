@@ -44,6 +44,13 @@ const toLocalOffsetString = (value) => {
 // 根据状态筛选请求
 export const filterByStatus = (requests, status) => {
     if (!status || status === '') return requests;
+
+    // 如果筛选"error"，包含所有错误类型的状态
+    if (status === 'error') {
+        const errorStatuses = ['error', 'network_error', 'auth_error', 'rate_limited', 'stream_error'];
+        return requests.filter(request => errorStatuses.includes(request.status));
+    }
+
     return requests.filter(request => request.status === status);
 };
 
