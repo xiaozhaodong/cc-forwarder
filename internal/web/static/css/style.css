@@ -234,12 +234,12 @@ main {
 
 .connection-indicator.connecting {
     color: var(--warning-color);
-    animation: pulse 1s infinite;
+    animation: connectionPulse 1s infinite;
 }
 
 .connection-indicator.reconnecting {
     color: #f97316;
-    animation: pulse 1.5s infinite;
+    animation: connectionPulse 1.5s infinite;
 }
 
 .connection-indicator.error {
@@ -254,13 +254,13 @@ main {
     color: #9ca3af;
 }
 
-@keyframes pulse {
-    0%, 100% { 
-        opacity: 1; 
+@keyframes connectionPulse {
+    0%, 100% {
+        opacity: 1;
         transform: scale(1);
     }
-    50% { 
-        opacity: 0.5; 
+    50% {
+        opacity: 0.5;
         transform: scale(1.1);
     }
 }
@@ -448,6 +448,8 @@ tr:hover {
 .status-unknown {
     background-color: var(--secondary-color);
 }
+
+/* 状态徽章样式已移动到 requests-react.css */
 
 .priority-input {
     width: 60px;
@@ -646,6 +648,7 @@ tr:hover {
     padding: 20px;
     transition: all 0.3s ease;
     position: relative;
+    outline: none;
 }
 
 .group-info-card.active {
@@ -663,9 +666,19 @@ tr:hover {
     background: rgba(245, 158, 11, 0.05);
 }
 
+.group-info-card.force-activated {
+    border-color: var(--error-color);
+    background: rgba(239, 68, 68, 0.05);
+}
+
 .group-info-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    outline: none;
+}
+
+.group-info-card:focus {
+    outline: none;
 }
 
 .group-card-header {
@@ -799,6 +812,16 @@ tr:hover {
     color: #92400e;
 }
 
+.group-force-activation-info {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    font-size: 0.9em;
+    color: #dc2626;
+}
+
 .groups-container {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
@@ -883,6 +906,233 @@ tr:hover {
 .requests-table .group-name {
     font-size: 1em;
     font-weight: normal;
+}
+
+/* 危险按钮样式 */
+.btn-danger {
+    background: var(--error-color);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
+.group-btn.btn-danger {
+    background: var(--error-color);
+    color: white;
+    font-weight: 600;
+}
+
+.group-btn.btn-danger:hover:not(:disabled) {
+    background: #dc2626;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+/* 自定义确认对话框样式 */
+.confirm-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+    padding: 20px;
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.confirm-dialog-overlay.show {
+    opacity: 1;
+}
+
+.confirm-dialog {
+    background: var(--card-bg);
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    width: 100%;
+    max-width: 520px;
+    overflow: hidden;
+    transform: translateY(20px) scale(0.95);
+    transition: all 0.3s ease;
+}
+
+.confirm-dialog-overlay.show .confirm-dialog {
+    transform: translateY(0) scale(1);
+}
+
+.confirm-dialog-header {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    padding: 24px 28px 20px;
+    border-bottom: 1px solid #fecaca;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.confirm-dialog-icon {
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, var(--error-color) 0%, #dc2626 100%);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: white;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.confirm-dialog-title {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: #991b1b;
+    margin: 0;
+    line-height: 1.3;
+}
+
+.confirm-dialog-body {
+    padding: 28px;
+}
+
+.confirm-dialog-message {
+    font-size: 1.05em;
+    line-height: 1.6;
+    color: var(--text-color);
+    margin-bottom: 20px;
+}
+
+.confirm-dialog-details {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 24px;
+}
+
+.confirm-dialog-details h4 {
+    color: #991b1b;
+    font-size: 1em;
+    font-weight: 600;
+    margin: 0 0 12px 0;
+}
+
+.confirm-dialog-details ul {
+    margin: 0;
+    padding-left: 20px;
+    color: #7f1d1d;
+}
+
+.confirm-dialog-details li {
+    margin-bottom: 4px;
+    line-height: 1.5;
+}
+
+.confirm-dialog-warning {
+    background: #fffbeb;
+    border: 1px solid #fed7aa;
+    border-radius: 8px;
+    padding: 14px 16px;
+    color: #92400e;
+    font-size: 0.95em;
+    font-weight: 500;
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.confirm-dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 20px 28px 28px;
+    background: #fafbfc;
+}
+
+.confirm-dialog-btn {
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 100px;
+    position: relative;
+}
+
+.confirm-dialog-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+}
+
+.confirm-dialog-btn-cancel {
+    background: white;
+    color: var(--text-color);
+    border-color: var(--border-color);
+}
+
+.confirm-dialog-btn-cancel:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+}
+
+.confirm-dialog-btn-confirm {
+    background: linear-gradient(135deg, var(--error-color) 0%, #dc2626 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.confirm-dialog-btn-confirm:hover {
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(239, 68, 68, 0.4);
+}
+
+.confirm-dialog-btn-confirm:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+}
+
+/* 响应式设计 */
+@media (max-width: 640px) {
+    .confirm-dialog {
+        margin: 20px;
+        max-width: none;
+    }
+
+    .confirm-dialog-header {
+        padding: 20px 24px 16px;
+    }
+
+    .confirm-dialog-icon {
+        width: 40px;
+        height: 40px;
+        font-size: 20px;
+    }
+
+    .confirm-dialog-title {
+        font-size: 1.2em;
+    }
+
+    .confirm-dialog-body {
+        padding: 24px;
+    }
+
+    .confirm-dialog-footer {
+        padding: 16px 24px 24px;
+        flex-direction: column;
+    }
+
+    .confirm-dialog-btn {
+        width: 100%;
+    }
 }
 
 /* 模态框样式 */
@@ -1091,5 +1341,609 @@ tr:hover {
     
     .modal-body {
         padding: 16px;
+    }
+}
+
+/* ===== Requests Page Styles ===== */
+
+.requests-page {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.page-header {
+    margin-bottom: 24px;
+}
+
+.page-header h1 {
+    margin: 0 0 8px 0;
+    font-size: 28px;
+    font-weight: 600;
+    color: #1a1a1a;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.page-header p {
+    margin: 0;
+    color: #666;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.requests-content {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+}
+
+/* 加载状态容器 */
+.loading-container {
+    padding: 40px 20px;
+    text-align: center;
+    color: #6b7280;
+}
+
+.loading-container p {
+    margin: 16px 0 0 0;
+    font-size: 14px;
+}
+
+/* 增强的错误信息样式 */
+.error-message {
+    padding: 40px 20px;
+    text-align: center;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+    margin: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.error-icon {
+    font-size: 48px;
+    opacity: 0.8;
+}
+
+.error-content h3 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #dc2626;
+}
+
+.error-content p {
+    margin: 0 0 16px 0;
+    color: #7f1d1d;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.error-content .btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.error-content .btn-primary {
+    background: #dc2626;
+    color: white;
+}
+
+.error-content .btn-primary:hover {
+    background: #b91c1c;
+    transform: translateY(-1px);
+}
+
+/* Requests page 响应式设计 */
+@media (max-width: 768px) {
+    .requests-page {
+        padding: 15px;
+    }
+
+    .page-header h1 {
+        font-size: 24px;
+    }
+
+    .page-header p {
+        font-size: 13px;
+    }
+
+    .loading-container,
+    .error-message {
+        padding: 30px 15px;
+    }
+
+    .error-icon {
+        font-size: 36px;
+    }
+
+    .error-content h3 {
+        font-size: 16px;
+    }
+
+    .error-content p {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    .requests-page {
+        padding: 10px;
+    }
+
+    .page-header {
+        margin-bottom: 16px;
+    }
+
+    .page-header h1 {
+        font-size: 20px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
+    .loading-container,
+    .error-message {
+        padding: 20px 10px;
+        margin: 10px;
+    }
+
+    .error-content .btn {
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+}
+
+/* ===============================================
+ * 请求表格新增样式 - 2025-09-20 18:03:21
+ * 支持12列数据布局和增强的用户体验
+ * =============================================== */
+
+/* 加载状态样式 */
+.loading-cell {
+    text-align: center;
+    padding: 40px 20px !important;
+}
+
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.loading-text {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+/* 增强的无数据状态样式 */
+.no-data {
+    text-align: center;
+    padding: 40px 20px !important;
+}
+
+.no-data-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.no-data-icon {
+    font-size: 24px;
+    opacity: 0.5;
+}
+
+.no-data-text {
+    color: #6b7280;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.no-data-hint {
+    color: #9ca3af;
+    font-size: 14px;
+}
+
+/* 增强的Token列样式 - 右对齐数字显示 */
+.input-tokens,
+.output-tokens,
+.cache-creation-tokens,
+.cache-read-tokens,
+.cost {
+    text-align: right;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 状态列样式 */
+.status {
+    text-align: center;
+}
+
+/* 流式请求图标样式 */
+.id-text {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* 表格头部样式增强 */
+.request-id-header,
+.timestamp-header,
+.status-header,
+.model-header,
+.endpoint-header,
+.group-header,
+.duration-header,
+.input-tokens-header,
+.output-tokens-header,
+.cache-creation-tokens-header,
+.cache-read-tokens-header,
+.cost-header,
+.actions-header {
+    font-weight: 600;
+    color: #374151;
+    white-space: nowrap;
+}
+
+/* 数据行样式增强 */
+.request-row {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.request-row:hover {
+    background: #e0f2fe !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 端点名称样式 */
+.endpoint-name {
+    font-weight: 500;
+    color: #059669;
+}
+
+/* 请求表格中的组名样式 */
+.requests-table .group-name {
+    font-size: 1em;
+    font-weight: normal;
+}
+
+/* 成本显示样式 */
+.cost {
+    color: #dc2626;
+    font-weight: 500;
+}
+
+/* 表格响应式增强 */
+@media (max-width: 1024px) {
+    .requests-table .table {
+        min-width: 1000px;
+    }
+
+    .requests-table th,
+    .requests-table td {
+        padding: 8px 12px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 768px) {
+    .requests-table .table {
+        min-width: 900px;
+    }
+
+    .requests-table th,
+    .requests-table td {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+
+    .no-data,
+    .loading-cell {
+        padding: 20px 10px !important;
+    }
+
+    .no-data-text {
+        font-size: 14px;
+    }
+
+    .no-data-hint {
+        font-size: 12px;
+    }
+}
+
+/* ============ 分页控制组件样式 ============ */
+
+/* 分页容器 */
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    border-top: 1px solid var(--border-color);
+    margin-top: 20px;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+/* 分页信息区域 */
+.pagination-info {
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 0.9em;
+    min-width: 200px;
+}
+
+.pagination-range {
+    font-weight: 500;
+}
+
+/* 分页导航区域 */
+.pagination-navigation {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    justify-content: center;
+}
+
+/* 分页按钮基础样式 */
+.pagination-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    padding: 0 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.pagination-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.pagination-btn:disabled,
+.pagination-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #f9fafb;
+    color: #9ca3af;
+}
+
+/* 特定按钮样式 */
+.pagination-btn-first,
+.pagination-btn-last {
+    font-weight: 600;
+}
+
+.pagination-btn-prev,
+.pagination-btn-next {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+/* 页码信息区域 */
+.pagination-page-info {
+    display: flex;
+    align-items: center;
+    margin: 0 12px;
+}
+
+/* 页码显示按钮 */
+.pagination-page-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 80px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--primary-color);
+    background: var(--primary-color);
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pagination-page-display:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+}
+
+/* 页码输入框容器 */
+.pagination-page-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* 页码输入框 */
+.pagination-page-input {
+    width: 50px;
+    height: 36px;
+    padding: 0 8px;
+    border: 2px solid var(--primary-color);
+    border-radius: 6px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.pagination-page-input:focus {
+    border-color: #1d4ed8;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.pagination-page-total {
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* 页面大小选择区域 */
+.pagination-page-size {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 140px;
+    justify-content: flex-end;
+}
+
+.pagination-page-size-label {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* 页面大小选择框 */
+.pagination-page-size-select {
+    min-width: 80px;
+    height: 36px;
+    padding: 0 28px 0 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 8px center;
+    background-repeat: no-repeat;
+    background-size: 16px;
+}
+
+.pagination-page-size-select:hover {
+    border-color: var(--primary-color);
+}
+
+.pagination-page-size-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .pagination-container {
+        flex-direction: column;
+        gap: 15px;
+        align-items: stretch;
+    }
+
+    .pagination-info {
+        justify-content: center;
+        min-width: auto;
+        text-align: center;
+    }
+
+    .pagination-navigation {
+        justify-content: center;
+        gap: 6px;
+    }
+
+    .pagination-btn {
+        min-width: 32px;
+        height: 32px;
+        font-size: 12px;
+    }
+
+    .pagination-page-display,
+    .pagination-page-input {
+        height: 32px;
+        font-size: 12px;
+    }
+
+    .pagination-page-input {
+        width: 40px;
+    }
+
+    .pagination-page-size {
+        justify-content: center;
+        min-width: auto;
+    }
+
+    .pagination-page-size-select {
+        height: 32px;
+        font-size: 12px;
+        min-width: 70px;
+    }
+}
+
+@media (max-width: 480px) {
+    .pagination-container {
+        gap: 12px;
+    }
+
+    .pagination-navigation {
+        gap: 4px;
+    }
+
+    .pagination-btn {
+        min-width: 28px;
+        height: 28px;
+        font-size: 11px;
+        padding: 0 4px;
+    }
+
+    .pagination-page-display,
+    .pagination-page-input {
+        height: 28px;
+        font-size: 11px;
+    }
+
+    .pagination-page-input {
+        width: 36px;
+    }
+
+    .pagination-page-size-select {
+        height: 28px;
+        font-size: 11px;
+        min-width: 65px;
+    }
+
+    .pagination-page-size-label {
+        font-size: 11px;
     }
 }

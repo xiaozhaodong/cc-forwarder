@@ -420,8 +420,11 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 		// 🔧 当前端点所有重试都失败了
 		if !endpointSuccess {
-			// 使用实际的重试次数，而不是配置的最大重试次数
-			actualAttempts := attempt - 1 // attempt从1开始，减1得到实际尝试次数
+			// 修复计数逻辑：处理提前break和自然跑满两种情况
+			actualAttempts := attempt
+			if actualAttempts > sh.config.Retry.MaxAttempts {
+				actualAttempts = sh.config.Retry.MaxAttempts
+			}
 
 			// 🚀 [改进版方案1] 使用已保存的重试决策，避免重复错误分类
 			var willSwitchEndpoint bool = true

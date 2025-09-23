@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	
+
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
 )
@@ -14,11 +14,11 @@ import (
 // ParseResult 解析结果结构体
 // 用于将Token解析与状态记录分离，支持职责纯化
 type ParseResult struct {
-	TokenUsage   *tracking.TokenUsage
-	ModelName    string
-	ErrorInfo    *ErrorInfo
-	IsCompleted  bool
-	Status       string
+	TokenUsage  *tracking.TokenUsage
+	ModelName   string
+	ErrorInfo   *ErrorInfo
+	IsCompleted bool
+	Status      string
 }
 
 // ErrorInfo 错误信息结构体
@@ -31,11 +31,11 @@ type ErrorInfo struct {
 // 根据STREAMING_REFACTOR_PROPOSAL.md方案设计
 type TokenParserInterface interface {
 	ParseMessageStart(line string) *ModelInfo
-	ParseMessageDelta(line string) *tracking.TokenUsage  
+	ParseMessageDelta(line string) *tracking.TokenUsage
 	SetModel(modelName string)
 	GetFinalUsage() *tracking.TokenUsage
 	Reset()
-	
+
 	// V2 职责纯化方法
 	ParseSSELineV2(line string) *ParseResult
 }
@@ -47,41 +47,41 @@ type ModelInfo struct {
 
 // UsageData represents the usage field in Claude API SSE events
 type UsageData struct {
-	InputTokens            int64 `json:"input_tokens"`
-	OutputTokens           int64 `json:"output_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens    int64 `json:"cache_read_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
 // MessageStartData represents the message object in message_start events
 type MessageStartData struct {
-	ID       string     `json:"id"`
-	Type     string     `json:"type"`
-	Role     string     `json:"role"`
-	Model    string     `json:"model"`
-	Content  []interface{} `json:"content"`
-	Usage    *UsageData `json:"usage,omitempty"`
+	ID      string        `json:"id"`
+	Type    string        `json:"type"`
+	Role    string        `json:"role"`
+	Model   string        `json:"model"`
+	Content []interface{} `json:"content"`
+	Usage   *UsageData    `json:"usage,omitempty"`
 }
 
 // MessageStart represents the structure of message_start events
 type MessageStart struct {
-	Type    string             `json:"type"`
-	Message *MessageStartData  `json:"message"`
+	Type    string            `json:"type"`
+	Message *MessageStartData `json:"message"`
 }
 
 // MessageDelta represents the structure of message_delta events
 type MessageDelta struct {
-	Type      string     `json:"type"`
-	Delta     interface{} `json:"delta"`
-	Usage     *UsageData  `json:"usage,omitempty"`
+	Type  string      `json:"type"`
+	Delta interface{} `json:"delta"`
+	Usage *UsageData  `json:"usage,omitempty"`
 }
 
 // SSEErrorData represents the structure of error events in SSE streams
 type SSEErrorData struct {
 	Type  string `json:"type"`
 	Error struct {
-		Type    string `json:"type"` 
-		Message string `json:"message"`
+		Type      string `json:"type"`
+		Message   string `json:"message"`
 		RequestID string `json:"request_id,omitempty"`
 	} `json:"error"`
 }
@@ -98,21 +98,21 @@ const (
 // 实现TokenParserInterface接口
 type TokenParser struct {
 	// Buffer to collect multi-line JSON data
-	eventBuffer     strings.Builder
-	currentEvent    string
-	collectingData  bool
+	eventBuffer    strings.Builder
+	currentEvent   string
+	collectingData bool
 	// Request ID for logging purposes
-	requestID       string
+	requestID string
 	// Model name extracted from message_start event
-	modelName       string
+	modelName string
 	// Usage tracker for recording token usage and costs
-	usageTracker    *tracking.UsageTracker
+	usageTracker *tracking.UsageTracker
 	// Start time for duration calculation
-	startTime       time.Time
+	startTime time.Time
 	// Final token usage for accumulation
-	finalUsage      *tracking.TokenUsage
+	finalUsage *tracking.TokenUsage
 	// Partial usage for handling interruptions
-	partialUsage    *tracking.TokenUsage
+	partialUsage *tracking.TokenUsage
 }
 
 // NewTokenParser creates a new token parser instance
@@ -143,7 +143,7 @@ func NewTokenParserWithUsageTracker(requestID string, usageTracker *tracking.Usa
 // 返回 ParseResult 而不是直接调用 usageTracker
 func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 	line = strings.TrimSpace(line)
-	
+
 	// Handle event type lines - support both "event: " and "event:" formats
 	if strings.HasPrefix(line, "event:") {
 		var eventType string
@@ -158,7 +158,7 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 		tp.eventBuffer.Reset()
 		return nil
 	}
-	
+
 	// Handle data lines - support both "data: " and "data:" formats
 	if strings.HasPrefix(line, "data:") && tp.collectingData {
 		var dataContent string
@@ -170,7 +170,7 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 		tp.eventBuffer.WriteString(dataContent)
 		return nil
 	}
-	
+
 	// Handle empty lines that signal end of SSE event
 	if line == "" && tp.collectingData && tp.eventBuffer.Len() > 0 {
 		if tp.currentEvent == "message_start" {
@@ -185,15 +185,14 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 			return tp.parseErrorEventV2()
 		}
 	}
-	
+
 	return nil
 }
 
 // ParseSSELine processes a single line from SSE stream and extracts token usage if found
 func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 	line = strings.TrimSpace(line)
-	
-	
+
 	// Handle event type lines - support both "event: " and "event:" formats
 	if strings.HasPrefix(line, "event:") {
 		var eventType string
@@ -208,7 +207,7 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		tp.eventBuffer.Reset()
 		return nil
 	}
-	
+
 	// Handle data lines - support both "data: " and "data:" formats
 	if strings.HasPrefix(line, "data:") && tp.collectingData {
 		var dataContent string
@@ -220,7 +219,7 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		tp.eventBuffer.WriteString(dataContent)
 		return nil
 	}
-	
+
 	// Handle empty lines that signal end of SSE event
 	if line == "" && tp.collectingData && tp.eventBuffer.Len() > 0 {
 		if tp.currentEvent == "message_start" {
@@ -237,7 +236,7 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 			return nil // Error events don't return TokenUsage
 		}
 	}
-	
+
 	return nil
 }
 
@@ -248,30 +247,30 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 		tp.collectingData = false
 		tp.currentEvent = ""
 	}()
-	
+
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
 		return nil
 	}
-	
+
 	// Parse the JSON data
 	var messageStart MessageStart
 	if err := json.Unmarshal([]byte(jsonData), &messageStart); err != nil {
 		return nil
 	}
-	
+
 	// Extract model name if available
 	if messageStart.Message != nil && messageStart.Message.Model != "" {
 		tp.modelName = messageStart.Message.Model
-		
+
 		// Log model extraction (不处理token usage) - 始终包含requestID
-		slog.Info(fmt.Sprintf("🎯 [模型提取] [%s] 从message_start事件中提取模型信息: %s", 
+		slog.Info(fmt.Sprintf("🎯 [模型提取] [%s] 从message_start事件中提取模型信息: %s",
 			tp.requestID, tp.modelName))
 	}
-	
+
 	// ⚠️ 重要：message_start事件不处理token usage信息
 	// Token usage信息应该从message_delta事件中获取，该事件包含完整的使用统计
-	
+
 	return nil
 }
 
@@ -283,18 +282,18 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 		tp.collectingData = false
 		tp.currentEvent = ""
 	}()
-	
+
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
 		return nil
 	}
-	
+
 	// Parse the JSON data
 	var messageDelta MessageDelta
 	if err := json.Unmarshal([]byte(jsonData), &messageDelta); err != nil {
 		return nil
 	}
-	
+
 	// Check if this message_delta contains usage information
 	if messageDelta.Usage == nil {
 		// ⚠️ 兼容性处理：对于非Claude端点，message_delta可能不包含usage信息
@@ -305,10 +304,10 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 			if modelName == "" {
 				modelName = "default"
 			}
-			
-			slog.Info(fmt.Sprintf("🎯 [无Token响应] [%s] message_delta事件不包含token信息，标记为完成 - 模型: %s", 
+
+			slog.Info(fmt.Sprintf("🎯 [无Token响应] [%s] message_delta事件不包含token信息，标记为完成 - 模型: %s",
 				tp.requestID, modelName))
-			
+
 			// 返回空Token的完成结果
 			return &ParseResult{
 				TokenUsage: &tracking.TokenUsage{
@@ -324,7 +323,7 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 		}
 		return nil
 	}
-	
+
 	// ✅ 设置finalUsage供GetFinalUsage()方法使用
 	tp.finalUsage = &tracking.TokenUsage{
 		InputTokens:         messageDelta.Usage.InputTokens,
@@ -349,18 +348,18 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 		tp.collectingData = false
 		tp.currentEvent = ""
 	}()
-	
+
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
 		return nil
 	}
-	
+
 	// Parse the JSON data
 	var messageDelta MessageDelta
 	if err := json.Unmarshal([]byte(jsonData), &messageDelta); err != nil {
 		return nil
 	}
-	
+
 	// Check if this message_delta contains usage information
 	if messageDelta.Usage == nil {
 		// ⚠️ 兼容性处理：对于非Claude端点，message_delta可能不包含usage信息
@@ -371,21 +370,21 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 			if modelName == "" {
 				modelName = "default"
 			}
-			
-			slog.Info(fmt.Sprintf("🎯 [无Token响应] [%s] message_delta事件不包含token信息，标记为完成 - 模型: %s", 
+
+			slog.Info(fmt.Sprintf("🎯 [无Token响应] [%s] message_delta事件不包含token信息，标记为完成 - 模型: %s",
 				tp.requestID, modelName))
 		}
 		return nil
 	}
-	
+
 	// Convert to our TokenUsage format
 	tokenUsage := &monitor.TokenUsage{
-		InputTokens:            messageDelta.Usage.InputTokens,
-		OutputTokens:           messageDelta.Usage.OutputTokens,
-		CacheCreationTokens:    messageDelta.Usage.CacheCreationInputTokens,
-		CacheReadTokens:        messageDelta.Usage.CacheReadInputTokens,
+		InputTokens:         messageDelta.Usage.InputTokens,
+		OutputTokens:        messageDelta.Usage.OutputTokens,
+		CacheCreationTokens: messageDelta.Usage.CacheCreationInputTokens,
+		CacheReadTokens:     messageDelta.Usage.CacheReadInputTokens,
 	}
-	
+
 	// ✅ 设置finalUsage供GetFinalUsage()方法使用
 	tp.finalUsage = &tracking.TokenUsage{
 		InputTokens:         messageDelta.Usage.InputTokens,
@@ -408,7 +407,7 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 	// if tp.usageTracker != nil && tp.requestID != "" {
 	//	// Calculate duration since parser creation
 	//	duration := time.Since(tp.startTime)
-	//	
+	//
 	//	// Convert monitor.TokenUsage to tracking.TokenUsage
 	//	trackingTokens := &tracking.TokenUsage{
 	//		InputTokens:         tokenUsage.InputTokens,
@@ -416,7 +415,7 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 	//		CacheCreationTokens: tokenUsage.CacheCreationTokens,
 	//		CacheReadTokens:     tokenUsage.CacheReadTokens,
 	//	}
-	//	
+	//
 	//	// Record the completion with token usage and cost information
 	//	tp.usageTracker.RecordRequestComplete(tp.requestID, tp.modelName, trackingTokens, duration)
 	// }
@@ -442,12 +441,12 @@ func (tp *TokenParser) parseErrorEventV2() *ParseResult {
 		tp.collectingData = false
 		tp.currentEvent = ""
 	}()
-	
+
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
 		return nil
 	}
-	
+
 	// Parse the error JSON data
 	var errorData SSEErrorData
 	if err := json.Unmarshal([]byte(jsonData), &errorData); err != nil {
@@ -456,7 +455,7 @@ func (tp *TokenParser) parseErrorEventV2() *ParseResult {
 		}
 		return nil
 	}
-	
+
 	// Extract error type and message
 	errorType := errorData.Error.Type
 	errorMessage := errorData.Error.Message
@@ -466,19 +465,19 @@ func (tp *TokenParser) parseErrorEventV2() *ParseResult {
 	if errorMessage == "" {
 		errorMessage = "Unknown error"
 	}
-	
+
 	// Log the API error
 	if tp.requestID != "" {
-		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s", 
+		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s",
 			tp.requestID, errorType, errorMessage))
 	} else {
-		slog.Info(fmt.Sprintf("❌ [API错误] 错误类型: %s, 错误信息: %s", 
+		slog.Info(fmt.Sprintf("❌ [API错误] 错误类型: %s, 错误信息: %s",
 			errorType, errorMessage))
 	}
-	
+
 	// 返回解析结果而不是直接记录到 usageTracker
 	errorModelName := fmt.Sprintf("error:%s", errorType)
-	
+
 	return &ParseResult{
 		TokenUsage: &tracking.TokenUsage{
 			InputTokens:         0,
@@ -500,12 +499,12 @@ func (tp *TokenParser) parseErrorEvent() {
 		tp.collectingData = false
 		tp.currentEvent = ""
 	}()
-	
+
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
 		return
 	}
-	
+
 	// Parse the error JSON data
 	var errorData SSEErrorData
 	if err := json.Unmarshal([]byte(jsonData), &errorData); err != nil {
@@ -514,7 +513,7 @@ func (tp *TokenParser) parseErrorEvent() {
 		}
 		return
 	}
-	
+
 	// Extract error type and message
 	errorType := errorData.Error.Type
 	errorMessage := errorData.Error.Message
@@ -524,23 +523,23 @@ func (tp *TokenParser) parseErrorEvent() {
 	if errorMessage == "" {
 		errorMessage = "Unknown error"
 	}
-	
+
 	// Log the API error
 	if tp.requestID != "" {
-		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s", 
+		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s",
 			tp.requestID, errorType, errorMessage))
 	} else {
-		slog.Info(fmt.Sprintf("❌ [API错误] 错误类型: %s, 错误信息: %s", 
+		slog.Info(fmt.Sprintf("❌ [API错误] 错误类型: %s, 错误信息: %s",
 			errorType, errorMessage))
 	}
-	
+
 	// ℹ️ 返回错误信息，由Handler通过生命周期管理器记录
 	// 不再直接调用usageTracker，遵循架构原则
 	// TokenParser只负责解析和返回结果，不直接记录到数据库
 	if tp.requestID != "" {
 		slog.Info(fmt.Sprintf("🏁 [API错误解析] [%s] 错误信息已解析: %s - %s", tp.requestID, errorType, errorMessage))
 	}
-	
+
 	// 更新内部状态，由上层通过生命周期管理器记录完成状态
 	tp.finalUsage = &tracking.TokenUsage{
 		InputTokens:         0,
@@ -562,17 +561,17 @@ func (tp *TokenParser) ParseMessageStart(line string) *ModelInfo {
 	if !strings.HasPrefix(line, "data: ") {
 		return nil
 	}
-	
+
 	data := line[6:] // Remove "data: "
 	if strings.TrimSpace(data) == "[DONE]" {
 		return nil
 	}
-	
+
 	var event map[string]interface{}
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return nil
 	}
-	
+
 	if event["type"] == "message_start" {
 		if message, ok := event["message"].(map[string]interface{}); ok {
 			if model, ok := message["model"].(string); ok {
@@ -581,7 +580,7 @@ func (tp *TokenParser) ParseMessageStart(line string) *ModelInfo {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -590,21 +589,21 @@ func (tp *TokenParser) ParseMessageDelta(line string) *tracking.TokenUsage {
 	if !strings.HasPrefix(line, "data: ") {
 		return nil
 	}
-	
+
 	data := line[6:] // Remove "data: "
 	if strings.TrimSpace(data) == "[DONE]" {
 		return nil
 	}
-	
+
 	var event map[string]interface{}
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return nil
 	}
-	
+
 	if event["type"] == "message_delta" {
 		if usage, ok := event["usage"].(map[string]interface{}); ok {
 			tokenUsage := &tracking.TokenUsage{}
-			
+
 			if inputTokens, ok := usage["input_tokens"].(float64); ok {
 				tokenUsage.InputTokens = int64(inputTokens)
 			}
@@ -617,14 +616,14 @@ func (tp *TokenParser) ParseMessageDelta(line string) *tracking.TokenUsage {
 			if cacheRead, ok := usage["cache_read_input_tokens"].(float64); ok {
 				tokenUsage.CacheReadTokens = int64(cacheRead)
 			}
-			
+
 			// 保存最终使用统计
 			tp.finalUsage = tokenUsage
-			
+
 			return tokenUsage
 		}
 	}
-	
+
 	return nil
 }
 
@@ -649,4 +648,38 @@ func (tp *TokenParser) GetPartialUsage() *tracking.TokenUsage {
 		return tp.partialUsage
 	}
 	return tp.finalUsage
+}
+
+// FlushPendingEvent 强制解析缓存中的待处理事件
+// 在流结束或连接中断时调用，确保不会因为缺少终止空行而丢失 usage 信息
+func (tp *TokenParser) FlushPendingEvent() *ParseResult {
+	// 只有在收集数据且缓存非空时才需要flush
+	if !tp.collectingData || tp.eventBuffer.Len() == 0 {
+		return nil
+	}
+
+	// 根据当前事件类型调用相应的解析方法
+	switch tp.currentEvent {
+	case "message_delta":
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的message_delta事件", tp.requestID))
+		}
+		return tp.parseMessageDeltaV2()
+	case "message_start":
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的message_start事件", tp.requestID))
+		}
+		tp.parseMessageStart()
+		return nil
+	case "error":
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的error事件", tp.requestID))
+		}
+		return tp.parseErrorEventV2()
+	default:
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("⚠️ [事件Flush] [%s] 未知事件类型: %s, 跳过解析", tp.requestID, tp.currentEvent))
+		}
+		return nil
+	}
 }

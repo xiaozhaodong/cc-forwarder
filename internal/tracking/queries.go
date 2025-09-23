@@ -87,6 +87,26 @@ type UsageStats struct {
 	TotalCost     float64 `json:"total_cost_usd"`
 }
 
+// EndpointCostSummary represents cost summary data for an endpoint
+type EndpointCostSummary struct {
+	EndpointName   string  `json:"endpoint_name"`
+	GroupName      string  `json:"group_name"`
+	TotalTokens    int64   `json:"total_tokens"`
+	TotalCostUSD   float64 `json:"total_cost_usd"`
+	RequestCount   int     `json:"request_count"`
+	SuccessCount   int     `json:"success_count"`
+
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+
+	InputCostUSD         float64 `json:"input_cost_usd"`
+	OutputCostUSD        float64 `json:"output_cost_usd"`
+	CacheCreationCostUSD float64 `json:"cache_creation_cost_usd"`
+	CacheReadCostUSD     float64 `json:"cache_read_cost_usd"`
+}
+
 // GetDB returns the read database connection for external queries (读写分离：返回读连接)
 func (ut *UsageTracker) GetDB() *sql.DB {
 	return ut.readDB
@@ -369,4 +389,87 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 	}
 	
 	return count, nil
+}
+
+// GetEndpointCostsForDate queries endpoint cost summary data for a specific date
+func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string) ([]EndpointCostSummary, error) {
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
+	}
+
+	// Validate date format
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return nil, fmt.Errorf("invalid date format, expected YYYY-MM-DD: %w", err)
+	}
+
+	slog.Debug("Querying endpoint costs for date", "date", date)
+
+	// Convert date to time range for timezone-aware querying
+	// Parse the date and create start/end times in local timezone
+	startTime, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse date: %w", err)
+	}
+
+	// Use local timezone for the date range
+	location := time.Local
+	startOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, location)
+	endOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 23, 59, 59, 999999999, location)
+
+	query := `SELECT
+		COALESCE(endpoint_name, '') as endpoint_name,
+		COALESCE(group_name, '') as group_name,
+		COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+		COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
+		COUNT(*) as request_count,
+		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
+		COALESCE(SUM(input_tokens), 0) as input_tokens,
+		COALESCE(SUM(output_tokens), 0) as output_tokens,
+		COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+		COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+		COALESCE(SUM(input_cost_usd), 0.0) as input_cost_usd,
+		COALESCE(SUM(output_cost_usd), 0.0) as output_cost_usd,
+		COALESCE(SUM(cache_creation_cost_usd), 0.0) as cache_creation_cost_usd,
+		COALESCE(SUM(cache_read_cost_usd), 0.0) as cache_read_cost_usd
+		FROM request_logs
+		WHERE start_time >= ? AND start_time <= ?
+		GROUP BY endpoint_name, group_name
+		ORDER BY total_cost_usd DESC`
+
+	rows, err := ut.readDB.QueryContext(ctx, query, startOfDay, endOfDay)
+	if err != nil {
+		slog.Error("Failed to query endpoint costs", "error", err, "date", date, "start_time", startOfDay, "end_time", endOfDay)
+		return nil, fmt.Errorf("failed to query endpoint costs for date %s: %w", date, err)
+	}
+	defer rows.Close()
+
+	var costs []EndpointCostSummary
+	for rows.Next() {
+		var cost EndpointCostSummary
+		err := rows.Scan(
+			&cost.EndpointName, &cost.GroupName, &cost.TotalTokens, &cost.TotalCostUSD,
+			&cost.RequestCount, &cost.SuccessCount,
+			&cost.InputTokens, &cost.OutputTokens,
+			&cost.CacheCreationTokens, &cost.CacheReadTokens,
+			&cost.InputCostUSD, &cost.OutputCostUSD,
+			&cost.CacheCreationCostUSD, &cost.CacheReadCostUSD,
+		)
+		if err != nil {
+			slog.Error("Failed to scan endpoint cost row", "error", err)
+			return nil, fmt.Errorf("failed to scan endpoint cost: %w", err)
+		}
+		costs = append(costs, cost)
+	}
+
+	if err = rows.Err(); err != nil {
+		slog.Error("Error iterating endpoint cost rows", "error", err)
+		return nil, fmt.Errorf("error iterating endpoint cost rows: %w", err)
+	}
+
+	slog.Debug("Successfully queried endpoint costs",
+		"date", date,
+		"endpoint_count", len(costs),
+		"total_endpoints", len(costs))
+
+	return costs, nil
 }

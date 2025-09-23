@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy/handlers"
@@ -34,6 +35,7 @@ type Handler struct {
 	forwarder            *handlers.Forwarder
 	regularHandler       *handlers.RegularHandler
 	streamingHandler     *handlers.StreamingHandler
+	eventBus             events.EventBus  // EventBus事件总线
 	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
 	// 确保在SetUsageTracker中重建Handler时保持共享状态
 	sharedSuspensionManager handlers.SuspensionManager
@@ -397,6 +399,11 @@ func (h *Handler) GetRetryHandler() *RetryHandler {
 	return h.retryHandler
 }
 
+// SetEventBus 设置EventBus事件总线
+func (h *Handler) SetEventBus(eventBus events.EventBus) {
+	h.eventBus = eventBus
+}
+
 // extractModelFromRequestBody 从请求体中提取模型名称
 // 仅对 /v1/messages 相关路径进行解析，避免不必要的JSON解析开销
 func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
@@ -434,7 +441,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// 创建统一的请求生命周期管理器
-	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID)
+	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
 	
 	// 克隆请求体用于重试
 	var bodyBytes []byte

@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"time"
+	"cc-forwarder/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -10,6 +11,7 @@ import (
 // handleIndex处理主页面
 func (ws *WebServer) handleIndex(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
+	ws.logger.Info("🚀 [Web界面] 使用React布局")
 	c.String(http.StatusOK, indexHTML)
 }
 
@@ -227,7 +229,7 @@ func (ws *WebServer) handleManualHealthCheck(c *gin.Context) {
 		"success":       true,
 		"message":       "手动健康检测完成",
 		"healthy":       status.Healthy,
-		"response_time": status.ResponseTime.String(),
+		"response_time": utils.FormatResponseTime(status.ResponseTime),
 		"last_check":    status.LastCheck.Format("2006-01-02 15:04:05"),
 		"never_checked": status.NeverChecked,
 	})

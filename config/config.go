@@ -131,9 +131,9 @@ type TUIConfig struct {
 }
 
 type WebConfig struct {
-	Enabled bool   `yaml:"enabled"`  // Enable Web interface, default: false
-	Host    string `yaml:"host"`     // Web interface host, default: localhost
-	Port    int    `yaml:"port"`     // Web interface port, default: 8088
+	Enabled bool   `yaml:"enabled"` // Enable Web interface, default: false
+	Host    string `yaml:"host"`    // Web interface host, default: localhost
+	Port    int    `yaml:"port"`    // Web interface port, default: 8088
 }
 
 type EndpointConfig struct {

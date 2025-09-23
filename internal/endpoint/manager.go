@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/transport"
+	"cc-forwarder/internal/utils"
 )
 
 // EndpointStatus represents the health status of an endpoint
@@ -39,15 +41,10 @@ type Manager struct {
 	wg           sync.WaitGroup
 	fastTester   *FastTester
 	groupManager *GroupManager
-	// Web interface callback for real-time notifications
-	webNotifier  WebNotifier
+	// EventBus for decoupled event publishing
+	eventBus     events.EventBus
 }
 
-// WebNotifier interface for Web interface notifications
-type WebNotifier interface {
-	BroadcastEndpointUpdate(data map[string]interface{})
-	IsEventManagerActive() bool
-}
 
 // NewManager creates a new endpoint manager
 func NewManager(cfg *config.Config) *Manager {
@@ -423,35 +420,46 @@ func (m *Manager) GetGroupManager() *GroupManager {
 	return m.groupManager
 }
 
-// SetWebNotifier sets the web notifier for real-time updates
-func (m *Manager) SetWebNotifier(notifier WebNotifier) {
-	m.webNotifier = notifier
+
+// SetEventBus 设置EventBus事件总线
+func (m *Manager) SetEventBus(eventBus events.EventBus) {
+	m.eventBus = eventBus
 }
 
-// notifyWebInterface notifies the web interface about endpoint status changes
+// notifyWebInterface 通过EventBus发布端点状态变化事件
 func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
-	if m.webNotifier == nil {
+	if m.eventBus == nil {
 		return
 	}
 	
-	// 检查EventManager是否仍在活跃状态
-	if !m.webNotifier.IsEventManagerActive() {
-		// EventManager已关闭，不发送通知
-		return
+	endpoint.mutex.RLock()
+	status := endpoint.Status
+	endpoint.mutex.RUnlock()
+	
+	// 确定事件类型和优先级
+	eventType := events.EventEndpointHealthy
+	priority := events.PriorityHigh
+	changeType := "status_changed"
+	
+	if !status.Healthy {
+		eventType = events.EventEndpointUnhealthy
+		priority = events.PriorityCritical
+		changeType = "health_changed"
 	}
 	
-	status := endpoint.Status // Already holding lock in caller
-	data := map[string]interface{}{
-		"event":           "endpoint_status_changed",
-		"endpoint":        endpoint.Config.Name,
-		"healthy":         status.Healthy,
-		"response_time":   status.ResponseTime.String(),
-		"last_check":      status.LastCheck.Format("2006-01-02 15:04:05"),
-		"consecutive_fails": status.ConsecutiveFails,
-		"timestamp":       time.Now().Format("2006-01-02 15:04:05"),
-	}
-	
-	m.webNotifier.BroadcastEndpointUpdate(data)
+	m.eventBus.Publish(events.Event{
+		Type:     eventType,
+		Source:   "endpoint_manager",
+		Priority: priority,
+		Data: map[string]interface{}{
+			"endpoint":        endpoint.Config.Name,
+			"healthy":         status.Healthy,
+			"response_time":   utils.FormatResponseTime(status.ResponseTime),
+			"last_check":      status.LastCheck.Format("2006-01-02 15:04:05"),
+			"consecutive_fails": status.ConsecutiveFails,
+			"change_type":     changeType,
+		},
+	})
 }
 
 // ManualActivateGroup manually activates a specific group via web interface
@@ -460,12 +468,27 @@ func (m *Manager) ManualActivateGroup(groupName string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Notify web interface about group change
-	if m.webNotifier != nil {
+	go m.notifyWebGroupChange("group_manually_activated", groupName)
+
+	return nil
+}
+
+// ManualActivateGroupWithForce manually activates a specific group via web interface with force option
+func (m *Manager) ManualActivateGroupWithForce(groupName string, force bool) error {
+	err := m.groupManager.ManualActivateGroupWithForce(groupName, force)
+	if err != nil {
+		return err
+	}
+
+	// Notify web interface about group change
+	if force {
+		go m.notifyWebGroupChange("group_force_activated", groupName)
+	} else {
 		go m.notifyWebGroupChange("group_manually_activated", groupName)
 	}
-	
+
 	return nil
 }
 
@@ -477,9 +500,7 @@ func (m *Manager) ManualPauseGroup(groupName string, duration time.Duration) err
 	}
 	
 	// Notify web interface about group change
-	if m.webNotifier != nil {
-		go m.notifyWebGroupChange("group_manually_paused", groupName)
-	}
+	go m.notifyWebGroupChange("group_manually_paused", groupName)
 	
 	return nil
 }
@@ -492,9 +513,7 @@ func (m *Manager) ManualResumeGroup(groupName string) error {
 	}
 	
 	// Notify web interface about group change
-	if m.webNotifier != nil {
-		go m.notifyWebGroupChange("group_manually_resumed", groupName)
-	}
+	go m.notifyWebGroupChange("group_manually_resumed", groupName)
 	
 	return nil
 }
@@ -506,24 +525,79 @@ func (m *Manager) GetGroupDetails() map[string]interface{} {
 
 // notifyWebGroupChange notifies the web interface about group management changes
 func (m *Manager) notifyWebGroupChange(eventType, groupName string) {
-	if m.webNotifier == nil {
+	// 检查EventBus是否可用
+	if m.eventBus == nil {
+		slog.Debug("[组管理] EventBus未设置，跳过组状态变化通知")
 		return
 	}
-	
-	// 检查EventManager是否仍在活跃状态
-	if !m.webNotifier.IsEventManagerActive() {
-		// EventManager已关闭，不发送通知
-		return
-	}
-	
+
+	// 获取组详细信息
+	groupDetails := m.GetGroupDetails()
+
+	// 构建事件数据
 	data := map[string]interface{}{
 		"event":     eventType,
 		"group":     groupName,
 		"timestamp": time.Now().Format("2006-01-02 15:04:05"),
-		"details":   m.GetGroupDetails(),
+		"details":   groupDetails,
 	}
-	
-	m.webNotifier.BroadcastEndpointUpdate(data)
+
+	// 使用EventBus发布组状态变化事件
+	m.eventBus.Publish(events.Event{
+		Type:      events.EventGroupStatusChanged,
+		Source:    "endpoint_manager",
+		Timestamp: time.Now(),
+		Priority:  events.PriorityHigh,
+		Data:      data,
+	})
+
+	slog.Debug(fmt.Sprintf("📢 [组管理] 发布组状态变化事件: %s (组: %s)", eventType, groupName))
+}
+
+// notifyGroupHealthStats 通知组健康统计变化
+func (m *Manager) notifyGroupHealthStats(groupName string) {
+	// 检查EventBus是否可用
+	if m.eventBus == nil {
+		slog.Debug("[组健康统计] EventBus未设置，跳过组健康统计通知")
+		return
+	}
+
+	// 处理空组名，默认为"Default"
+	if groupName == "" {
+		groupName = "Default"
+	}
+
+	// 获取组详细信息
+	groupDetails := m.groupManager.GetGroupDetails()
+	if groups, ok := groupDetails["groups"].([]map[string]interface{}); ok {
+		// 查找目标组的健康统计
+		for _, group := range groups {
+			if groupNameStr, exists := group["name"]; exists && groupNameStr == groupName {
+				// 发布组健康统计变化事件
+				m.eventBus.Publish(events.Event{
+					Type:     events.EventGroupHealthStatsChanged,
+					Source:   "endpoint_manager",
+					Priority: events.PriorityHigh,
+					Data: map[string]interface{}{
+						"group":               groupName,
+						"healthy_endpoints":   group["healthy_endpoints"],
+						"unhealthy_endpoints": group["unhealthy_endpoints"],
+						"total_endpoints":     group["total_endpoints"],
+						"is_active":           group["is_active"],
+						"status":              group["status"],
+						"change_type":         "health_stats_changed",
+						"timestamp":           time.Now().Format("2006-01-02 15:04:05"),
+					},
+				})
+
+				slog.Debug(fmt.Sprintf("📊 [组健康统计] 成功发布组健康统计变化事件: %s (健康: %v/%v)",
+					groupName, group["healthy_endpoints"], group["total_endpoints"]))
+				return
+			}
+		}
+	}
+
+	slog.Warn(fmt.Sprintf("📊 [组健康统计] 未找到组 %s 的健康统计信息，可用组: %v", groupName, groupDetails))
 }
 
 // healthCheckLoop runs the health check routine
@@ -659,44 +733,45 @@ func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, responseTime time.Duration) {
 	endpoint.mutex.Lock()
 	defer endpoint.mutex.Unlock()
-	
+
 	endpoint.Status.LastCheck = time.Now()
 	endpoint.Status.ResponseTime = responseTime
 	endpoint.Status.NeverChecked = false // 标记为已检测
-	
+
 	if healthy {
 		// Endpoint is healthy
 		wasUnhealthy := !endpoint.Status.Healthy
 		endpoint.Status.Healthy = true
 		endpoint.Status.ConsecutiveFails = 0
-		
+
 		// Log recovery if endpoint was previously unhealthy
 		if wasUnhealthy {
-			slog.Info(fmt.Sprintf("✅ [健康检查] 端点恢复正常: %s - 响应时间: %dms", 
+			slog.Info(fmt.Sprintf("✅ [健康检查] 端点恢复正常: %s - 响应时间: %dms",
 				endpoint.Config.Name, responseTime.Milliseconds()))
 		}
 	} else {
 		// Endpoint failed health check
 		endpoint.Status.ConsecutiveFails++
 		wasHealthy := endpoint.Status.Healthy
-		
+
 		// Mark as unhealthy immediately on any failure
 		endpoint.Status.Healthy = false
-		
+
 		// Log the failure
 		if wasHealthy {
-			slog.Warn(fmt.Sprintf("❌ [健康检查] 端点标记为不可用: %s - 连续失败: %d次, 响应时间: %dms", 
+			slog.Warn(fmt.Sprintf("❌ [健康检查] 端点标记为不可用: %s - 连续失败: %d次, 响应时间: %dms",
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		} else {
-			slog.Debug(fmt.Sprintf("❌ [健康检查] 端点仍然不可用: %s - 连续失败: %d次, 响应时间: %dms", 
+			slog.Debug(fmt.Sprintf("❌ [健康检查] 端点仍然不可用: %s - 连续失败: %d次, 响应时间: %dms",
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		}
 	}
-	
-	// Notify web interface after every health check to update response time and last check time
-	if m.webNotifier != nil {
-		go m.notifyWebInterface(endpoint)
-	}
+
+	// 通知Web界面端点状态变化
+	go m.notifyWebInterface(endpoint)
+
+	// 通知组健康统计变化
+	go m.notifyGroupHealthStats(endpoint.Config.Group)
 }
 
 // IsHealthy returns the health status of an endpoint
@@ -805,7 +880,7 @@ func (m *Manager) ManualHealthCheck(endpointName string) error {
 	}
 	
 	slog.Info(fmt.Sprintf("🔍 [手动检查] 检查完成: %s - 状态: %s, 响应时间: %s", 
-		endpointName, healthStatus, status.ResponseTime.String()))
+		endpointName, healthStatus, utils.FormatResponseTime(status.ResponseTime)))
 	
 	return nil
 }

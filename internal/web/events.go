@@ -26,9 +26,11 @@ const (
 
 // Event 表示一个SSE事件
 type Event struct {
-	Type      EventType   `json:"type"`
-	Data      interface{} `json:"data"`
-	Timestamp time.Time   `json:"timestamp"`
+	Type      EventType     `json:"type"`
+	Data      interface{}   `json:"data"`
+	Timestamp time.Time     `json:"timestamp"`
+	Context   *EventContext `json:"context,omitempty"`  // 事件上下文
+	Priority  EventPriority `json:"priority,omitempty"` // 事件优先级
 }
 
 // Client 表示一个SSE客户端连接
@@ -93,7 +95,7 @@ func (em *EventManager) AddClient(clientID string, filter map[EventType]bool) *C
 	
 	client := &Client{
 		ID:       clientID,
-		Channel:  make(chan Event, 100),
+		Channel:  make(chan Event, 100), // 恢复到100，事件聚合后无需大缓冲区
 		LastPing: time.Now(),
 		Filter:   filter,
 	}
@@ -130,7 +132,6 @@ func (em *EventManager) RemoveClient(clientID string) {
 func (em *EventManager) BroadcastEvent(eventType EventType, data interface{}) {
 	// 检查EventManager是否已关闭
 	if atomic.LoadInt64(&em.closed) != 0 {
-		// EventManager已关闭，直接返回，不记录日志避免干扰
 		return
 	}
 	
@@ -139,14 +140,6 @@ func (em *EventManager) BroadcastEvent(eventType EventType, data interface{}) {
 		Data:      data,
 		Timestamp: time.Now(),
 	}
-	
-	// 使用defer+recover防止panic
-	defer func() {
-		if r := recover(); r != nil {
-			// 通道已关闭，忽略此事件
-			em.logger.Debug("广播事件时检测到通道已关闭", "event_type", eventType, "recover", r)
-		}
-	}()
 	
 	select {
 	case em.broadcast <- event:
@@ -161,7 +154,12 @@ func (em *EventManager) BroadcastEvent(eventType EventType, data interface{}) {
 func (em *EventManager) broadcastLoop() {
 	for {
 		select {
-		case event := <-em.broadcast:
+		case event, ok := <-em.broadcast:
+			if !ok {
+				// Channel已关闭，退出广播循环
+				em.logger.Info("广播Channel已关闭，broadcastLoop退出")
+				return
+			}
 			em.mu.RLock()
 			var targetClients []*Client
 			for _, client := range em.clients {
@@ -190,8 +188,8 @@ func (em *EventManager) sendToClient(client *Client, event Event) {
 	select {
 	case client.Channel <- event:
 		// 发送成功
-	case <-time.After(1 * time.Second):
-		// 发送超时，客户端可能已断开
+	case <-time.After(3 * time.Second):
+		// 发送超时，客户端可能已断开 (恢复到3秒，事件已聚合无需过长超时)
 		em.logger.Debug("向客户端发送事件超时", "client_id", client.ID, "event_type", event.Type)
 		em.RemoveClient(client.ID)
 	}
@@ -234,7 +232,7 @@ func (em *EventManager) cleanupInactiveClients() {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 	
-	timeout := 2 * time.Minute
+	timeout := 2 * time.Minute // 恢复到2分钟，连接稳定后无需过长等待
 	now := time.Now()
 	
 	var toRemove []string
@@ -295,7 +293,37 @@ func (em *EventManager) Stop() {
 
 // formatEventData 格式化事件数据为SSE格式
 func (em *EventManager) formatEventData(event Event) (string, error) {
-	data, err := json.Marshal(event.Data)
+	// 🔥 源头修复：自动修复零时间戳而不是拒绝
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+		em.logger.Warn("⚠️ formatEventData自动修复零时间戳事件", 
+			"type", event.Type, 
+			"original_timestamp", -62135596800,
+			"fixed_timestamp", event.Timestamp.Unix())
+	}
+	
+	// 验证事件类型
+	if event.Type == "" {
+		em.logger.Error("❌ formatEventData收到空事件类型", "data", event.Data)
+		return "", fmt.Errorf("无效事件：空事件类型")
+	}
+	
+	// 创建包含完整事件信息的数据结构
+	eventData := map[string]interface{}{
+		"type":      string(event.Type),
+		"data":      event.Data,
+		"timestamp": event.Timestamp.Unix(),
+	}
+	
+	// 如果有上下文和优先级，也包含进去
+	if event.Context != nil {
+		eventData["context"] = event.Context
+	}
+	if event.Priority != 0 {
+		eventData["priority"] = event.Priority.String()
+	}
+	
+	data, err := json.Marshal(eventData)
 	if err != nil {
 		return "", err
 	}

@@ -20,6 +20,9 @@ type GroupInfo struct {
 	// Manual control states
 	ManuallyPaused bool
 	ManualActivationTime time.Time
+	// Forced activation states
+	ForcedActivation bool       // 标记是否为强制激活（无健康端点时激活）
+	ForcedActivationTime time.Time // 强制激活时间
 }
 
 // GroupManager manages endpoint groups and their cooldown states
@@ -376,51 +379,85 @@ func (gm *GroupManager) GetGroupCooldownRemaining(groupName string) time.Duratio
 	return 0
 }
 
-// ManualActivateGroup manually activates a specific group and deactivates others
+// ManualActivateGroup manually activates a specific group and deactivates others (compatibility function)
 func (gm *GroupManager) ManualActivateGroup(groupName string) error {
+	return gm.ManualActivateGroupWithForce(groupName, false)
+}
+
+// ManualActivateGroupWithForce manually activates a specific group and deactivates others
+// force: 当为true时，即使组内没有健康端点也强制激活
+func (gm *GroupManager) ManualActivateGroupWithForce(groupName string, force bool) error {
 	gm.mutex.Lock()
 	defer gm.mutex.Unlock()
-	
+
 	targetGroup, exists := gm.groups[groupName]
 	if !exists {
 		return fmt.Errorf("组不存在: %s", groupName)
 	}
-	
-	// Check if group is in cooldown
+
+	// 检查冷却状态（强制激活仍需检查冷却）
 	if !targetGroup.CooldownUntil.IsZero() && time.Now().Before(targetGroup.CooldownUntil) {
 		remaining := targetGroup.CooldownUntil.Sub(time.Now())
 		return fmt.Errorf("组 %s 仍在冷却中，剩余时间: %v", groupName, remaining.Round(time.Second))
 	}
-	
-	// Check if group has healthy endpoints
+
+	// 检查健康端点
 	healthyCount := 0
+	totalCount := len(targetGroup.Endpoints)
 	for _, ep := range targetGroup.Endpoints {
 		if ep.IsHealthy() {
 			healthyCount++
 		}
 	}
+
+	// 核心逻辑：强制激活只能在完全没有健康端点时使用
 	if healthyCount == 0 {
-		return fmt.Errorf("组 %s 中没有健康的端点，无法激活", groupName)
+		// 没有健康端点的情况
+		if !force {
+			return fmt.Errorf("组 %s 中没有健康的端点，无法激活。如需强制激活请使用强制模式", groupName)
+		}
+		// 强制激活：只有在没有健康端点时才允许
+		slog.Warn(fmt.Sprintf("⚠️ [强制激活] 用户强制激活无健康端点组: %s (健康端点: %d/%d, 操作时间: %s, 风险等级: HIGH)",
+			groupName, healthyCount, totalCount, time.Now().Format("2006-01-02 15:04:05")))
+		slog.Error(fmt.Sprintf("🚨 [安全警告] 强制激活可能导致请求失败! 组: %s, 建议尽快检查端点健康状态", groupName))
+
+		// 标记强制激活
+		targetGroup.ForcedActivation = true
+		targetGroup.ForcedActivationTime = time.Now()
+	} else {
+		// 有健康端点的情况
+		if force {
+			// 拒绝在有健康端点时使用强制激活
+			return fmt.Errorf("组 %s 有 %d 个健康端点，无需强制激活。请使用正常激活", groupName, healthyCount)
+		}
+		// 正常激活
+		targetGroup.ForcedActivation = false
+		targetGroup.ForcedActivationTime = time.Time{}
+
+		slog.Info(fmt.Sprintf("🔄 [正常激活] 手动激活组: %s (健康端点: %d/%d)",
+			groupName, healthyCount, totalCount))
 	}
-	
-	// Deactivate all groups
+
+	// 停用所有组
 	for _, group := range gm.groups {
 		group.IsActive = false
-		group.ManuallyPaused = false // Clear manual pause
+		group.ManuallyPaused = false
 	}
-	
-	// Activate target group
+
+	// 激活目标组
 	targetGroup.IsActive = true
 	targetGroup.ManualActivationTime = time.Now()
-	targetGroup.CooldownUntil = time.Time{} // Clear any cooldown
-	
-	slog.Info(fmt.Sprintf("🔄 [手动切换] 已手动激活组: %s (健康端点: %d个)", 
-		groupName, healthyCount))
-	
-	// Notify subscribers about group change
+	targetGroup.CooldownUntil = time.Time{}
+
+	// 通知订阅者
 	gm.notifyGroupChange(groupName)
-	
+
 	return nil
+}
+
+// ManualActivateGroupCompat 兼容性函数，默认不强制激活
+func (gm *GroupManager) ManualActivateGroupCompat(groupName string) error {
+	return gm.ManualActivateGroupWithForce(groupName, false)
 }
 
 // ManualPauseGroup manually pauses a group (prevents it from being auto-activated)
@@ -584,6 +621,26 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 			"can_activate":       healthyCount > 0 && !group.IsActive && (group.CooldownUntil.IsZero() || time.Now().After(group.CooldownUntil)),
 			"can_pause":          !group.ManuallyPaused,
 			"can_resume":         group.ManuallyPaused,
+			"forced_activation":      group.ForcedActivation,
+			"forced_activation_time": "",
+			"activation_type":        "normal",
+			"can_force_activate":     healthyCount == 0 && !group.IsActive && (group.CooldownUntil.IsZero() || time.Now().After(group.CooldownUntil)),
+		}
+
+		// 添加强制激活时间
+		if !group.ForcedActivationTime.IsZero() {
+			groupData["forced_activation_time"] = group.ForcedActivationTime.Format("2006-01-02 15:04:05")
+		}
+
+		// 设置激活类型
+		if group.ForcedActivation {
+			groupData["activation_type"] = "forced"
+			// 计算健康状态描述
+			if healthyCount == 0 {
+				groupData["_computed_health_status"] = "强制激活(无健康端点)"
+			} else {
+				groupData["_computed_health_status"] = "强制激活(已恢复)"
+			}
 		}
 		
 		if !group.ManualActivationTime.IsZero() {
