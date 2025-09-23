@@ -4,19 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v3.3.2 (2025-09-20)
-**Major Update**: 重试策略架构优化与错误处理增强
+**Current Version**: v3.4.0 (2025-09-23)
+**Major Update**: 流式Token丢失修复与前端架构升级
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v3.3**:
-- **统一重试策略**: 简化重试架构，移除复杂适配器，提升性能
-- **错误处理优化**: 消除重复日志，完善错误分类系统
-- **Token管理增强**: 失败请求Token保存，重复计费防护机制
-- **流式请求修复**: 修复挂起状态存储，统一状态管理语义
-- **监控指标修复**: 修复错误类型断言，防止监控降级问题
+**Key Features v3.4**:
+- **流式Token丢失修复**: 解决SSE终止空行缺失导致的Token信息丢失问题
+- **事件缓冲区刷新**: FlushPendingEvent机制确保完整Token解析
+- **前端架构升级**: React Layout架构迁移，完善UI和交互体验
+- **图表功能增强**: 端点成本分析、布局优化、概览页面融合
+- **端点日志优化**: 修复流式请求尝试次数计数不准确问题
 - **Modular Architecture**: Complete handler.go refactoring with single responsibility principle
 - **Dual Processing**: Streaming v2 and Unified v2 request processing
 - **Intelligent Error Recovery**: Smart error classification and recovery strategies
@@ -225,6 +225,15 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-09-23**: Major v3.4.0 流式Token修复与前端升级
+- 流式Token丢失修复：实现FlushPendingEvent机制解决SSE终止空行缺失问题
+- 事件缓冲区管理：在流结束/取消/中断时自动触发flush确保Token完整性
+- empty_response精确判断：只在真正无使用量时标记，防止误判
+- 前端架构迁移：完成React Layout架构升级，优化UI和交互体验
+- 图表功能增强：新增端点成本分析，优化布局，完成概览页面融合
+- 端点日志优化：修复流式请求尝试次数计数不准确问题
+- 集成测试完善：新增streaming_missing_newline_test.go验证修复效果
 
 **2025-09-20**: Major v3.3.2 架构优化版本
 - 重试策略统一：移除复杂适配器架构，简化重试逻辑，提升性能

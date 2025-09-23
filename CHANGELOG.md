@@ -5,6 +5,30 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.4.0] - 2025-09-23
+
+### 🔧 关键修复 (Critical Fixes)
+- **流式Token丢失修复**: 解决上游缺少SSE终止空行导致Token信息丢失的问题
+  - 实现 `FlushPendingEvent()` 方法强制解析缓存事件
+  - 在流结束、取消、中断时自动触发缓冲区刷新
+  - 确保 `empty_response` 只在真正无使用量时出现
+  - 新增集成测试验证修复效果 (`streaming_missing_newline_test.go`)
+- **端点日志优化**: 修复流式请求端点失败日志中尝试次数计数不准确问题
+
+### 🎨 前端架构升级 (Frontend Architecture)
+- **React架构迁移**: 完成Web界面React Layout架构迁移
+- **UI优化**: 完善前端状态处理和交互体验
+- **图表功能增强**:
+  - 新增端点Token使用成本分析功能
+  - 优化图表页面布局和优先级
+  - 完成概览页面与图表功能融合重构
+- **交互改进**: 简化请求页面时间筛选交互
+
+### 📝 技术细节 (Technical Details)
+- 修改 `TokenParser.FlushPendingEvent()` 支持 message_delta/message_start/error 事件类型
+- 在 `StreamProcessor.waitForBackgroundParsing()` 中调用flush确保完整解析
+- 在 `collectAvailableInfoV2()` 错误恢复场景中调用flush保留Token信息
+
 ## [3.3.2] - 2025-09-20
 
 ### 🐛 错误修复 (Bug Fixes)
