@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.4.1] - 2025-09-23
+
+### 🔧 错误处理增强 (Error Handling Enhancement)
+- **Cloudflare 5xx错误码支持**: 将Cloudflare专有的5xx错误码归类为服务器错误
+  - 支持错误码: 520-525 (Web Server Error, Server Down, Connection Timeout, Origin Unreachable, Timeout, SSL Handshake Failed)
+  - 现在享受与502相同的重试策略: 同端点重试 → 切换端点 → 组故障转移
+  - 在组故障情况下可触发请求挂起等待组切换
+  - 修改 `internal/proxy/error_recovery.go` 错误分类逻辑
+
 ## [3.4.0] - 2025-09-23
 
 ### 🔧 关键修复 (Critical Fixes)
