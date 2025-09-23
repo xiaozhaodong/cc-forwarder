@@ -296,9 +296,9 @@ func (em *EventManager) formatEventData(event Event) (string, error) {
 	// 🔥 源头修复：自动修复零时间戳而不是拒绝
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
-		em.logger.Warn("⚠️ formatEventData自动修复零时间戳事件", 
-			"type", event.Type, 
-			"original_timestamp", -62135596800,
+		em.logger.Warn("⚠️ formatEventData自动修复零时间戳事件",
+			"type", event.Type,
+			"original_timestamp", int64(-62135596800),
 			"fixed_timestamp", event.Timestamp.Unix())
 	}
 	
