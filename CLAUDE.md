@@ -4,14 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v3.4.0 (2025-09-23)
-**Major Update**: 流式Token丢失修复与前端架构升级
+**Current Version**: v3.4.1 (2025-09-23)
+**Major Update**: Cloudflare 5xx错误码支持与流式Token修复
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v3.4**:
+**Key Features v3.4.1**:
+- **Cloudflare 5xx错误码支持**: 将Cloudflare专有的5xx错误码(520-525)归类为服务器错误
+- **智能重试策略**: Cloudflare错误享受与502相同的重试策略和组故障转移
 - **流式Token丢失修复**: 解决SSE终止空行缺失导致的Token信息丢失问题
 - **事件缓冲区刷新**: FlushPendingEvent机制确保完整Token解析
 - **前端架构升级**: React Layout架构迁移，完善UI和交互体验
@@ -225,6 +227,12 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-09-24**: Major v3.4.1 Cloudflare错误码支持
+- Cloudflare 5xx错误码支持：将Cloudflare专有的520-525错误码归类为服务器错误
+- 智能重试策略：Cloudflare错误享受与502相同的重试策略和组故障转移
+- 错误处理增强：在组故障情况下可触发请求挂起等待组切换
+- 修改internal/proxy/error_recovery.go错误分类逻辑
 
 **2025-09-23**: Major v3.4.0 流式Token修复与前端升级
 - 流式Token丢失修复：实现FlushPendingEvent机制解决SSE终止空行缺失问题
