@@ -59,7 +59,7 @@ const RequestsPage = () => {
         avgDuration: '-',
         totalCost: '$0.00',
         totalTokens: '0',
-        suspendedRequests: 0
+        failedRequests: 0
     });
     const [statsLoading, setStatsLoading] = useState(false);
     const [hasStatsLoaded, setHasStatsLoaded] = useState(false);
@@ -123,7 +123,7 @@ const RequestsPage = () => {
                 avgDuration: formatDuration(data.avg_duration_ms),
                 totalCost: formatCost(data.total_cost_usd),
                 totalTokens: formatTokens(data.total_tokens),
-                suspendedRequests: data.suspended_requests || 0  // 修正字段名
+                failedRequests: data.failed_requests || 0  // 修正字段名
             });
 
             // 标记已加载过统计数据

@@ -42,11 +42,11 @@ const StatsOverview = ({ stats, isLoading, isRefreshing = false }) => {
             className: 'primary'
         },
         {
-            id: 'suspended-requests',
-            icon: '⏸️',
-            value: stats?.suspendedRequests || 0,
-            label: '挂起请求数',
-            className: 'warning'
+            id: 'failed-requests',
+            icon: '❌',
+            value: stats?.failedRequests || 0,
+            label: '失败请求数',
+            className: 'error'
         }
     ];
 

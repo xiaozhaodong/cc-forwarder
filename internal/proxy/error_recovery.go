@@ -110,9 +110,12 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 	}
 
 	// 限流错误分类 - 高优先级，必须在服务器错误和HTTP通用检查之前
+	// 现在包含400错误码，因为400有时表示请求频率过高或临时的请求格式问题
 	if strings.Contains(errStr, "rate") || strings.Contains(errStr, "429") ||
 		strings.Contains(errStr, "quota") || strings.Contains(errStr, "limit") ||
 		strings.Contains(errStr, "endpoint returned error: 429") ||
+		strings.Contains(errStr, "endpoint returned error: 400") ||
+		strings.Contains(errStr, "400") ||
 		strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "rate_limit") ||
 		strings.Contains(errStr, "throttle") || strings.Contains(errStr, "quota exceeded") {
 		errorCtx.ErrorType = ErrorTypeRateLimit
@@ -147,11 +150,12 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		return errorCtx
 	}
 
-	// HTTP错误分类（非5xx，非429）- 现在在限流和服务器错误检查之后，避免过早捕获特殊错误
+	// HTTP错误分类（非5xx，非429，非400）- 现在在限流和服务器错误检查之后，避免过早捕获特殊错误
 	if (strings.Contains(errStr, "http") || strings.Contains(errStr, "status") ||
 		strings.Contains(errStr, "endpoint returned error")) &&
 		!strings.Contains(errStr, "endpoint returned error: 5") && // 排除5xx
-		!strings.Contains(errStr, "429") && !strings.Contains(errStr, "rate") { // 排除429/限流
+		!strings.Contains(errStr, "429") && !strings.Contains(errStr, "rate") && // 排除429/限流
+		!strings.Contains(errStr, "400") && !strings.Contains(errStr, "endpoint returned error: 400") { // 排除400
 		errorCtx.ErrorType = ErrorTypeHTTP
 		// 非5xx HTTP错误通常不可重试
 		slog.Error(fmt.Sprintf("🔗 [HTTP错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",

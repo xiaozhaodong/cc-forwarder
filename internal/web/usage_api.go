@@ -90,7 +90,7 @@ type UsageStatsResponse struct {
 	AvgDuration    float64           `json:"avg_duration_ms"`
 	TotalCost      float64           `json:"total_cost_usd"`
 	TotalTokens    int64             `json:"total_tokens"`
-	SuspendedCount int               `json:"suspended_requests"`
+	FailedCount    int               `json:"failed_requests"`
 	
 	TopModels     []ModelStats      `json:"top_models"`
 	TopEndpoints  []EndpointStats   `json:"top_endpoints"`
@@ -436,8 +436,9 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 		switch req.Status {
 		case "completed", "processing":
 			successRequests++
-		case "error", "timeout":
+		case "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error":
 			errorRequests++
+		// "timeout" 和 "cancelled" 不算作失败，是独立状态
 		}
 		
 		// Sum tokens and cost
@@ -576,8 +577,8 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Calculate suspended requests count (for the whole period, not filtered by endpoint)
-	suspendedCount := 0 // Suspended requests don't need filtering as they haven't been processed yet
+	// Calculate failed requests count from errorRequests variable
+	failedCount := errorRequests // Use actual failed requests count
 
 	response := UsageStatsResponse{
 		Period:         period,
@@ -586,7 +587,7 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 		AvgDuration:    avgDuration,
 		TotalCost:      totalCost,
 		TotalTokens:    totalTokens,
-		SuspendedCount: suspendedCount,
+		FailedCount:    failedCount,
 		TopModels:      topModels,
 		TopEndpoints:   topEndpoints,
 		DailyStats:     dailyStatsList,

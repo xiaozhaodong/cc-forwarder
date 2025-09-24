@@ -45,7 +45,8 @@ func TestErrorRecoveryManager_ClassifyError(t *testing.T) {
 		{errors.New("i/o timeout"), ErrorTypeTimeout, "i/o timeout", true},
 		{errors.New("context deadline exceeded"), ErrorTypeTimeout, "deadline exceeded", true},
 		{errors.New("HTTP 500 Internal Server Error"), ErrorTypeServerError, "HTTP 5xx error", true},
-		{errors.New("HTTP 404 Not Found"), ErrorTypeHTTP, "HTTP 4xx error", false},
+		{errors.New("HTTP 400 Bad Request"), ErrorTypeRateLimit, "HTTP 400 error (now rate limit)", true},
+		{errors.New("HTTP 404 Not Found"), ErrorTypeHTTP, "HTTP 4xx error (non-400)", false},
 		{errors.New("unauthorized access"), ErrorTypeAuth, "auth error", false},
 		{errors.New("rate limit exceeded"), ErrorTypeRateLimit, "rate limit", true},
 		{errors.New("stream parsing error"), ErrorTypeStream, "stream error", true},
@@ -72,8 +73,11 @@ func TestErrorRecoveryManager_ClassifyError(t *testing.T) {
 		}
 
 		shouldRetry := erm.ShouldRetry(errorCtx)
-		if tc.description == "HTTP 4xx error" && shouldRetry {
-			t.Errorf("HTTP 4xx errors should not be retryable")
+		if tc.description == "HTTP 4xx error (non-400)" && shouldRetry {
+			t.Errorf("HTTP 4xx errors (non-400) should not be retryable")
+		}
+		if tc.description == "HTTP 400 error (now rate limit)" && !shouldRetry {
+			t.Errorf("HTTP 400 errors should now be retryable as rate limit")
 		}
 		if tc.description == "auth error" && shouldRetry {
 			t.Errorf("Auth errors should not be retryable")
