@@ -4,14 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v3.4.1 (2025-09-23)
-**Major Update**: Cloudflare 5xx错误码支持与流式Token修复
+**Current Version**: v3.4.2 (2025-09-24)
+**Major Update**: 400错误码重试支持与失败请求统计优化
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v3.4.1**:
+**Key Features v3.4.2**:
+- **400错误码重试支持**: 将400错误码归类为限流错误，享受与429相同的重试策略
+- **失败请求统计优化**: StatsOverview替换挂起请求数为实际失败请求统计
+- **前后端数据一致性**: 统一字段命名和数据源，基于数据库查询的实时统计
+- **错误分类优化**: 完善错误处理优先级，避免误分类问题
 - **Cloudflare 5xx错误码支持**: 将Cloudflare专有的5xx错误码(520-525)归类为服务器错误
 - **智能重试策略**: Cloudflare错误享受与502相同的重试策略和组故障转移
 - **流式Token丢失修复**: 解决SSE终止空行缺失导致的Token信息丢失问题
@@ -227,6 +231,13 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-09-24**: Major v3.4.2 400错误码重试与统计优化
+- 400错误码重试支持：将400错误码归类为限流错误，享受与429相同的重试策略
+- 失败请求统计优化：StatsOverview替换挂起请求数为基于数据库的实际失败请求统计
+- UI改进：图标⏸️ → ❌，样式warning → error，与前端徽章设计保持一致
+- 错误分类优化：完善错误处理优先级，避免400错误被误归类为一般HTTP错误
+- 前后端数据一致性：统一字段命名suspended_requests → failed_requests
 
 **2025-09-24**: Major v3.4.1 Cloudflare错误码支持
 - Cloudflare 5xx错误码支持：将Cloudflare专有的520-525错误码归类为服务器错误

@@ -5,6 +5,28 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.4.2] - 2025-09-24
+
+### 🔧 错误处理策略优化 (Error Handling Strategy Enhancement)
+- **400错误码重试支持**: 将400错误码从HTTP错误重新归类为限流错误
+  - 400错误码现在享受与429相同的重试策略（1分钟延迟，最多3次重试）
+  - 支持指数退避延迟和组故障转移
+  - 修改 `internal/proxy/error_recovery.go` 错误分类逻辑和优先级
+  - 更新测试用例验证400错误码重试行为
+
+### 📊 统计指标优化 (Statistics Enhancement)
+- **请求追踪页面统计改进**: StatsOverview组件优化
+  - 替换"挂起请求数"为"失败请求数"，显示更有价值的实时统计
+  - 数据源从硬编码0改为基于数据库的真实失败请求统计
+  - UI更新：图标⏸️ → ❌，样式warning → error，文案优化
+  - 失败请求统计包含：error, auth_error, rate_limited, server_error, network_error, stream_error
+  - 排除独立状态：timeout(超时), cancelled(用户取消)，与前端徽章设计保持一致
+
+### 🛠️ 技术改进 (Technical Improvements)
+- **前后端数据一致性**: 统一字段命名 suspended_requests → failed_requests
+- **错误分类优先级**: 完善错误分类逻辑，避免400错误被误归类为一般HTTP错误
+- **数据准确性**: 基于数据库查询的实时统计替代固定值显示
+
 ## [3.4.1] - 2025-09-23
 
 ### 🔧 错误处理增强 (Error Handling Enhancement)
