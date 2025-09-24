@@ -11,6 +11,7 @@ import (
 
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
+	"cc-forwarder/internal/utils"
 )
 
 // RequestLifecycleManager 定义生命周期管理器接口
@@ -141,6 +142,9 @@ func (a *TokenAnalyzer) ParseSSETokens(ctx context.Context, responseBody, endpoi
 	
 	if !foundTokenUsage {
 		slog.InfoContext(ctx, fmt.Sprintf("🚫 [SSE解析] [%s] 端点: %s - 未找到token usage信息", connID, endpointName))
+
+		// 🔍 [调试] 异步保存响应数据用于调试Token解析失败问题
+		utils.WriteTokenDebugResponse(connID, endpointName, responseBody)
 	}
 }
 
@@ -349,6 +353,10 @@ func (a *TokenAnalyzer) parseSSEForTokens(responseStr, connID, endpointName stri
 	}
 	
 	slog.Info(fmt.Sprintf("🚫 [SSE解析] [%s] 端点: %s - 未找到token usage信息", connID, endpointName))
+
+	// 🔍 [调试] 异步保存响应数据用于调试Token解析失败问题
+	utils.WriteTokenDebugResponse(connID, endpointName, responseStr)
+
 	return nil, "no_token_sse"
 }
 
@@ -393,5 +401,9 @@ func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName str
 	}
 	
 	slog.Debug(fmt.Sprintf("🚫 [JSON解析] [%s] JSON中未找到token usage信息", connID))
+
+	// 🔍 [调试] 异步保存响应数据用于调试Token解析失败问题
+	utils.WriteTokenDebugResponse(connID, endpointName, responseStr)
+
 	return nil, modelName
 }

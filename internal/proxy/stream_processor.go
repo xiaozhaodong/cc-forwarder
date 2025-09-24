@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/tracking"
+	"cc-forwarder/internal/utils"
 )
 
 // 缓冲区大小常量
@@ -19,6 +20,7 @@ const (
 	StreamBufferSize     = 8192 // 8KB主缓冲区
 	LineBufferInitSize   = 1024 // 1KB行缓冲区初始大小
 	BackgroundBufferSize = 4096 // 4KB后台解析缓冲区
+	DebugLineLimit       = 100  // 调试模式下最多保存100行SSE数据
 )
 
 // StreamProcessor 流式处理器核心结构体
@@ -53,6 +55,9 @@ type StreamProcessor struct {
 
 	// 完成状态跟踪
 	completionRecorded bool // 是否已经记录完成状态，防止重复记录
+
+	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
+	debugLines []string // SSE行数据收集，最多保存DebugLineLimit行
 }
 
 // NewStreamProcessor 创建新的流式处理器实例
@@ -71,6 +76,7 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 		lineBuffer:     make([]byte, 0, LineBufferInitSize),
 		partialData:    make([]byte, 0, BackgroundBufferSize),
 		maxParseErrors: 10, // 最多允许10个解析错误
+		debugLines:     make([]string, 0, DebugLineLimit), // 🔍 [调试] 初始化调试缓冲区
 	}
 }
 
@@ -194,6 +200,11 @@ func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
 // processSSELine 处理单个SSE行
 // 修改版本：仅进行 Token 解析，不再直接记录到 usageTracker
 func (sp *StreamProcessor) processSSELine(line string) {
+	// 🔍 [调试数据收集] 轻量级收集SSE行数据（无性能影响）
+	if len(sp.debugLines) < DebugLineLimit {
+		sp.debugLines = append(sp.debugLines, line)
+	}
+
 	// ✅ 使用V2架构进行解析
 	result := sp.tokenParser.ParseSSELineV2(line)
 
@@ -612,11 +623,19 @@ func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 		} else {
 			// 有finalUsage结构但无实际token，返回nil
 			slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应包含空Token信息", sp.requestID))
+
+			// 🔍 [调试] 异步保存流式调试数据用于分析Token解析失败
+			utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+
 			return nil
 		}
 	} else {
 		// 没有token信息，返回nil
 		slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应不包含token信息", sp.requestID))
+
+		// 🔍 [调试] 异步保存流式调试数据用于分析Token解析失败
+		utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+
 		return nil
 	}
 }
