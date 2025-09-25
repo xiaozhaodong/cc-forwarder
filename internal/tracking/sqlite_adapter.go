@@ -177,12 +177,17 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 	// 构建INSERT部分
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, columnsStr, valuesStr)
 
-	// 构建ON CONFLICT DO UPDATE部分
+	// 构建ON CONFLICT DO UPDATE部分，对start_time字段进行特殊处理
 	// 对于request_logs表，主键冲突时更新提供的字段（除了request_id主键）
 	var updatePairs []string
 	for _, col := range columns {
 		if col != "request_id" { // 跳过主键字段
-			updatePairs = append(updatePairs, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
+			if col == "start_time" {
+				// 对start_time使用COALESCE，只在原值为NULL时才更新
+				updatePairs = append(updatePairs, fmt.Sprintf("%s = COALESCE(request_logs.%s, EXCLUDED.%s)", col, col, col))
+			} else {
+				updatePairs = append(updatePairs, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
+			}
 		}
 	}
 

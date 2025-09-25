@@ -200,11 +200,16 @@ func (m *MySQLAdapter) BuildInsertOrReplaceQuery(table string, columns []string,
 	columnsStr := strings.Join(columns, ", ")
 	valuesStr := strings.Join(values, ", ")
 
-	// 构建更新部分
+	// 构建更新部分，对start_time字段进行特殊处理
 	var updateParts []string
 	for _, col := range columns {
 		if col != "id" && col != "request_id" { // 跳过主键和唯一键
-			updateParts = append(updateParts, fmt.Sprintf("%s = VALUES(%s)", col, col))
+			if col == "start_time" {
+				// 对start_time使用COALESCE，只在原值为NULL时才更新
+				updateParts = append(updateParts, fmt.Sprintf("%s = COALESCE(%s, VALUES(%s))", col, col, col))
+			} else {
+				updateParts = append(updateParts, fmt.Sprintf("%s = VALUES(%s)", col, col))
+			}
 		}
 	}
 

@@ -348,9 +348,9 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 	}
 
 	// 使用适配器构建INSERT OR REPLACE查询
-	// 注意：移除start_time，避免更新事件覆盖原始开始时间
-	columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	// 重新加入start_time，但在UPSERT时保护已有值不被覆盖
+	columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	args := []interface{}{
@@ -360,7 +360,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		data.Status,
 		data.RetryCount,
 		data.HTTPStatus,
-		// 移除 event.Timestamp，不再覆盖start_time
+		event.Timestamp, // 提供start_time值用于插入新记录
 	}
 
 	return query, args, nil
