@@ -8,12 +8,14 @@ import (
 
 func TestTrackerLifecycle(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     50,
-		BatchSize:      5,
-		FlushInterval:  100 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      50,
+		BatchSize:       5,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour, // 添加清理间隔
+		RetentionDays:   30,             // 添加保留天数
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -51,12 +53,14 @@ func TestTrackerLifecycle(t *testing.T) {
 
 func TestAsyncEventProcessing(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     50,
-		BatchSize:      3,
-		FlushInterval:  200 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      50,
+		BatchSize:       3,
+		FlushInterval:   200 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"test-model": {
 				Input:  1.00,
@@ -110,12 +114,14 @@ func TestAsyncEventProcessing(t *testing.T) {
 
 func TestBatchProcessing(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      5,
-		FlushInterval:  10 * time.Second, // Long interval to test batch size trigger
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       5,
+		FlushInterval:   10 * time.Second, // Long interval to test batch size trigger
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -148,12 +154,14 @@ func TestBatchProcessing(t *testing.T) {
 
 func TestForceFlush(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  1 * time.Hour, // Very long interval
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   1 * time.Hour, // Very long interval
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -199,12 +207,14 @@ func TestForceFlush(t *testing.T) {
 
 func TestEventChannelOverflow(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     5, // Very small buffer
-		BatchSize:      10,
-		FlushInterval:  1 * time.Hour, // Long interval to prevent automatic flushing
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      5, // Very small buffer
+		BatchSize:       10,
+		FlushInterval:   1 * time.Hour, // Long interval to prevent automatic flushing
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -233,12 +243,14 @@ func TestEventChannelOverflow(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  100 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"concurrent-model": {
 				Input:  1.00,
@@ -299,12 +311,14 @@ func TestConcurrentAccess(t *testing.T) {
 
 func TestPricingUpdate(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      5,    // Small batch size to trigger processing
-		FlushInterval:  100 * time.Millisecond, // Fast flush
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       5,    // Small batch size to trigger processing
+		FlushInterval:   100 * time.Millisecond, // Fast flush
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"old-model": {
 				Input:  1.00,

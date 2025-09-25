@@ -5,20 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
 // initDatabase 初始化数据库
 func (ut *UsageTracker) initDatabase() error {
-	// 读取并执行 schema SQL
-	schemaSQL, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
-		return fmt.Errorf("failed to read schema.sql: %w", err)
-	}
-
-	// 执行 schema
-	if _, err := ut.db.Exec(string(schemaSQL)); err != nil {
-		return fmt.Errorf("failed to execute schema: %w", err)
+	// 使用适配器初始化数据库schema
+	if err := ut.adapter.InitSchema(); err != nil {
+		return fmt.Errorf("failed to initialize database schema: %w", err)
 	}
 
 	slog.Debug("Database schema initialized successfully")
@@ -210,7 +205,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		
 		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
 		
-		query := `UPDATE request_logs SET
+		query := fmt.Sprintf(`UPDATE request_logs SET
 			end_time = ?,
 			duration_ms = ?,
 			model_name = ?,
@@ -224,8 +219,8 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
-			updated_at = datetime('now', 'localtime')
-		WHERE request_id = ?`
+			updated_at = %s
+		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 		
 		args := []interface{}{
 			event.Timestamp,
@@ -263,7 +258,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 
 		// 只更新Token相关字段和成本，不更新状态
 		// 重要：只更新失败状态的请求，确保不会影响已完成的请求
-		query := `UPDATE request_logs SET
+		query := fmt.Sprintf(`UPDATE request_logs SET
 			model_name = COALESCE(?, model_name),
 			input_tokens = ?,
 			output_tokens = ?,
@@ -275,9 +270,9 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			duration_ms = COALESCE(?, duration_ms),
-			updated_at = datetime('now', 'localtime')
+			updated_at = %s
 		WHERE request_id = ?
-		AND status IN ('error', 'timeout', 'suspended', 'cancelled', 'network_error', 'auth_error', 'rate_limited', 'stream_error')`
+		AND status IN ('error', 'timeout', 'suspended', 'cancelled', 'network_error', 'auth_error', 'rate_limited', 'stream_error')`, ut.adapter.BuildDateTimeNow())
 
 		args := []interface{}{
 			data.ModelName,
@@ -307,17 +302,11 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		return "", nil, fmt.Errorf("invalid start event data type")
 	}
 
-	query := `INSERT INTO request_logs (
-		request_id, client_ip, user_agent, method, path, start_time, status, is_streaming
-	) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-	ON CONFLICT(request_id) DO UPDATE SET
-		client_ip = excluded.client_ip,
-		user_agent = excluded.user_agent,
-		method = excluded.method,
-		path = excluded.path,
-		start_time = excluded.start_time,
-		is_streaming = excluded.is_streaming,
-		updated_at = datetime('now', 'localtime')`
+	// 使用适配器构建INSERT OR REPLACE查询
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", ut.adapter.BuildDateTimeNow()}
+
+	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	args := []interface{}{
 		event.RequestID,
@@ -332,7 +321,7 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 	return query, args, nil
 }
 
-// buildUpdateQuery 构建更新事件查询  
+// buildUpdateQuery 构建更新事件查询
 func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interface{}, error) {
 	data, ok := event.Data.(RequestUpdateData)
 	if !ok {
@@ -341,12 +330,12 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 
 	// 如果端点名和组名都为空，只更新状态相关字段
 	if data.EndpointName == "" && data.GroupName == "" {
-		query := `UPDATE request_logs SET
+		query := fmt.Sprintf(`UPDATE request_logs SET
 			status = ?,
 			retry_count = ?,
 			http_status_code = ?,
-			updated_at = datetime('now', 'localtime')
-		WHERE request_id = ?`
+			updated_at = %s
+		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 		args := []interface{}{
 			data.Status,
@@ -358,18 +347,11 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		return query, args, nil
 	}
 
-	// 正常更新所有字段
-	query := `INSERT INTO request_logs (
-		request_id, endpoint_name, group_name, status, retry_count, 
-		http_status_code, start_time
-	) VALUES (?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(request_id) DO UPDATE SET
-		endpoint_name = excluded.endpoint_name,
-		group_name = excluded.group_name,
-		status = excluded.status,
-		retry_count = excluded.retry_count,
-		http_status_code = excluded.http_status_code,
-		updated_at = datetime('now', 'localtime')`
+	// 使用适配器构建INSERT OR REPLACE查询
+	// 注意：移除start_time，避免更新事件覆盖原始开始时间
+	columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	args := []interface{}{
 		event.RequestID,
@@ -378,7 +360,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		data.Status,
 		data.RetryCount,
 		data.HTTPStatus,
-		event.Timestamp,
+		// 移除 event.Timestamp，不再覆盖start_time
 	}
 
 	return query, args, nil
@@ -392,15 +374,15 @@ func (ut *UsageTracker) buildUpdateWithModelQuery(event RequestEvent) (string, [
 	}
 
 	// 同时更新状态和模型信息
-	query := `UPDATE request_logs SET
+	query := fmt.Sprintf(`UPDATE request_logs SET
 		endpoint_name = ?,
 		group_name = ?,
 		status = ?,
 		retry_count = ?,
 		http_status_code = ?,
 		model_name = ?, -- 关键：同时更新模型信息
-		updated_at = datetime('now', 'localtime')
-	WHERE request_id = ?`
+		updated_at = %s
+	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 	args := []interface{}{
 		data.EndpointName,
@@ -452,7 +434,7 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
 
 	// 使用计算出的准确持续时间
-	query := `UPDATE request_logs SET
+	query := fmt.Sprintf(`UPDATE request_logs SET
 		end_time = ?,
 		duration_ms = ?,
 		model_name = ?,
@@ -466,8 +448,8 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
 		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
-		updated_at = datetime('now', 'localtime')
-	WHERE request_id = ?`
+		updated_at = %s
+	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 	args := []interface{}{
 		event.Timestamp,
@@ -495,27 +477,20 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 		return fmt.Errorf("invalid start event data type")
 	}
 
-	query := `INSERT INTO request_logs (
-		request_id, client_ip, user_agent, method, path, start_time, status, is_streaming
-	) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-	ON CONFLICT(request_id) DO UPDATE SET
-		client_ip = excluded.client_ip,
-		user_agent = excluded.user_agent,
-		method = excluded.method,
-		path = excluded.path,
-		start_time = excluded.start_time,
-		is_streaming = excluded.is_streaming,
-		updated_at = datetime('now', 'localtime')`
+	// 使用适配器构建INSERT OR REPLACE查询
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", ut.adapter.BuildDateTimeNow()}
+	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
-	_, err := tx.ExecContext(ctx, query, 
-		event.RequestID, 
-		data.ClientIP, 
-		data.UserAgent, 
-		data.Method, 
-		data.Path, 
+	_, err := tx.ExecContext(ctx, query,
+		event.RequestID,
+		data.ClientIP,
+		data.UserAgent,
+		data.Method,
+		data.Path,
 		event.Timestamp,
 		data.IsStreaming)
-	
+
 	return err
 }
 
@@ -528,12 +503,12 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 
 	// 如果端点名和组名都为空，只更新状态相关字段
 	if data.EndpointName == "" && data.GroupName == "" {
-		query := `UPDATE request_logs SET
+		query := fmt.Sprintf(`UPDATE request_logs SET
 			status = ?,
 			retry_count = ?,
 			http_status_code = ?,
-			updated_at = datetime('now', 'localtime')
-		WHERE request_id = ?`
+			updated_at = %s
+		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 		result, err := tx.ExecContext(ctx, query,
 			data.Status,
@@ -571,14 +546,14 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 	}
 
 	// 正常更新所有字段
-	query := `UPDATE request_logs SET
+	query := fmt.Sprintf(`UPDATE request_logs SET
 		endpoint_name = ?,
 		group_name = ?,
 		status = ?,
 		retry_count = ?,
 		http_status_code = ?,
-		updated_at = datetime('now', 'localtime')
-	WHERE request_id = ?`
+		updated_at = %s
+	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 	result, err := tx.ExecContext(ctx, query,
 		data.EndpointName,
@@ -599,19 +574,11 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 	}
 	
 	if rowsAffected == 0 {
-		// 记录不存在，先创建一个基本记录
-		insertQuery := `INSERT INTO request_logs (
-			request_id, endpoint_name, group_name, status, retry_count, 
-			http_status_code, start_time
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(request_id) DO UPDATE SET
-			endpoint_name = excluded.endpoint_name,
-			group_name = excluded.group_name,
-			status = excluded.status,
-			retry_count = excluded.retry_count,
-			http_status_code = excluded.http_status_code,
-			updated_at = datetime('now', 'localtime')`
-		
+		// 记录不存在，使用适配器构建INSERT OR REPLACE查询
+		columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
+		placeholders := []string{"?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+		insertQuery := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
+
 		_, err = tx.ExecContext(ctx, insertQuery,
 			event.RequestID,
 			data.EndpointName,
@@ -661,7 +628,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 	
 	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
 
-	query := `UPDATE request_logs SET
+	query := fmt.Sprintf(`UPDATE request_logs SET
 		end_time = ?,
 		duration_ms = ?,
 		model_name = ?,
@@ -675,8 +642,8 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
 		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
-		updated_at = datetime('now', 'localtime')
-	WHERE request_id = ?`
+		updated_at = %s
+	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 	result, err := tx.ExecContext(ctx, query,
 		event.Timestamp,
@@ -817,23 +784,25 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 		return ut.ctx.Err()
 	}
 	
-	// 运行VACUUM以回收空间（通过写队列）
-	vacuumWriteReq := WriteRequest{
-		Query:     "VACUUM",
-		Args:      []interface{}{},
-		Response:  make(chan error, 1),
-		Context:   context.Background(),
-		EventType: "vacuum",
-	}
-	
-	select {
-	case ut.writeQueue <- vacuumWriteReq:
-		err := <-vacuumWriteReq.Response
-		if err != nil {
-			slog.Warn("Failed to vacuum database after cleanup", "error", err)
+	// 运行VACUUM以回收空间（通过写队列，仅对SQLite有效）
+	if ut.adapter.GetDatabaseType() == "sqlite" {
+		vacuumWriteReq := WriteRequest{
+			Query:     "VACUUM",
+			Args:      []interface{}{},
+			Response:  make(chan error, 1),
+			Context:   context.Background(),
+			EventType: "vacuum",
 		}
-	case <-ut.ctx.Done():
-		return ut.ctx.Err()
+
+		select {
+		case ut.writeQueue <- vacuumWriteReq:
+			err := <-vacuumWriteReq.Response
+			if err != nil {
+				slog.Warn("Failed to vacuum database after cleanup", "error", err)
+			}
+		case <-ut.ctx.Done():
+			return ut.ctx.Err()
+		}
 	}
 
 	// 记录清理结果
@@ -847,16 +816,21 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 	return nil
 }
 
-// vacuumDatabase 运行VACUUM命令回收数据库空间
+// vacuumDatabase 运行VACUUM命令回收数据库空间（仅SQLite需要）
 func (ut *UsageTracker) vacuumDatabase(ctx context.Context) error {
+	if ut.adapter.GetDatabaseType() != "sqlite" {
+		slog.Debug("Skipping VACUUM - not a SQLite database")
+		return nil
+	}
+
 	slog.Debug("Running database VACUUM to reclaim space...")
-	
+
 	// VACUUM不能在事务中运行
 	_, err := ut.db.ExecContext(ctx, "VACUUM")
 	if err != nil {
 		return fmt.Errorf("failed to vacuum database: %w", err)
 	}
-	
+
 	slog.Debug("Database VACUUM completed successfully")
 	return nil
 }
@@ -866,17 +840,27 @@ func (ut *UsageTracker) updateUsageSummary() {
 	// 获取需要更新汇总的日期范围（最近7天）
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -7)
-	
-	query := `
-	INSERT OR REPLACE INTO usage_summary (
-		date, model_name, endpoint_name, group_name,
-		request_count, success_count, error_count,
-		total_input_tokens, total_output_tokens,
-		total_cache_creation_tokens, total_cache_read_tokens,
-		total_cost_usd, avg_duration_ms,
-		created_at, updated_at
-	)
-	SELECT 
+
+	// 使用适配器构建INSERT OR REPLACE查询
+	columns := []string{
+		"date", "model_name", "endpoint_name", "group_name",
+		"request_count", "success_count", "error_count",
+		"total_input_tokens", "total_output_tokens",
+		"total_cache_creation_tokens", "total_cache_read_tokens",
+		"total_cost_usd", "avg_duration_ms",
+		"created_at", "updated_at",
+	}
+
+	placeholders := make([]string, len(columns))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+
+	baseQuery := ut.adapter.BuildInsertOrReplaceQuery("usage_summary", columns, placeholders)
+
+	// 构建SELECT子查询
+	selectQuery := fmt.Sprintf(`
+	SELECT
 		DATE(start_time) as date,
 		COALESCE(model_name, '') as model_name,
 		COALESCE(endpoint_name, '') as endpoint_name,
@@ -890,14 +874,17 @@ func (ut *UsageTracker) updateUsageSummary() {
 		SUM(cache_read_tokens) as total_cache_read_tokens,
 		SUM(total_cost_usd) as total_cost_usd,
 		AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
-		datetime('now', 'localtime') as created_at,
-		datetime('now', 'localtime') as updated_at
+		%s as created_at,
+		%s as updated_at
 	FROM request_logs
 	WHERE start_time >= ? AND start_time < ?
 		AND (model_name IS NOT NULL OR endpoint_name IS NOT NULL)
 	GROUP BY DATE(start_time), model_name, endpoint_name, group_name
-	`
-	
+	`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
+
+	// 拼接完整查询
+	query := strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)
+
 	summaryWriteReq := WriteRequest{
 		Query:     query,
 		Args:      []interface{}{startDate, endDate.AddDate(0, 0, 1)},
@@ -905,7 +892,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 		Context:   context.Background(),
 		EventType: "update_summary",
 	}
-	
+
 	select {
 	case ut.writeQueue <- summaryWriteReq:
 		err := <-summaryWriteReq.Response
@@ -958,13 +945,19 @@ func (ut *UsageTracker) getDatabaseStatsInternal(ctx context.Context) (*Database
 	}
 	
 	// 获取数据库文件大小（SQLite特有，使用读连接）
-	var pageCount, pageSize int64
-	err = ut.readDB.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount)
-	if err == nil {
-		err = ut.readDB.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize)
+	if ut.adapter.GetDatabaseType() == "sqlite" {
+		var pageCount, pageSize int64
+		err = ut.readDB.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount)
 		if err == nil {
-			stats.DatabaseSize = pageCount * pageSize
+			err = ut.readDB.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize)
+			if err == nil {
+				stats.DatabaseSize = pageCount * pageSize
+			}
 		}
+	} else {
+		// MySQL数据库大小查询（可选）
+		// 这里可以添加查询information_schema来获取表大小的逻辑
+		stats.DatabaseSize = 0
 	}
 	
 	// 获取总成本（使用读连接）

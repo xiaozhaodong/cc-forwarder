@@ -66,10 +66,13 @@ export const formatDuration = (duration) => {
 export const formatTimestamp = (timestamp) => {
     if (!timestamp) return 'N/A';
 
+    // 后端返回RFC3339格式：2025-09-25T10:07:54.994712+08:00
+    // 直接使用浏览器的Date解析，它会正确处理时区信息
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) return 'Invalid Date';
 
-    // 直接显示绝对时间格式：2025/9/20 23:12:43
+    // 显示本地时间格式：2025/9/25 10:07:54
+    // 使用toLocaleString确保显示用户本地时区的时间
     const year = date.getFullYear();
     const month = date.getMonth() + 1;  // 不补零，按原版格式
     const day = date.getDate();         // 不补零，按原版格式

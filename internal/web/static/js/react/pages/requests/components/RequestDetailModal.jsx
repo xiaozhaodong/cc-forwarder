@@ -64,11 +64,11 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
                             </div>
                             <div className="detail-item">
                                 <label>开始时间:</label>
-                                <span className="detail-value">{formatTimestamp(request.timestamp)}</span>
+                                <span className="detail-value">{formatTimestamp(request.start_time || request.startTime || request.timestamp)}</span>
                             </div>
                             <div className="detail-item">
-                                <label>更新时间:</label>
-                                <span className="detail-value">{formatTimestamp(request.updated_at || request.updatedAt)}</span>
+                                <label>结束时间:</label>
+                                <span className="detail-value">{formatTimestamp(request.end_time || request.endTime)}</span>
                             </div>
                         </div>
                     </div>

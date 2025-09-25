@@ -13,14 +13,16 @@ func TestErrorHandler(t *testing.T) {
 	// Create a temporary directory for test databases
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	
+
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   dbPath,
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -75,12 +77,14 @@ func TestErrorHandlerDiskSpace(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "diskspace_test.db")
 	
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   dbPath,
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -106,12 +110,14 @@ func TestErrorHandlerCorruption(t *testing.T) {
 	
 	// Create a database first
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   dbPath,
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -147,12 +153,14 @@ func TestErrorHandlerCorruption(t *testing.T) {
 
 func TestRetryLogic(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -184,12 +192,14 @@ func TestRetryLogic(t *testing.T) {
 
 func TestGracefulShutdown(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      20, // Large batch size to keep events in buffer
-		FlushInterval:  1 * time.Hour, // Long interval
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       20, // Large batch size to keep events in buffer
+		FlushInterval:   1 * time.Hour, // Long interval
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -222,12 +232,14 @@ func TestDatabaseLocking(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "locking_test.db")
 	
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   dbPath,
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	// Create first tracker
@@ -269,12 +281,14 @@ func TestDatabaseLocking(t *testing.T) {
 
 func TestInvalidEventData(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -338,12 +352,14 @@ func TestInvalidEventData(t *testing.T) {
 
 func TestContextCancellation(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -378,12 +394,14 @@ func TestContextCancellation(t *testing.T) {
 
 func TestMemoryPressure(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     5, // Very small buffer
-		BatchSize:      3,
-		FlushInterval:  10 * time.Millisecond, // Fast flushing
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      5, // Very small buffer
+		BatchSize:       3,
+		FlushInterval:   10 * time.Millisecond, // Fast flushing
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)

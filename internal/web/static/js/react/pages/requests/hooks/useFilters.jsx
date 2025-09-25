@@ -147,33 +147,18 @@ export const useFilters = (initialFilters = {}) => {
     const applyFilters = useCallback(() => {
         const queryParams = {};
 
-        // 工具函数：将Date转换为本地时区的时间字符串（解决时区偏差问题）
-        const toLocalOffsetString = (value) => {
-            if (!value) return null;
-            const date = new Date(value); // 浏览器会按用户本地时区解析
-            if (Number.isNaN(date.getTime())) return null;
-
-            const pad = (num) => String(num).padStart(2, '0');
-            const year = date.getFullYear();
-            const month = pad(date.getMonth() + 1);
-            const day = pad(date.getDate());
-            const hours = pad(date.getHours());
-            const minutes = pad(date.getMinutes());
-            const seconds = pad(date.getSeconds());
-
-            const offsetMinutes = -date.getTimezoneOffset();    // 东八区得到 +480
-            const sign = offsetMinutes >= 0 ? '+' : '-';
-            const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
-            const offsetMins = pad(Math.abs(offsetMinutes) % 60);
-
-            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
-        };
-
-        // 处理时间筛选
-        const startLocal = toLocalOffsetString(filters.startDate);
-        const endLocal = toLocalOffsetString(filters.endDate);
-        if (startLocal) queryParams.start_date = startLocal;
-        if (endLocal) queryParams.end_date = endLocal;
+        // 处理时间筛选 - 修复时区转换bug
+        // 后端需要RFC3339格式：2025-09-25T11:06:00+08:00
+        if (filters.startDate) {
+            // 用户输入的datetime-local格式：2025-09-25T11:06
+            // 直接添加秒数和时区信息，不进行UTC转换
+            const timeStr = filters.startDate.includes(':') ? filters.startDate + ':00' : filters.startDate + ':00:00';
+            queryParams.start_date = timeStr + '+08:00';
+        }
+        if (filters.endDate) {
+            const timeStr = filters.endDate.includes(':') ? filters.endDate + ':00' : filters.endDate + ':00:00';
+            queryParams.end_date = timeStr + '+08:00';
+        }
 
         // 处理状态筛选
         if (filters.status && filters.status !== 'all') {

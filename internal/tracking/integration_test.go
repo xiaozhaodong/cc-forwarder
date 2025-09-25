@@ -123,12 +123,14 @@ func (m *MockWebServer) handleHealthCheck(w http.ResponseWriter, r *http.Request
 func TestWebIntegration(t *testing.T) {
 	// Create usage tracker
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -319,7 +321,9 @@ func TestWebIntegration(t *testing.T) {
 func TestWebIntegrationDisabled(t *testing.T) {
 	// Test web integration when usage tracking is disabled
 	config := &Config{
-		Enabled: false,
+		Enabled:         false,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -412,12 +416,14 @@ func TestWebIntegrationErrors(t *testing.T) {
 
 func TestConcurrentWebRequests(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"test-model": {
 				Input:  1.00,

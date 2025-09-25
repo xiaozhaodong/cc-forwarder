@@ -44,12 +44,14 @@ func TestConfig_Defaults(t *testing.T) {
 
 func TestConfig_Enabled(t *testing.T) {
 	config := &Config{
-		Enabled:      true,
-		DatabasePath: ":memory:",
-		BufferSize:   500,
-		BatchSize:    50,
-		FlushInterval: 10 * time.Second,
-		MaxRetry:     5,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      500,
+		BatchSize:       50,
+		FlushInterval:   10 * time.Second,
+		MaxRetry:        5,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -112,8 +114,10 @@ func TestConfig_Disabled(t *testing.T) {
 
 func TestModelPricing(t *testing.T) {
 	config := &Config{
-		Enabled:      true,
-		DatabasePath: ":memory:",
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -169,8 +173,10 @@ func TestModelPricing(t *testing.T) {
 
 func TestUpdatePricing(t *testing.T) {
 	config := &Config{
-		Enabled:      true,
-		DatabasePath: ":memory:",
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"old-model": {
 				Input:  1.00,

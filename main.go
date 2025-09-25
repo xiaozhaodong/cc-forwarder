@@ -163,6 +163,7 @@ func main() {
 	trackingConfig := &tracking.Config{
 		Enabled:         cfg.UsageTracking.Enabled,
 		DatabasePath:    cfg.UsageTracking.DatabasePath,
+		Database:        cfg.UsageTracking.Database, // 直接使用新配置
 		BufferSize:      cfg.UsageTracking.BufferSize,
 		BatchSize:       cfg.UsageTracking.BatchSize,
 		FlushInterval:   cfg.UsageTracking.FlushInterval,
@@ -173,7 +174,7 @@ func main() {
 		DefaultPricing:  convertModelPricingSingle(cfg.UsageTracking.DefaultPricing),
 	}
 
-	usageTracker, err := tracking.NewUsageTracker(trackingConfig)
+	usageTracker, err := tracking.NewUsageTracker(trackingConfig, cfg.Timezone)
 	if err != nil {
 		logger.Error(fmt.Sprintf("❌ 使用跟踪器初始化失败: %v", err))
 		os.Exit(1)

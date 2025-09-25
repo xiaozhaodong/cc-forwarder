@@ -1,6 +1,10 @@
 # Claude Request Forwarder Configuration
 # 完整配置示例，展示所有可用的配置选项
 
+# 全局时区配置 - 影响所有时间相关功能
+timezone: "Asia/Shanghai"      # 全局时区设置，默认: Asia/Shanghai
+                               # 其他有效值: "UTC", "America/New_York", "Europe/London" 等
+
 # 服务器配置
 server:
   host: "0.0.0.0"      # Docker环境中监听所有接口，默认: localhost
@@ -82,18 +86,64 @@ web:
 # 📊 使用情况追踪系统 (Usage Tracking)
 # =================================================================
 # 🪟 Windows兼容性保证: v1.0.2+ 完美支持Windows平台
-# 使用纯Go SQLite驱动，无需C编译器，无CGO依赖
-# 支持所有平台：Windows、Linux、macOS (Intel & Apple Silicon)
+# 🎯 数据库支持: SQLite (默认) 和 MySQL (v3.4.2+)
 # =================================================================
 usage_tracking:
   enabled: false                         # 是否启用使用跟踪，默认: false
-  database_path: "data/usage.db"         # SQLite数据库文件路径，默认: data/usage.db
-  
-  # 💡 数据库说明:
-  # - 使用纯Go SQLite驱动 (modernc.org/sqlite)，无CGO依赖
-  # - 自动创建数据库文件和表结构 (首次运行时)
-  # - 数据库文件可以直接复制用于备份和迁移
-  # - 支持WAL模式，提供更好的并发性能
+
+  # =================================================================
+  # 🗄️  数据库配置
+  # =================================================================
+  # 💡 时区配置级联: database.timezone > 全局timezone > Asia/Shanghai (默认)
+  database:
+    # =================================================================
+    # 📁 SQLite配置 (默认推荐，开箱即用)
+    # =================================================================
+    type: "sqlite"                        # 数据库类型: "sqlite" | "mysql"
+    path: "data/usage.db"                 # SQLite数据库文件路径
+
+    # 💡 SQLite说明:
+    # - 使用纯Go SQLite驱动 (modernc.org/sqlite)，无CGO依赖
+    # - 自动创建数据库文件和表结构 (首次运行时)
+    # - 数据库文件可以直接复制用于备份和迁移
+    # - 支持WAL模式，提供更好的并发性能
+    # - 适合单机部署和轻量级使用
+    # - 支持所有平台：Windows、Linux、macOS (Intel & Apple Silicon)
+
+    # =================================================================
+    # 🗄️  MySQL配置 (生产环境推荐)
+    # =================================================================
+    # 如果需要使用MySQL，请修改上面的配置为：
+    # type: "mysql"
+    # host: "127.0.0.1"                   # MySQL服务器地址
+    # port: 3306                          # MySQL端口，默认: 3306
+    # database: "cc_forwarder"            # 数据库名称
+    # username: "cc_user"                 # 数据库用户名
+    # password: "cc_pass"                 # 数据库密码
+    # charset: "utf8mb4"                  # 字符集，默认: utf8mb4 (支持emoji和中文)
+    # timezone: "Asia/Shanghai"           # 数据库时区设置，留空则继承全局时区配置
+    #
+    # # MySQL连接池配置 (可选)
+    # max_open_conns: 10                  # 最大打开连接数，默认: 10
+    # max_idle_conns: 5                   # 最大空闲连接数，默认: 5
+    # conn_max_lifetime: "1h"             # 连接最大生存时间，默认: 1h
+    # conn_max_idle_time: "10m"           # 连接最大空闲时间，默认: 10m
+
+    # 💡 MySQL优势:
+    # - 高性能和高并发处理能力
+    # - 完善的备份和恢复机制
+    # - 支持主从复制和集群部署
+    # - DBA友好：标准SQL查询，专业工具支持
+    # - 生产级数据持久化和一致性保障
+    # - 支持MySQL 5.7+ 和 8.0+，兼容MariaDB 10.3+
+    # - 自动时区同步，确保时间一致性
+
+    # 🚀 快速开始MySQL:
+    # 1. 启动MySQL服务: docker-compose -f docker-compose.mysql.yml up -d
+    # 2. 复制配置模板: cp config/mysql_example.yaml config/config.yaml
+    # 3. 启动应用: ./cc-forwarder -config config/config.yaml
+
+  # =================================================================
   
   # 异步写入配置 - 本地使用优化
   buffer_size: 300                      # 事件缓冲区大小，默认: 1000 (本地使用减小)

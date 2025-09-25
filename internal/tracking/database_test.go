@@ -8,12 +8,14 @@ import (
 
 func TestDatabaseOperations(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  1 * time.Second,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   1 * time.Second,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -128,8 +130,10 @@ func TestDatabaseOperations(t *testing.T) {
 
 func TestCostCalculation(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,   // $1 per 1M tokens
@@ -199,8 +203,10 @@ func TestCostCalculation(t *testing.T) {
 
 func TestDefaultPricing(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		DefaultPricing: ModelPricing{
 			Input:         2.00,
 			Output:        10.00,
@@ -248,9 +254,11 @@ func TestDefaultPricing(t *testing.T) {
 
 func TestHealthCheck(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -270,7 +278,9 @@ func TestHealthCheck(t *testing.T) {
 
 func TestHealthCheckDisabled(t *testing.T) {
 	config := &Config{
-		Enabled: false,
+		Enabled:         false,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)

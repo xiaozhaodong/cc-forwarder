@@ -1,0 +1,60 @@
+# MySQL支持配置示例
+# 展示全局时区配置和MySQL数据库的完整配置
+
+# 全局时区配置
+timezone: "Asia/Shanghai"  # 所有组件统一使用的时区
+
+usage_tracking:
+  enabled: true
+
+  # 数据库配置 - 新增功能
+  database:
+    # 数据库类型选择: "sqlite" | "mysql"
+    type: "mysql"
+
+    # SQLite配置（向后兼容，当type=sqlite时使用）
+    database_path: "data/usage.db"
+
+    # MySQL配置（当type=mysql时使用）
+    host: "localhost"
+    port: 3306
+    database: "cc_forwarder"
+    username: "cc_user"
+    password: "cc_pass"
+
+    # 连接池配置（MySQL专用）
+    max_open_conns: 10      # 最大打开连接数
+    max_idle_conns: 5       # 最大空闲连接数
+    conn_max_lifetime: "1h"  # 连接最大生命周期
+    conn_max_idle_time: "10m" # 连接最大空闲时间
+
+    # MySQL特定配置
+    charset: "utf8mb4"           # 字符集
+    # timezone: "Asia/Shanghai"  # 数据库时区设置，留空则继承全局时区配置
+                                 # 支持多种格式:
+                                 # - "Asia/Shanghai" (推荐，自动转换为+08:00)
+                                 # - "+08:00" (数字偏移格式)
+                                 # - "Local" (使用Go应用本地时区)
+                                 # - "UTC" (协调世界时)
+
+  # 其他配置保持不变
+  buffer_size: 1000
+  batch_size: 100
+  flush_interval: "30s"
+  max_retry: 3
+  retention_days: 90
+  cleanup_interval: "24h"
+
+  # 模型定价配置
+  model_pricing:
+    "claude-3-5-sonnet-20241022":
+      input: 3.00
+      output: 15.00
+      cache_creation: 3.75
+      cache_read: 0.30
+
+  default_pricing:
+    input: 3.00
+    output: 15.00
+    cache_creation: 3.75
+    cache_read: 0.30

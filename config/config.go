@@ -28,8 +28,9 @@ type Config struct {
 	TUI          TUIConfig        `yaml:"tui"`           // TUI configuration
 	Web          WebConfig        `yaml:"web"`           // Web interface configuration
 	GlobalTimeout time.Duration   `yaml:"global_timeout"` // Global timeout for non-streaming requests
+	Timezone     string           `yaml:"timezone"`      // Global timezone setting for all components
 	Endpoints    []EndpointConfig `yaml:"endpoints"`
-	
+
 	// Runtime priority override (not serialized to YAML)
 	PrimaryEndpoint string `yaml:"-"` // Primary endpoint name from command line
 }
@@ -98,7 +99,13 @@ type ModelPricing struct {
 
 type UsageTrackingConfig struct {
 	Enabled         bool                     `yaml:"enabled"`          // Enable usage tracking, default: false
+
+	// 向后兼容：保留原有的 database_path 配置
 	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/usage.db
+
+	// 新增：数据库配置（可选，优先级高于 database_path）
+	Database        *DatabaseBackendConfig   `yaml:"database,omitempty"` // Database configuration (optional)
+
 	BufferSize      int                      `yaml:"buffer_size"`      // Event buffer size, default: 1000
 	BatchSize       int                      `yaml:"batch_size"`       // Batch write size, default: 100
 	FlushInterval   time.Duration            `yaml:"flush_interval"`   // Force flush interval, default: 30s
@@ -107,6 +114,31 @@ type UsageTrackingConfig struct {
 	CleanupInterval time.Duration            `yaml:"cleanup_interval"` // Cleanup task execution interval, default: 24h
 	ModelPricing    map[string]ModelPricing  `yaml:"model_pricing"`    // Model pricing configuration
 	DefaultPricing  ModelPricing             `yaml:"default_pricing"`  // Default pricing for unknown models
+}
+
+// DatabaseBackendConfig 数据库后端配置
+type DatabaseBackendConfig struct {
+	Type string `yaml:"type"` // "sqlite" | "mysql"
+
+	// SQLite配置
+	Path string `yaml:"path,omitempty"` // SQLite文件路径
+
+	// MySQL配置
+	Host     string `yaml:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
+	Database string `yaml:"database,omitempty"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+
+	// 连接池配置
+	MaxOpenConns    int           `yaml:"max_open_conns,omitempty"`
+	MaxIdleConns    int           `yaml:"max_idle_conns,omitempty"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime,omitempty"`
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time,omitempty"`
+
+	// MySQL特定配置
+	Charset  string `yaml:"charset,omitempty"`
+	Timezone string `yaml:"timezone,omitempty"`
 }
 
 type ProxyConfig struct {
@@ -250,6 +282,11 @@ func (c *Config) setDefaults() {
 	// Set global timeout default
 	if c.GlobalTimeout == 0 {
 		c.GlobalTimeout = 300 * time.Second // Default 5 minutes for non-streaming requests
+	}
+
+	// Set global timezone default
+	if c.Timezone == "" {
+		c.Timezone = "Asia/Shanghai" // Default timezone for all components
 	}
 
 	// Set group defaults
@@ -756,6 +793,12 @@ func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
 		cw.logger.Info("📊 使用跟踪数据保留天数变更",
 			"old_retention", oldConfig.UsageTracking.RetentionDays,
 			"new_retention", newConfig.UsageTracking.RetentionDays)
+	}
+
+	if oldConfig.Timezone != newConfig.Timezone {
+		cw.logger.Info("🌍 全局时区配置变更",
+			"old_timezone", oldConfig.Timezone,
+			"new_timezone", newConfig.Timezone)
 	}
 }
 
