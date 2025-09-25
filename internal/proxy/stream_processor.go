@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/proxy/response"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/utils"
 )
@@ -75,7 +76,7 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 		startTime:      time.Now(),
 		lineBuffer:     make([]byte, 0, LineBufferInitSize),
 		partialData:    make([]byte, 0, BackgroundBufferSize),
-		maxParseErrors: 10, // 最多允许10个解析错误
+		maxParseErrors: 10,                                // 最多允许10个解析错误
 		debugLines:     make([]string, 0, DebugLineLimit), // 🔍 [调试] 初始化调试缓冲区
 	}
 }
@@ -86,9 +87,23 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 	defer resp.Body.Close()
 	defer sp.waitForBackgroundParsing() // 确保所有后台解析完成
 
-	// 初始化8KB缓冲区
+	// 🔧 [解压缩修复] 创建响应处理器并获取解压缩的流式读取器
+	processor := response.NewProcessor()
+	decompressedReader, err := processor.DecompressStreamReader(resp)
+	if err != nil {
+		return nil, fmt.Errorf("🗜️ [解压缩失败] [%s] 端点: %s, 错误: %w", sp.requestID, sp.endpoint, err)
+	}
+	defer decompressedReader.Close() // 确保解压缩读取器被关闭
+
+	// 记录解压缩状态
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	if contentEncoding != "" {
+		slog.Info(fmt.Sprintf("🗜️ [流式解压] [%s] 端点: %s, 编码: %s", sp.requestID, sp.endpoint, contentEncoding))
+	}
+
+	// 初始化8KB缓冲区，使用解压缩后的读取器
 	buffer := make([]byte, StreamBufferSize)
-	reader := bufio.NewReader(resp.Body)
+	reader := bufio.NewReader(decompressedReader)
 
 	// 记录流处理开始
 	slog.Info(fmt.Sprintf("🌊 [流式处理] [%s] 开始流式处理，端点: %s", sp.requestID, sp.endpoint))
