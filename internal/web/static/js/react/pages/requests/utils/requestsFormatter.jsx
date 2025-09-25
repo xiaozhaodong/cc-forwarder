@@ -159,7 +159,7 @@ export const formatRequestStatus = (status) => {
 // 格式化端点名称
 export const formatEndpoint = (endpoint, group) => {
     if (!endpoint || endpoint === 'unknown') {
-        return 'Unknown';
+        return '-';
     }
 
     let formatted = endpoint;
@@ -225,7 +225,7 @@ export const formatRequestId = (requestId) => {
 
 // 格式化模型名称
 export const formatModelName = (modelName) => {
-    if (!modelName || modelName === 'unknown') return 'Unknown';
+    if (!modelName || modelName === 'unknown') return '-';
 
     // 直接返回原始模型名称，不进行映射转换
     return modelName;
