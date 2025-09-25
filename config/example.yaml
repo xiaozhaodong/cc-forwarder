@@ -35,7 +35,7 @@ health:
 logging:
   level: "info"          # 日志级别: debug, info, warn, error，默认: info
   format: "json"         # 日志格式: "json" 或 "text"，默认: text
-  
+
   # 文件日志配置 (可选)
   file_enabled: false            # 是否启用文件日志，默认: false
   file_path: "logs/app.log"      # 日志文件路径，默认: logs/app.log
@@ -43,6 +43,13 @@ logging:
   max_files: 10                  # 最多保留的轮转文件数量，默认: 10
   compress_rotated: true         # 是否压缩轮转的旧日志文件，默认: false
   disable_response_limit: true   # 启用文件日志时是否取消响应内容输出限制，默认: false
+
+  # Token调试配置 - 用于调试Token解析失败问题
+  token_debug:
+    enabled: false                 # 是否启用Token调试功能，默认: false (生产环境建议关闭)
+    save_path: "logs"             # 调试文件保存目录，默认: logs
+    max_files: 50                 # 最大保留调试文件数量，默认: 50 (0=不限制)
+    auto_cleanup_days: 7          # 自动清理N天前的调试文件，默认: 7 (0=不清理)
 
 # 流式传输配置
 streaming:

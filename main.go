@@ -23,6 +23,7 @@ import (
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 	"cc-forwarder/internal/tui"
+	"cc-forwarder/internal/utils"
 	"cc-forwarder/internal/web"
 )
 
@@ -108,6 +109,12 @@ func main() {
 	// Update logger with config settings (TUI will be added later)
 	logger = setupLogger(cfg.Logging, nil)
 	slog.SetDefault(logger)
+
+	// 🔧 Initialize debug configuration
+	utils.SetDebugConfig(cfg)
+	if cfg.Logging.TokenDebug.Enabled {
+		logger.Info("🔍 Token调试功能已启用", "save_path", cfg.Logging.TokenDebug.SavePath)
+	}
 
 	if tuiEnabled {
 		logger.Info("🖥️ TUI模式已启用，启动图形化监控界面")

@@ -4,14 +4,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"cc-forwarder/config"
 )
 
-// getLogDir 获取项目日志目录，默认为 logs/
-func getLogDir() string {
-	// 项目统一使用 logs/ 目录作为日志输出目录
-	// 与 config/config.go 中的默认设置保持一致
+// 全局配置实例，用于debug功能开关控制
+var (
+	debugConfig     *config.TokenDebugConfig
+	debugConfigOnce sync.Once
+)
+
+// SetDebugConfig 设置调试配置（应该在程序启动时调用）
+func SetDebugConfig(cfg *config.Config) {
+	debugConfigOnce.Do(func() {
+		if cfg != nil {
+			debugConfig = &cfg.Logging.TokenDebug
+		}
+	})
+}
+
+// isDebugEnabled 检查是否启用Token调试功能
+func isDebugEnabled() bool {
+	return debugConfig != nil && debugConfig.Enabled
+}
+
+// getDebugLogDir 获取调试日志目录
+func getDebugLogDir() string {
+	if debugConfig != nil && debugConfig.SavePath != "" {
+		return debugConfig.SavePath
+	}
+	// 默认目录（向后兼容）
 	return "logs"
+}
+
+// getLogDir 获取项目日志目录，默认为 logs/
+// 保留此函数以维持向后兼容性
+func getLogDir() string {
+	return getDebugLogDir()
 }
 
 // WriteTokenDebugResponse 异步保存Token解析失败的响应数据用于调试
@@ -22,9 +53,14 @@ func WriteTokenDebugResponse(requestID, endpoint, responseBody string) {
 		return
 	}
 
+	// 🔧 检查配置开关：如果禁用Token调试，直接返回
+	if !isDebugEnabled() {
+		return
+	}
+
 	// 异步写入，不阻塞主流程
 	go func() {
-		logDir := getLogDir()
+		logDir := getDebugLogDir()
 		// 确保日志目录存在
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			return // 静默失败，不影响主流程
@@ -61,9 +97,14 @@ func WriteStreamDebugResponse(requestID, endpoint string, streamData []string, b
 		return
 	}
 
+	// 🔧 检查配置开关：如果禁用Token调试，直接返回
+	if !isDebugEnabled() {
+		return
+	}
+
 	// 异步写入，不阻塞主流程
 	go func() {
-		logDir := getLogDir()
+		logDir := getDebugLogDir()
 		// 确保日志目录存在
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			return // 静默失败，不影响主流程
