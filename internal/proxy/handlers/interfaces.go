@@ -171,6 +171,7 @@ type RetryManager interface {
 type SuspensionManager interface {
 	ShouldSuspend(ctx context.Context) bool
 	WaitForGroupSwitch(ctx context.Context, connID string) bool
+	WaitForEndpointRecovery(ctx context.Context, connID, failedEndpoint string) bool // 🚀 [端点自愈] 新增端点恢复等待方法
 	GetSuspendedRequestsCount() int
 }
 

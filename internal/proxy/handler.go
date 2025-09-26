@@ -39,6 +39,8 @@ type Handler struct {
 	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
 	// 确保在SetUsageTracker中重建Handler时保持共享状态
 	sharedSuspensionManager handlers.SuspensionManager
+	// 🚀 [端点自愈] 端点恢复信号管理器
+	recoverySignalManager *EndpointRecoverySignalManager
 }
 
 // TokenParserProviderImpl 实现TokenParserProvider接口
@@ -224,10 +226,12 @@ func (f *RetryManagerFactoryImpl) NewRetryManager() handlers.RetryManager {
 type SuspensionManagerFactoryImpl struct {
 	config          *config.Config
 	endpointManager *endpoint.Manager
+	recoverySignalManager *EndpointRecoverySignalManager // 🚀 [端点自愈] 恢复信号管理器
 }
 
 func (f *SuspensionManagerFactoryImpl) NewSuspensionManager() handlers.SuspensionManager {
-	return NewSuspensionManager(f.config, f.endpointManager, f.endpointManager.GetGroupManager())
+	// 🚀 [端点自愈] 使用带恢复信号的SuspensionManager构造函数
+	return NewSuspensionManagerWithRecoverySignal(f.config, f.endpointManager, f.endpointManager.GetGroupManager(), f.recoverySignalManager)
 }
 
 
@@ -239,12 +243,16 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	// 创建forwarder
 	forwarder := handlers.NewForwarder(cfg, endpointManager)
 	
+	// 🚀 [端点自愈] 创建端点恢复信号管理器
+	recoverySignalManager := NewEndpointRecoverySignalManager()
+
 	h := &Handler{
-		endpointManager:   endpointManager,
-		config:            cfg,
-		retryHandler:      retryHandler,
-		responseProcessor: response.NewProcessor(),
-		forwarder:         forwarder,
+		endpointManager:       endpointManager,
+		config:                cfg,
+		retryHandler:          retryHandler,
+		responseProcessor:     response.NewProcessor(),
+		forwarder:             forwarder,
+		recoverySignalManager: recoverySignalManager, // 🚀 [端点自愈] 保存恢复信号管理器引用
 	}
 	
 	// 初始化 token analyzer
@@ -261,8 +269,9 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		endpointManager: endpointManager,
 	}
 	suspensionManagerFactory := &SuspensionManagerFactoryImpl{
-		config:          cfg,
-		endpointManager: endpointManager,
+		config:                cfg,
+		endpointManager:       endpointManager,
+		recoverySignalManager: recoverySignalManager, // 🚀 [端点自愈] 传递恢复信号管理器
 	}
 
 	// 🔧 [Critical修复] 创建单一共享的SuspensionManager实例
@@ -345,8 +354,9 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 		endpointManager: h.endpointManager,
 	}
 	suspensionManagerFactory := &SuspensionManagerFactoryImpl{
-		config:          h.config,
-		endpointManager: h.endpointManager,
+		config:                h.config,
+		endpointManager:       h.endpointManager,
+		recoverySignalManager: h.recoverySignalManager, // 🚀 [端点自愈] 修复：确保恢复信号能力不丢失
 	}
 
 	// 重新创建regularHandler以包含usageTracker
@@ -441,7 +451,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// 创建统一的请求生命周期管理器
-	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
+	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
 	
 	// 克隆请求体用于重试
 	var bodyBytes []byte

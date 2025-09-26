@@ -108,6 +108,7 @@ func (sh *StreamingHandler) setStreamingHeaders(w http.ResponseWriter) {
 // executeStreamingWithRetry 执行带重试的流式处理
 func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager RequestLifecycleManager, flusher http.Flusher) {
 	connID := lifecycleManager.GetRequestID()
+	var lastFailedEndpoint string // 🚀 [端点自愈] 追踪最后失败的端点
 
 	// 获取健康端点
 	var endpoints []*endpoint.Endpoint
@@ -160,6 +161,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 	// 🔢 [重构] 移除currentAttemptCount变量，统一由LifecycleManager管理计数
 	for i := 0; i < len(endpoints); i++ {
 		ep := endpoints[i]
+		lastFailedEndpoint = ep.Config.Name // 🚀 [端点自愈] 记录当前尝试的端点
 		// 更新生命周期管理器信息
 		lifecycleManager.SetEndpoint(ep.Config.Name, ep.Config.Group)
 		lifecycleManager.UpdateStatus("forwarding", i, 0)
@@ -332,13 +334,14 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			if decision.SuspendRequest {
 				if sh.sharedSuspensionManager.ShouldSuspend(ctx) {
 					lifecycleManager.UpdateStatus("suspended", -1, 0)
-					slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 原因: %s", connID, decision.Reason))
-					fmt.Fprintf(w, "data: suspend: 请求已挂起，等待组切换...\n\n")
+					slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 原因: %s，失败端点: %s", connID, decision.Reason, ep.Config.Name))
+					fmt.Fprintf(w, "data: suspend: 请求已挂起，等待端点 %s 恢复或组切换...\n\n", ep.Config.Name)
 					flusher.Flush()
 
-					if sh.sharedSuspensionManager.WaitForGroupSwitch(ctx, connID) {
-						slog.Info(fmt.Sprintf("📡 [组切换成功] [%s] 重新获取端点列表", connID))
-						fmt.Fprintf(w, "data: resume: 组切换成功，重新开始处理...\n\n")
+					// 🚀 [端点自愈] 使用新的端点恢复等待方法，传递失败的端点信息
+					if sh.sharedSuspensionManager.WaitForEndpointRecovery(ctx, connID, ep.Config.Name) {
+						slog.Info(fmt.Sprintf("🎯 [恢复成功] [%s] 端点 %s 已恢复或组已切换，重新开始处理", connID, ep.Config.Name))
+						fmt.Fprintf(w, "data: resume: 端点已恢复，重新开始处理...\n\n")
 						flusher.Flush()
 						// 重新开始executeStreamingWithRetry
 						sh.executeStreamingWithRetry(ctx, w, r, bodyBytes, lifecycleManager, flusher)
@@ -485,12 +488,12 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 		// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
 		actualAttemptCount := lifecycleManager.GetAttemptCount()
-		slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d",
-			connID, actualAttemptCount, len(currentEndpoints)))
+		slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d, 最后失败端点: %s",
+			connID, actualAttemptCount, len(currentEndpoints), lastFailedEndpoint))
 
-		// 等待组切换
-		if suspensionMgr.WaitForGroupSwitch(ctx, connID) {
-			slog.Info(fmt.Sprintf("🚀 [挂起恢复] [%s] 组切换完成，重新获取端点", connID))
+		// 🚀 [端点自愈] 等待端点恢复，传递最后失败的端点信息
+		if suspensionMgr.WaitForEndpointRecovery(ctx, connID, lastFailedEndpoint) {
+			slog.Info(fmt.Sprintf("🚀 [挂起恢复] [%s] 端点 %s 已恢复或组切换完成，重新获取端点", connID, lastFailedEndpoint))
 			fmt.Fprintf(w, "data: resume: 组切换完成，恢复处理...\n\n")
 			flusher.Flush()
 

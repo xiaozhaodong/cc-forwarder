@@ -193,12 +193,13 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				if decision.SuspendRequest {
 					if rh.sharedSuspensionManager.ShouldSuspend(ctx) {
 						lifecycleManager.UpdateStatus("suspended", globalAttemptCount, 0)
-						slog.Info(fmt.Sprintf("⏸️ [请求挂起] [%s] 原因: %s",
-							connID, decision.Reason))
+						slog.Info(fmt.Sprintf("⏸️ [请求挂起] [%s] 原因: %s，失败端点: %s",
+							connID, decision.Reason, endpoint.Config.Name))
 
-						if rh.sharedSuspensionManager.WaitForGroupSwitch(ctx, connID) {
-							slog.Info(fmt.Sprintf("📡 [组切换成功] [%s] 重新获取端点列表",
-								connID))
+						// 🚀 [端点自愈] 使用新的端点恢复等待方法，传递失败的端点信息
+						if rh.sharedSuspensionManager.WaitForEndpointRecovery(ctx, connID, endpoint.Config.Name) {
+							slog.Info(fmt.Sprintf("🎯 [恢复成功] [%s] 端点 %s 已恢复或组已切换，重新获取端点列表",
+								connID, endpoint.Config.Name))
 							groupSwitchNeeded = true
 							break // 跳出端点循环
 						} else {
