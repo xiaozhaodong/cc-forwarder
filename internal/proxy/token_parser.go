@@ -292,13 +292,25 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 	if messageStart.Message != nil && messageStart.Message.Model != "" {
 		tp.modelName = messageStart.Message.Model
 
-		// 记录模型提取（不处理token usage） - 始终包含requestID
+		// 记录模型提取 - 始终包含requestID
 		slog.Info(fmt.Sprintf("🎯 [模型提取] [%s] 从message_start事件中提取模型信息: %s",
 			tp.requestID, tp.modelName))
 	}
 
-	// ⚠️ 重要：message_start事件不处理token usage信息
-	// Token usage信息应该从message_delta事件中获取，该事件包含完整的使用统计
+	// 🆕 [流式Token修复] 从message_start事件中提取usage信息作为初始值
+	// 这样确保即使流被中断，也能保存有效的token使用信息
+	if messageStart.Message != nil && messageStart.Message.Usage != nil {
+		tp.partialUsage = &tracking.TokenUsage{
+			InputTokens:         messageStart.Message.Usage.InputTokens,
+			OutputTokens:        messageStart.Message.Usage.OutputTokens,
+			CacheCreationTokens: messageStart.Message.Usage.CacheCreationInputTokens,
+			CacheReadTokens:     messageStart.Message.Usage.CacheReadInputTokens,
+		}
+
+		slog.Info(fmt.Sprintf("🎯 [Usage初始化] [%s] 从message_start提取token信息: input=%d, output=%d, cache_create=%d, cache_read=%d",
+			tp.requestID, tp.partialUsage.InputTokens, tp.partialUsage.OutputTokens,
+			tp.partialUsage.CacheCreationTokens, tp.partialUsage.CacheReadTokens))
+	}
 
 	return nil
 }
@@ -662,8 +674,22 @@ func (tp *TokenParser) SetModel(modelName string) {
 }
 
 // GetFinalUsage 实现接口方法 - 获取最终Token使用统计
+// 🆕 [流式Token修复] 支持fallback机制：finalUsage > partialUsage > nil
 func (tp *TokenParser) GetFinalUsage() *tracking.TokenUsage {
-	return tp.finalUsage
+	// 优先返回finalUsage（来自message_delta）
+	if tp.finalUsage != nil {
+		return tp.finalUsage
+	}
+
+	// Fallback到partialUsage（来自message_start）
+	if tp.partialUsage != nil {
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("🚨 [中断恢复] [%s] 使用message_start中的usage信息作为最终结果", tp.requestID))
+		}
+		return tp.partialUsage
+	}
+
+	return nil
 }
 
 // GetModelName 获取模型名称
