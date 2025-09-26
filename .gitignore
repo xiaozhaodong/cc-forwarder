@@ -55,3 +55,4 @@ config/config.yaml
 docs/TECHNICAL_ARCHITECTURE.md
 docs/REFACTOR_PLAN.md
 cc-forwarder
+/logs
