@@ -365,12 +365,43 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 		return nil
 	}
 
+	// 🚀 [智能合并] 实现message_start和message_delta的token信息智能合并
+	// 策略：
+	// 1. input/output tokens: 优先使用message_delta的值（更准确的最终统计）
+	// 2. cache tokens: 如果message_delta为0，保留message_start的值（防止缓存信息丢失）
+
+	// 获取message_delta中的基础值
+	inputTokens := messageDelta.Usage.InputTokens
+	outputTokens := messageDelta.Usage.OutputTokens
+	cacheCreationTokens := messageDelta.Usage.CacheCreationInputTokens
+	cacheReadTokens := messageDelta.Usage.CacheReadInputTokens
+
+	// 智能合并缓存token：如果message_delta中为0，但message_start中有值，则保留message_start的值
+	if cacheCreationTokens == 0 && tp.partialUsage != nil && tp.partialUsage.CacheCreationTokens > 0 {
+		cacheCreationTokens = tp.partialUsage.CacheCreationTokens
+		slog.Info(fmt.Sprintf("🔄 [缓存合并] [%s] 保留message_start中的cache_creation_tokens: %d",
+			tp.requestID, cacheCreationTokens))
+	}
+
+	if cacheReadTokens == 0 && tp.partialUsage != nil && tp.partialUsage.CacheReadTokens > 0 {
+		cacheReadTokens = tp.partialUsage.CacheReadTokens
+		slog.Info(fmt.Sprintf("🔄 [缓存合并] [%s] 保留message_start中的cache_read_tokens: %d",
+			tp.requestID, cacheReadTokens))
+	}
+
+	// 输入token合并：如果message_delta中为0，但message_start中有值，则保留message_start的值
+	if inputTokens == 0 && tp.partialUsage != nil && tp.partialUsage.InputTokens > 0 {
+		inputTokens = tp.partialUsage.InputTokens
+		slog.Info(fmt.Sprintf("🔄 [输入合并] [%s] 保留message_start中的input_tokens: %d",
+			tp.requestID, inputTokens))
+	}
+
 	// ✅ 设置finalUsage供GetFinalUsage()方法使用
 	tp.finalUsage = &tracking.TokenUsage{
-		InputTokens:         messageDelta.Usage.InputTokens,
-		OutputTokens:        messageDelta.Usage.OutputTokens,
-		CacheCreationTokens: messageDelta.Usage.CacheCreationInputTokens,
-		CacheReadTokens:     messageDelta.Usage.CacheReadInputTokens,
+		InputTokens:         inputTokens,
+		OutputTokens:        outputTokens,
+		CacheCreationTokens: cacheCreationTokens,
+		CacheReadTokens:     cacheReadTokens,
 	}
 
 	// 返回解析结果而不是直接记录
