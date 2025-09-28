@@ -621,6 +621,13 @@ func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 	// 尝试从TokenParser获取最终使用统计
 	finalUsage := sp.tokenParser.GetFinalUsage()
 
+	// 🔍 [Fallback检测] 检查是否使用了fallback机制
+	if sp.tokenParser.IsFallbackUsed() {
+		slog.Warn(fmt.Sprintf("🚨 [Fallback检测] [%s] 使用了message_start fallback机制，保存调试数据", sp.requestID))
+		// 🔍 [调试] 异步保存fallback调试数据用于分析
+		utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+	}
+
 	if finalUsage != nil {
 		// ✅ 检查是否有真实的Token使用
 		hasRealTokens := finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0 ||

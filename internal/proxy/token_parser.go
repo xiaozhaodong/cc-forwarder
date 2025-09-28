@@ -728,6 +728,12 @@ func (tp *TokenParser) GetModelName() string {
 	return tp.modelName
 }
 
+// IsFallbackUsed 检查是否使用了fallback机制
+// 返回true表示使用了message_start的数据而不是完整的message_delta数据
+func (tp *TokenParser) IsFallbackUsed() bool {
+	return tp.finalUsage == nil && tp.partialUsage != nil
+}
+
 // GetPartialUsage 获取部分Token使用统计（用于网络中断恢复）
 func (tp *TokenParser) GetPartialUsage() *tracking.TokenUsage {
 	if tp.partialUsage != nil {

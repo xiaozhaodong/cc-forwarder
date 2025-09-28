@@ -496,9 +496,19 @@ func (ut *UsageTracker) RecordRequestUpdateWithModel(requestID, endpoint, group,
 
 // RecordRequestComplete 记录请求完成
 func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, tokens *TokenUsage, duration time.Duration) {
-	if ut.config == nil || !ut.config.Enabled || tokens == nil {
+	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
+
+	// 🚀 [架构修复] 支持 nil tokens，确保耗时信息总是被记录
+	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	if tokens != nil {
+		inputTokens = tokens.InputTokens
+		outputTokens = tokens.OutputTokens
+		cacheCreationTokens = tokens.CacheCreationTokens
+		cacheReadTokens = tokens.CacheReadTokens
+	}
+	// 如果 tokens 为 nil，所有 token 字段都是 0，但 duration 仍然会被记录
 
 	event := RequestEvent{
 		Type:      "complete",
@@ -506,10 +516,10 @@ func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, token
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
 			ModelName:           modelName,
-			InputTokens:         tokens.InputTokens,
-			OutputTokens:        tokens.OutputTokens,
-			CacheCreationTokens: tokens.CacheCreationTokens,
-			CacheReadTokens:     tokens.CacheReadTokens,
+			InputTokens:         inputTokens,
+			OutputTokens:        outputTokens,
+			CacheCreationTokens: cacheCreationTokens,
+			CacheReadTokens:     cacheReadTokens,
 			Duration:            duration,
 		},
 	}

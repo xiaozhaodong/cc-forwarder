@@ -154,7 +154,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 						connID, endpoint.Config.Name, attempt))
 
 					lifecycleManager.UpdateStatus("processing", globalAttemptCount, resp.StatusCode)
-					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name)
+					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name, r)
 					return
 				}
 
@@ -291,7 +291,7 @@ func (rh *RegularHandler) executeRequest(ctx context.Context, r *http.Request, b
 }
 
 // processSuccessResponse 处理成功响应
-func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string) {
+func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string, r *http.Request) {
 	defer resp.Body.Close()
 
 	// 复制响应头（排除Content-Encoding用于gzip处理）
@@ -320,6 +320,14 @@ func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.Res
 	// ✅ 同步Token解析：简化逻辑，避免协程控制问题
 	connID := lifecycleManager.GetRequestID()
 	slog.Debug(fmt.Sprintf("🔄 [Token解析] [%s] 开始Token解析", connID))
+
+	// 🔍 [路径过滤] 跳过count_tokens端点的Token解析
+	if r.URL.Path == "/v1/messages/count_tokens" {
+		slog.Debug(fmt.Sprintf("🔍 [路径过滤] [%s] 跳过count_tokens端点的Token解析", connID))
+		// count_tokens端点不需要Token解析，直接完成请求
+		lifecycleManager.CompleteRequest(nil)
+		return
+	}
 
 	// 对于常规请求，同步解析Token信息（如果存在）
 	tokenUsage, modelName := rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
