@@ -231,6 +231,36 @@ export const formatModelName = (modelName) => {
     return modelName;
 };
 
+// 获取模型颜色类名
+export const getModelColorClass = (modelName) => {
+    if (!modelName || modelName === 'unknown') return 'model-unknown';
+
+    const lowerName = modelName.toLowerCase();
+
+    // Claude Sonnet 4 系列 - 橙色
+    if (lowerName.includes('sonnet-4') || lowerName.includes('claude-sonnet-4')) {
+        return 'model-sonnet-4';
+    }
+
+    // Claude 3.5 Haiku 系列 - 绿色
+    if (lowerName.includes('3-5-haiku') || lowerName.includes('haiku')) {
+        return 'model-haiku';
+    }
+
+    // Claude 3.5 Sonnet 系列 - 蓝色
+    if (lowerName.includes('3-5-sonnet') || (lowerName.includes('sonnet') && lowerName.includes('3.5'))) {
+        return 'model-sonnet-3-5';
+    }
+
+    // Claude Opus 系列 - 紫色
+    if (lowerName.includes('opus')) {
+        return 'model-opus';
+    }
+
+    // 其他未知模型 - 灰色
+    return 'model-unknown';
+};
+
 // 格式化流式请求图标
 export const formatStreamingIcon = (isStreaming) => {
     return isStreaming ? '🌊' : '🔄';  // 流式请求显示🌊，非流式请求显示🔄，与原版保持一致

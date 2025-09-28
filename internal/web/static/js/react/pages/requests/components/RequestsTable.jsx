@@ -53,6 +53,10 @@ const RequestsTable = ({
                 <h3>请求详情列表</h3>
                 <div className="table-actions">
                     <span className="requests-count-info">
+                        <span className="table-tips">
+                            <span className="tip-text">单击复制 · 双击查看详情</span>
+                            <span className="tip-separator">｜</span>
+                        </span>
                         {getRecordsInfo()}
                     </span>
                     <button

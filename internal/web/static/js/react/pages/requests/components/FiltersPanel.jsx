@@ -91,9 +91,9 @@ const FiltersPanel = ({
 
     return (
         <div className="filters-panel">
-            <div className="filters-grid">
-                {/* 时间范围筛选 */}
-                <div className="filter-group time-range-group">
+            {/* 第一行：时间范围筛选 */}
+            <div className="filter-row time-range-row">
+                <div className="filter-group time-range-group inline-group">
                     <label>时间范围:</label>
                     <div className="datetime-inputs">
                         <div className="datetime-field">
@@ -121,9 +121,12 @@ const FiltersPanel = ({
                         </div>
                     </div>
                 </div>
+            </div>
 
+            {/* 第二行：其他筛选条件和操作按钮 */}
+            <div className="filter-row other-filters-row">
                 {/* 状态筛选 */}
-                <div className="filter-group">
+                <div className="filter-group inline-group">
                     <label>状态:</label>
                     <select
                         id="status-filter"
@@ -139,7 +142,7 @@ const FiltersPanel = ({
                 </div>
 
                 {/* 模型筛选 */}
-                <div className="filter-group">
+                <div className="filter-group inline-group">
                     <label>模型:</label>
                     <select
                         id="model-filter"
@@ -161,7 +164,7 @@ const FiltersPanel = ({
                 </div>
 
                 {/* 端点筛选 */}
-                <div className="filter-group">
+                <div className="filter-group inline-group">
                     <label>端点:</label>
                     <select
                         id="endpoint-filter"
@@ -184,7 +187,7 @@ const FiltersPanel = ({
                 </div>
 
                 {/* 组筛选 */}
-                <div className="filter-group">
+                <div className="filter-group inline-group">
                     <label>组:</label>
                     <select
                         id="group-filter"
@@ -205,8 +208,10 @@ const FiltersPanel = ({
                         })}
                     </select>
                 </div>
+            </div>
 
-                {/* 操作按钮 */}
+            {/* 第三行：操作按钮 */}
+            <div className="filter-row actions-row">
                 <div className="filter-actions">
                     <button
                         className="btn btn-primary"
