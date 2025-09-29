@@ -244,7 +244,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 					}
 
 					// 🚀 [状态机重构] Phase 4: 统一使用HandleError处理错误，遵循状态错误分离原则
-					// 设置failure_reason，但仍需要UpdateStatus来设置正确的HTTP状态码
+					// 设置failure_reason，让错误分类器正确识别stream_status错误
 					lifecycleManager.HandleError(err)
 
 					// 🚀 [HTTP状态码修复] 流式API错误应该映射为207 Multi-Status
@@ -255,20 +255,27 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 						statusCode = 499 // 客户端取消
 					}
 
-					// ✅ 使用正确的状态码更新生命周期状态
-					lifecycleManager.UpdateStatus(status, currentAttemptCount, statusCode)
+					// 🚀 [语义修复] 区分取消和失败的不同处理方式
+					if status == "cancelled" {
+						// 取消请求：直接传递Token信息给CancelRequest，保持语义一致性
+						// 避免先调用RecordTokensForFailedRequest再CancelRequest的语义矛盾
+						lifecycleManager.CancelRequest("stream processing cancelled", finalTokenUsage)
+					} else {
+						// 流式错误：先记录失败Token，再使用FailRequest设置最终状态
+						if finalTokenUsage != nil {
+							lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, status)
+						} else {
+							// 无Token信息，仅记录失败状态
+							slog.Info(fmt.Sprintf("❌ [流式失败无Token] [%s] 端点: %s, 状态: %s, 无Token信息可保存",
+								connID, ep.Config.Name, status))
+						}
+						// 使用FailRequest设置最终状态为failed
+						// 这样status=failed, failure_reason=stream_error, http_status=207
+						lifecycleManager.FailRequest(status, err.Error(), statusCode)
+					}
 
 					// 🔧 [日志状态码] 设置真实错误码到上下文用于日志记录
 					*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
-
-					// ✅ 如果有token信息，使用失败Token记录方法，不改变请求状态
-					if finalTokenUsage != nil {
-						lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, status)
-					} else {
-						// 无Token信息，仅记录失败状态
-						slog.Info(fmt.Sprintf("❌ [流式失败无Token] [%s] 端点: %s, 状态: %s, 无Token信息可保存",
-							connID, ep.Config.Name, status))
-					}
 
 					slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 状态: %s, 模型: %s, 错误: %v",
 						connID, ep.Config.Name, status, parsedModelName, err))
