@@ -49,7 +49,7 @@ type GroupStat struct {
 
 // RequestEvent 表示请求事件
 type RequestEvent struct {
-	Type      string      `json:"type"`      // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens"
+	Type      string      `json:"type"`      // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens", "token_recovery"
 	RequestID string      `json:"request_id"`
 	Timestamp time.Time   `json:"timestamp"`
 	Data      interface{} `json:"data"` // 根据Type不同而变化
@@ -580,6 +580,39 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 		slog.Debug(fmt.Sprintf("💾 [失败Token事件] [%s] 原因: %s, 模型: %s", requestID, failureReason, modelName))
 	default:
 		slog.Warn("Usage tracking event buffer full, dropping failed request tokens event",
+			"request_id", requestID)
+	}
+}
+
+// RecoverRequestTokens 恢复请求的Token使用统计
+// 🔧 [Fallback修复] 专用于debug文件恢复场景，仅更新Token字段，不触发状态变更
+func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens *TokenUsage) {
+	if ut.config == nil || !ut.config.Enabled || tokens == nil {
+		return
+	}
+
+	// 创建专门的Token恢复事件
+	event := RequestEvent{
+		Type:      "token_recovery", // 专用事件类型
+		RequestID: requestID,
+		Timestamp: ut.now(),
+		Data: RequestCompleteData{
+			ModelName:           modelName,
+			InputTokens:         tokens.InputTokens,
+			OutputTokens:        tokens.OutputTokens,
+			CacheCreationTokens: tokens.CacheCreationTokens,
+			CacheReadTokens:     tokens.CacheReadTokens,
+			// 注意：Duration设为0，不更新时间相关字段
+			Duration: 0,
+		},
+	}
+
+	select {
+	case ut.eventChan <- event:
+		slog.Info(fmt.Sprintf("🔧 [Token恢复事件] [%s] 模型: %s, 输入: %d, 输出: %d",
+			requestID, modelName, tokens.InputTokens, tokens.OutputTokens))
+	default:
+		slog.Warn("Usage tracking event buffer full, dropping token recovery event",
 			"request_id", requestID)
 	}
 }

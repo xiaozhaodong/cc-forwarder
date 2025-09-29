@@ -294,6 +294,53 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		}
 
 		return query, args, nil
+	case "token_recovery":
+		// 🔧 [Fallback修复] 处理Token恢复事件：只更新Token字段和成本，不更新状态
+		data, ok := event.Data.(RequestCompleteData)
+		if !ok {
+			return "", nil, fmt.Errorf("invalid token_recovery event data type")
+		}
+
+		// 计算成本
+		tokens := &TokenUsage{
+			InputTokens:         data.InputTokens,
+			OutputTokens:        data.OutputTokens,
+			CacheCreationTokens: data.CacheCreationTokens,
+			CacheReadTokens:     data.CacheReadTokens,
+		}
+
+		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+
+		// 🔧 专用于恢复场景：更新任何状态的请求的Token字段，因为这是恢复不完整的数据
+		query := fmt.Sprintf(`UPDATE request_logs SET
+			model_name = COALESCE(?, model_name),
+			input_tokens = ?,
+			output_tokens = ?,
+			cache_creation_tokens = ?,
+			cache_read_tokens = ?,
+			input_cost_usd = ?,
+			output_cost_usd = ?,
+			cache_creation_cost_usd = ?,
+			cache_read_cost_usd = ?,
+			total_cost_usd = ?,
+			updated_at = %s
+		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+
+		args := []interface{}{
+			data.ModelName,
+			data.InputTokens,
+			data.OutputTokens,
+			data.CacheCreationTokens,
+			data.CacheReadTokens,
+			inputCost,
+			outputCost,
+			cacheCost,
+			readCost,
+			totalCost,
+			event.RequestID,
+		}
+
+		return query, args, nil
 	default:
 		return "", nil, fmt.Errorf("unknown event type: %s", event.Type)
 	}

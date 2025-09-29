@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/tracking"
 )
 
 // 全局配置实例，用于debug功能开关控制
@@ -37,12 +39,6 @@ func getDebugLogDir() string {
 	}
 	// 默认目录（向后兼容）
 	return "logs"
-}
-
-// getLogDir 获取项目日志目录，默认为 logs/
-// 保留此函数以维持向后兼容性
-func getLogDir() string {
-	return getDebugLogDir()
 }
 
 // WriteTokenDebugResponse 异步保存Token解析失败的响应数据用于调试
@@ -137,4 +133,105 @@ func WriteStreamDebugResponse(requestID, endpoint string, streamData []string, b
 
 		file.WriteString(debugContent)
 	}()
+}
+
+// RecoverUsageFromDebugFile 从debug文件中恢复usage信息
+// 🔧 [Fallback修复] 分析debug文件内容，提取完整的token使用统计
+func RecoverUsageFromDebugFile(requestID string) (*tracking.TokenUsage, error) {
+	if requestID == "" {
+		return nil, fmt.Errorf("requestID不能为空")
+	}
+
+	// 🔧 检查配置开关：如果禁用Token调试，直接返回
+	if !isDebugEnabled() {
+		return nil, fmt.Errorf("Token调试功能已禁用")
+	}
+
+	logDir := getDebugLogDir()
+	filename := filepath.Join(logDir, fmt.Sprintf("%s.debug", requestID))
+
+	// 检查文件是否存在
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return nil, fmt.Errorf("debug文件不存在: %s", filename)
+	}
+
+	// 读取文件内容
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("读取debug文件失败: %v", err)
+	}
+
+	// 提取usage信息
+	usage, err := extractUsageFromDebugContent(string(content))
+	if err != nil {
+		return nil, fmt.Errorf("从debug文件提取usage失败: %v", err)
+	}
+
+	return usage, nil
+}
+
+// extractUsageFromDebugContent 从debug文件内容中提取usage信息
+// 🔧 [Fallback修复] 使用正则表达式提取完整的token统计，优先使用message_stop中的usage
+func extractUsageFromDebugContent(content string) (*tracking.TokenUsage, error) {
+	// 正则表达式匹配 usage 对象
+	// 优先匹配 message_stop 事件中的 usage，因为它包含完整信息
+	usagePattern := `"usage":\s*\{\s*"input_tokens":\s*(\d+),\s*"cache_creation_input_tokens":\s*(\d+),\s*"cache_read_input_tokens":\s*(\d+),\s*"output_tokens":\s*(\d+)`
+
+	re, err := regexp.Compile(usagePattern)
+	if err != nil {
+		return nil, fmt.Errorf("正则表达式编译失败: %v", err)
+	}
+
+	// 查找所有匹配项
+	matches := re.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("未找到usage信息")
+	}
+
+	// 使用最后一个匹配项，通常是最完整的usage信息
+	lastMatch := matches[len(matches)-1]
+	if len(lastMatch) != 5 { // 完整匹配 + 4个捕获组
+		return nil, fmt.Errorf("usage信息格式不完整")
+	}
+
+	// 解析数值
+	var inputTokens, cacheCreationTokens, cacheReadTokens, outputTokens int64
+	if _, err := fmt.Sscanf(lastMatch[1], "%d", &inputTokens); err != nil {
+		return nil, fmt.Errorf("解析input_tokens失败: %v", err)
+	}
+	if _, err := fmt.Sscanf(lastMatch[2], "%d", &cacheCreationTokens); err != nil {
+		return nil, fmt.Errorf("解析cache_creation_input_tokens失败: %v", err)
+	}
+	if _, err := fmt.Sscanf(lastMatch[3], "%d", &cacheReadTokens); err != nil {
+		return nil, fmt.Errorf("解析cache_read_input_tokens失败: %v", err)
+	}
+	if _, err := fmt.Sscanf(lastMatch[4], "%d", &outputTokens); err != nil {
+		return nil, fmt.Errorf("解析output_tokens失败: %v", err)
+	}
+
+	return &tracking.TokenUsage{
+		InputTokens:         inputTokens,
+		OutputTokens:        outputTokens,
+		CacheCreationTokens: cacheCreationTokens,
+		CacheReadTokens:     cacheReadTokens,
+	}, nil
+}
+
+// RecoverAndUpdateUsage 从debug文件恢复usage并更新数据库
+// 🔧 [Fallback修复] 完整的恢复流程：读取debug文件 -> 提取usage -> 更新数据库
+func RecoverAndUpdateUsage(requestID string, modelName string, usageTracker *tracking.UsageTracker) error {
+	if usageTracker == nil {
+		return fmt.Errorf("usageTracker不能为nil")
+	}
+
+	// 从debug文件恢复usage信息
+	recoveredUsage, err := RecoverUsageFromDebugFile(requestID)
+	if err != nil {
+		return fmt.Errorf("恢复usage失败: %v", err)
+	}
+
+	// 使用专用的Token恢复方法，只更新Token字段，不触发其他流程
+	usageTracker.RecoverRequestTokens(requestID, modelName, recoveredUsage)
+
+	return nil
 }

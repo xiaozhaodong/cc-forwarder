@@ -65,7 +65,7 @@ type StreamProcessor struct {
 func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTracker,
 	w http.ResponseWriter, flusher http.Flusher, requestID, endpoint string) *StreamProcessor {
 
-	return &StreamProcessor{
+	sp := &StreamProcessor{
 		tokenParser:    tokenParser,
 		usageTracker:   usageTracker,
 		responseWriter: w,
@@ -79,6 +79,8 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 		maxParseErrors: 10,                                // 最多允许10个解析错误
 		debugLines:     make([]string, 0, DebugLineLimit), // 🔍 [调试] 初始化调试缓冲区
 	}
+
+	return sp
 }
 
 // ProcessStream 实现边接收边转发的8KB缓冲区流式处理
@@ -270,6 +272,27 @@ func (sp *StreamProcessor) ensureRequestCompletion() {
 	// 3. 不再有任何组件直接调用 usageTracker
 
 	slog.Debug(fmt.Sprintf("⚠️ [已弃用] [%s] ensureRequestCompletion已弃用，请使用getFinalTokenUsage", sp.requestID))
+}
+
+// attemptUsageRecovery 异步尝试从debug文件恢复完整的usage信息
+// 🔧 [Fallback修复] 等待debug文件写入完成后，尝试提取完整的token使用统计并更新数据库
+func (sp *StreamProcessor) attemptUsageRecovery() {
+	// 等待一段时间确保debug文件写入完成
+	time.Sleep(2 * time.Second)
+
+	modelName := sp.tokenParser.GetModelName()
+	if modelName == "" {
+		modelName = "unknown"
+	}
+
+	// 尝试从debug文件恢复usage信息
+	err := utils.RecoverAndUpdateUsage(sp.requestID, modelName, sp.usageTracker)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("🔧 [Recovery失败] [%s] 从debug文件恢复usage失败: %v", sp.requestID, err))
+		return
+	}
+
+	slog.Info(fmt.Sprintf("🔧 [Recovery成功] [%s] 成功从debug文件恢复完整的usage信息", sp.requestID))
 }
 
 // classifyStreamError 智能状态分类方法
@@ -623,9 +646,23 @@ func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 
 	// 🔍 [Fallback检测] 检查是否使用了fallback机制
 	if sp.tokenParser.IsFallbackUsed() {
-		slog.Warn(fmt.Sprintf("🚨 [Fallback检测] [%s] 使用了message_start fallback机制，保存调试数据", sp.requestID))
-		// 🔍 [调试] 异步保存fallback调试数据用于分析
-		utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+		slog.Warn(fmt.Sprintf("🚨 [Fallback检测] [%s] 使用了message_start fallback机制，保存完整调试数据", sp.requestID))
+
+		// 🔧 [Fallback修复] fallback时使用完整的响应数据，不受100行限制
+		if len(sp.partialData) > 0 {
+			// 将完整的原始数据按行分割
+			fullLines := strings.Split(string(sp.partialData), "\n")
+			slog.Info(fmt.Sprintf("🔧 [完整数据] [%s] 使用%d字节完整数据替代100行限制数据", sp.requestID, len(sp.partialData)))
+
+			// 使用完整数据保存debug文件
+			utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, fullLines, sp.bytesProcessed)
+		} else {
+			// 兜底：如果没有完整数据，使用现有的debug数据
+			utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+		}
+
+		// 🔧 [Fallback修复] 异步尝试从debug文件恢复完整的usage信息
+		go sp.attemptUsageRecovery()
 	}
 
 	if finalUsage != nil {
