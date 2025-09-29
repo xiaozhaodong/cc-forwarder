@@ -243,8 +243,23 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 						lifecycleManager.SetModelWithComparison(modelName, "stream_processor")
 					}
 
-					// ✅ 使用正确的状态更新
-					lifecycleManager.UpdateStatus(status, currentAttemptCount, resp.StatusCode)
+					// 🚀 [状态机重构] Phase 4: 统一使用HandleError处理错误，遵循状态错误分离原则
+					// 设置failure_reason，但仍需要UpdateStatus来设置正确的HTTP状态码
+					lifecycleManager.HandleError(err)
+
+					// 🚀 [HTTP状态码修复] 流式API错误应该映射为207 Multi-Status
+					statusCode := GetStatusCodeFromError(err, resp)
+					if status == "stream_error" {
+						statusCode = http.StatusMultiStatus // 207: HTTP连接成功，但API业务层面有错误
+					} else if status == "cancelled" {
+						statusCode = 499 // 客户端取消
+					}
+
+					// ✅ 使用正确的状态码更新生命周期状态
+					lifecycleManager.UpdateStatus(status, currentAttemptCount, statusCode)
+
+					// 🔧 [日志状态码] 设置真实错误码到上下文用于日志记录
+					*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
 
 					// ✅ 如果有token信息，使用失败Token记录方法，不改变请求状态
 					if finalTokenUsage != nil {
@@ -260,16 +275,8 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 					// 根据状态决定是否发送错误信息
 					if status == "cancelled" {
-						// 🔧 [日志状态码] 设置真实错误码到上下文用于日志记录
-						*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
 						fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
 					} else {
-						// 🔧 [日志状态码] 设置真实错误码到上下文用于日志记录
-						statusCode := GetStatusCodeFromError(err, resp)
-						if statusCode == 0 {
-							statusCode = http.StatusInternalServerError
-						}
-						*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
 						fmt.Fprintf(w, "data: error: 流式处理失败: %v\n\n", err)
 					}
 					flusher.Flush()
