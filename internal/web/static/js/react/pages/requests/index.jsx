@@ -42,7 +42,8 @@ const RequestsPage = () => {
         applyFilters,
         hasActiveFilters,
         activeFiltersCount,
-        validateFilters
+        validateFilters,
+        STATUS_OPTIONS  // 导入更新后的状态选项
     } = useFilters();
 
     // 分页Hook
@@ -267,13 +268,7 @@ const RequestsPage = () => {
                     applyFilters={applyFilters}
                     hasActiveFilters={hasActiveFilters}
                     activeFiltersCount={activeFiltersCount}
-                    STATUS_OPTIONS={{
-                        all: '全部状态',
-                        success: '成功',
-                        failed: '失败',
-                        timeout: '超时',
-                        suspended: '挂起'
-                    }}
+                    STATUS_OPTIONS={STATUS_OPTIONS}  // 使用从Hook导入的状态选项
                 />
 
                 {/* 统计概览卡片 */}

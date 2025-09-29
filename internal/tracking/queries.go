@@ -252,10 +252,46 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		args = append(args, opts.GroupName)
 	}
 	if opts.Status != "" {
-		query += " AND status = ?"
-		args = append(args, opts.Status)
+		// v3.5.0状态机重构 - 状态与错误分离的兼容查询
+		switch opts.Status {
+		case "completed":
+			// 已完成状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "completed")
+		case "failed":
+			// 失败状态：包含新架构的failed状态 + 旧版本的各种错误状态
+			query += " AND status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout')"
+		case "processing":
+			// 处理中状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "processing")
+		case "cancelled":
+			// 取消状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "cancelled")
+		case "suspended":
+			// 挂起状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "suspended")
+		case "pending":
+			// 等待状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "pending")
+		case "forwarding":
+			// 转发状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "forwarding")
+		case "retry":
+			// 重试状态：精确匹配
+			query += " AND status = ?"
+			args = append(args, "retry")
+		default:
+			// 精确匹配其他状态
+			query += " AND status = ?"
+			args = append(args, opts.Status)
+		}
 	}
-	
+
 	query += " ORDER BY start_time DESC"
 	
 	if opts.Limit > 0 {

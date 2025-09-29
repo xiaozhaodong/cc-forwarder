@@ -41,7 +41,7 @@ const createInitialFilters = () => {
     return {
         startDate: todayRange.startDate,  // 当天00:00
         endDate: todayRange.endDate,      // 当天23:59
-        status: 'all',              // 状态: all, success, failed, timeout, suspended
+        status: 'all',              // 状态: all, pending, forwarding, processing, retry, suspended, completed, failed, cancelled
         model: '',                  // 模型筛选（空字符串表示全部模型）
         endpoint: 'all',            // 端点筛选
         group: 'all'                // 组筛选
@@ -51,13 +51,17 @@ const createInitialFilters = () => {
 // 动态获取初始筛选器，避免时间比较问题
 const getInitialFilters = () => createInitialFilters();
 
-// 状态选项映射
+// 状态选项映射 - v3.5.0状态机重构后的正确状态
 const STATUS_OPTIONS = {
     all: '全部状态',
-    success: '成功',
+    pending: '等待中',
+    forwarding: '转发中',
+    processing: '处理中',
+    retry: '重试中',
+    suspended: '挂起',
+    completed: '已完成',
     failed: '失败',
-    timeout: '超时',
-    suspended: '挂起'
+    cancelled: '已取消'
 };
 
 export const useFilters = (initialFilters = {}) => {
@@ -160,15 +164,9 @@ export const useFilters = (initialFilters = {}) => {
             queryParams.end_date = timeStr + '+08:00';
         }
 
-        // 处理状态筛选
+        // 处理状态筛选 - v3.5.0状态机重构后直接传递状态值
         if (filters.status && filters.status !== 'all') {
-            const statusMapping = {
-                success: 'completed',
-                failed: 'error',
-                timeout: 'timeout',
-                suspended: 'suspended'
-            };
-            queryParams.status = statusMapping[filters.status] || filters.status;
+            queryParams.status = filters.status;
         }
 
         // 处理其他筛选条件

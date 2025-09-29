@@ -440,13 +440,14 @@ func (ua *UsageAPI) HandleUsageStats(w http.ResponseWriter, r *http.Request) {
 	for _, req := range requests {
 		totalRequests++
 		
-		// Count by status
+		// Count by status - v3.5.0状态机重构兼容统计
 		switch req.Status {
 		case "completed", "processing":
 			successRequests++
-		case "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error":
+		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
+			// 失败状态：包含新架构的failed状态 + 旧版本的各种错误状态
 			errorRequests++
-		// "timeout" 和 "cancelled" 不算作失败，是独立状态
+		// "cancelled" 和 "suspended" 不算作成功或失败，是独立状态
 		}
 		
 		// Sum tokens and cost

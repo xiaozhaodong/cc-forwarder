@@ -5,7 +5,7 @@
  *
  * 功能特性:
  * - 时间范围筛选 (开始时间、结束时间输入)
- * - 状态筛选 (all, success, failed, timeout, suspended)
+ * - 状态筛选 (v3.5.0状态机重构: pending, forwarding, processing, retry, suspended, completed, failed, cancelled)
  * - 模型筛选 (动态从 /api/v1/usage/models 加载)
  * - 端点筛选 (动态选项)
  * - 组筛选 (动态选项)
