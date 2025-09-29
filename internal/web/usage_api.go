@@ -53,31 +53,36 @@ type RequestDetailResponse struct {
 	UserAgent   string    `json:"user_agent,omitempty"`
 	Method      string    `json:"method"`
 	Path        string    `json:"path"`
-	
+
 	StartTime   time.Time `json:"start_time"`
 	EndTime     *time.Time `json:"end_time,omitempty"`
 	DurationMs  *int64    `json:"duration_ms,omitempty"`
-	
+
 	EndpointName string    `json:"endpoint_name,omitempty"`
 	GroupName    string    `json:"group_name,omitempty"`
 	ModelName    string    `json:"model_name,omitempty"`
 	IsStreaming  bool      `json:"is_streaming"`
-	
+
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code,omitempty"`
 	RetryCount     int    `json:"retry_count"`
-	
+
+	// v3.5.0状态机重构新增字段 - 错误原因分离
+	FailureReason     string `json:"failure_reason,omitempty"`      // 失败原因类型
+	LastFailureReason string `json:"last_failure_reason,omitempty"` // 最后一次失败的详细信息
+	CancelReason      string `json:"cancel_reason,omitempty"`       // 取消原因
+
 	InputTokens         int64 `json:"input_tokens"`
 	OutputTokens        int64 `json:"output_tokens"`
 	CacheCreationTokens int64 `json:"cache_creation_tokens"`
 	CacheReadTokens     int64 `json:"cache_read_tokens"`
-	
+
 	InputCostUSD         float64 `json:"input_cost_usd"`
 	OutputCostUSD        float64 `json:"output_cost_usd"`
 	CacheCreationCostUSD float64 `json:"cache_creation_cost_usd"`
 	CacheReadCostUSD     float64 `json:"cache_read_cost_usd"`
 	TotalCostUSD         float64 `json:"total_cost_usd"`
-	
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -314,6 +319,9 @@ func (ua *UsageAPI) HandleUsageRequests(w http.ResponseWriter, r *http.Request) 
 			Status:              detail.Status,
 			HTTPStatusCode:      detail.HTTPStatusCode,
 			RetryCount:          detail.RetryCount,
+			FailureReason:       detail.FailureReason,
+			LastFailureReason:   detail.LastFailureReason,
+			CancelReason:        detail.CancelReason,
 			InputTokens:         detail.InputTokens,
 			OutputTokens:        detail.OutputTokens,
 			CacheCreationTokens: detail.CacheCreationTokens,

@@ -16,7 +16,7 @@ import FiltersPanel from './components/FiltersPanel.jsx';
 import RequestsTable from './components/RequestsTable.jsx';
 import RequestDetailModal from './components/RequestDetailModal.jsx';
 import StatsOverview from './components/StatsOverview.jsx';
-import useRequestsData, { useRequestDetail } from './hooks/useRequestsData.jsx';
+import useRequestsData from './hooks/useRequestsData.jsx';
 import useFilters from './hooks/useFilters.jsx';
 import usePagination from './hooks/usePagination.jsx';
 import { fetchUsageStats } from './utils/apiService.jsx';
@@ -65,8 +65,8 @@ const RequestsPage = () => {
     const [hasStatsLoaded, setHasStatsLoaded] = useState(false);
     const [isStatsRefreshing, setIsStatsRefreshing] = useState(false);
 
-    // 请求详情Hook
-    const { fetchDetail, loading: detailLoading, error: detailError } = useRequestDetail();
+    // 注释掉详情Hook，直接使用列表数据
+    // const { fetchDetail, loading: detailLoading, error: detailError } = useRequestDetail();
 
     // 加载统计数据
     const loadStatsData = useCallback(async () => {
@@ -184,25 +184,29 @@ const RequestsPage = () => {
         setTimeout(() => loadData(true, true), 0); // forceRefresh = true, skipValidation = true
     }, [resetFilters, pagination, loadData]);
 
-    // 处理行点击 - 显示请求详情
+    // 处理行点击事件 - 直接使用列表数据，不调用详情API
     const handleRowClick = useCallback(async (request) => {
         try {
             setSelectedRequest(request);
             setIsModalOpen(true);
 
+            // 注释掉详情API调用，直接使用列表数据
+            // 列表数据现在已经包含 failure_reason, cancel_reason, last_failure_reason 等新字段
+            /*
             // 如果请求数据不完整，获取详细信息
             const requestId = request.id || request.requestId || request.request_id;
             if (requestId && (!request.requestBody || !request.responseBody)) {
                 const detailData = await fetchDetail(requestId);
                 setSelectedRequest(detailData);
             }
+            */
         } catch (err) {
-            console.error('获取请求详情失败:', err);
-            // 即使获取详情失败，也显示基本信息
+            console.error('显示请求详情失败:', err);
+            // 即使出错，也显示基本信息
             setSelectedRequest(request);
             setIsModalOpen(true);
         }
-    }, [fetchDetail]);
+    }, []);
 
     // 关闭模态框
     const handleCloseModal = useCallback(() => {

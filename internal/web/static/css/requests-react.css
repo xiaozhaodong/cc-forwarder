@@ -900,6 +900,12 @@
     color: white;
 }
 
+/* v3.5.0状态机重构新增 - failed状态支持 */
+.status-badge.status-failed {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+}
+
 /* 取消状态 - 紫色渐变 (与master完全一致) */
 .status-badge.status-cancelled {
     background: linear-gradient(135deg, #8b5cf6, #7c3aed);
@@ -1067,6 +1073,19 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+}
+
+/* v3.5.0状态机重构 - 全宽度错误信息显示 */
+.detail-item.detail-full-width {
+    grid-column: 1 / -1; /* 占满整行 */
+}
+
+/* 失败原因和取消原因的统一样式 - 与其他detail-value保持一致 */
+.detail-value.failure-reason,
+.detail-value.cancel-reason {
+    font-weight: 500;
+    color: #1f2937; /* 与其他detail-value相同的颜色 */
+    /* 移除特殊背景和边框，保持统一风格 */
 }
 
 .detail-label {
