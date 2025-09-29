@@ -33,7 +33,7 @@ func testPrimaryKeyConstraintProtection(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("pk-constraint-insert")
 
 		// 创建初始记录
-		rlm1 := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm1.SetEndpoint("test-endpoint", "test-group")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -52,7 +52,7 @@ func testPrimaryKeyConstraintProtection(t *testing.T) {
 		require.Equal(t, 1, len(records), "第一次记录应该成功")
 
 		// 尝试用相同request_id创建新记录（应该被约束阻止或更新现有记录）
-		rlm2 := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm2.SetEndpoint("test-endpoint-2", "test-group")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -87,7 +87,7 @@ func testPrimaryKeyConstraintProtection(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("pk-conflict-concurrent")
 
 		// 先创建基础记录
-		baseRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		baseRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		baseRLM.SetEndpoint("base-endpoint", "test-group")
 		baseRLM.SetModel("claude-3-5-haiku-20241022")
 		baseRLM.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -101,7 +101,7 @@ func testPrimaryKeyConstraintProtection(t *testing.T) {
 			go func(index int) {
 				defer wg.Done()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -140,7 +140,7 @@ func testUniqueIndexProtection(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("unique-index")
 
 		// 创建第一个记录
-		rlm1 := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm1.SetEndpoint("endpoint-1", "group-1")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent-1", "POST", "/v1/messages", false)
@@ -155,7 +155,7 @@ func testUniqueIndexProtection(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// 尝试用不同的端点和组但相同的请求ID创建记录
-		rlm2 := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm2.SetEndpoint("endpoint-2", "group-2")
 		rlm2.SetModel("claude-3-5-sonnet-20241022")
 
@@ -190,7 +190,7 @@ func testUniqueIndexProtection(t *testing.T) {
 		}
 
 		for i, requestID := range requestIDs {
-			rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+			rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 			rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", i), "test-group")
 			rlm.SetModel("claude-3-5-haiku-20241022")
 			rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -222,7 +222,7 @@ func testTransactionIsolationProtection(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("read-committed")
 
 		// 创建长事务模拟
-		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -276,7 +276,7 @@ func testTransactionIsolationProtection(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("repeatable-read")
 
 		// 创建初始状态
-		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -356,7 +356,7 @@ func testConcurrentWriteConflictResolution(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("optimistic-lock")
 
 		// 创建基础记录
-		baseRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		baseRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		baseRLM.SetEndpoint("base-endpoint", "test-group")
 		baseRLM.SetModel("claude-3-5-haiku-20241022")
 		baseRLM.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -371,7 +371,7 @@ func testConcurrentWriteConflictResolution(t *testing.T) {
 			go func(index int) {
 				defer wg.Done()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -417,7 +417,7 @@ func testConcurrentWriteConflictResolution(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("pessimistic-lock")
 
 		// 创建基础记录
-		baseRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		baseRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		baseRLM.SetEndpoint("base-endpoint", "test-group")
 		baseRLM.SetModel("claude-3-5-haiku-20241022")
 		baseRLM.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -442,7 +442,7 @@ func testConcurrentWriteConflictResolution(t *testing.T) {
 				orderIndex++
 				orderMutex.Unlock()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -478,7 +478,7 @@ func testDatabaseLockingMechanism(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("row-lock")
 
 		// 创建长时间运行的事务
-		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm.SetEndpoint("lock-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -499,7 +499,7 @@ func testDatabaseLockingMechanism(t *testing.T) {
 
 				start := time.Now()
 
-				conflictRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				conflictRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				conflictRLM.SetEndpoint(fmt.Sprintf("conflict-%d", index), "test-group")
 				conflictRLM.SetModel("claude-3-5-haiku-20241022")
 
@@ -561,7 +561,7 @@ func testDatabaseLockingMechanism(t *testing.T) {
 
 				start := time.Now()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, reqID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, reqID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 				rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -631,7 +631,7 @@ func testBatchOperationAtomicity(t *testing.T) {
 				defer wg.Done()
 
 				requestID := requestIDs[index]
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("batch-endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 				rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -653,7 +653,7 @@ func testBatchOperationAtomicity(t *testing.T) {
 				defer wg.Done()
 
 				requestID := requestIDs[index]
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("batch-endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 				rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -696,7 +696,7 @@ func testBatchOperationAtomicity(t *testing.T) {
 		requestID := generateDatabaseTestRequestID("transaction-rollback")
 
 		// 创建一个会失败的操作序列（模拟事务回滚）
-		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm.SetEndpoint("rollback-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)

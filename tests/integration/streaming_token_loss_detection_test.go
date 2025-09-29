@@ -67,6 +67,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		tracker,
 		monitoringMiddleware,
 		requestID,
+		nil, // eventBus
 	)
 
 	lifecycleManager.SetEndpoint("test-endpoint", "test-group")

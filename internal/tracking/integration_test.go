@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// Helper functions for pointer creation
+func stringPtr(s string) *string { return &s }
+func intPtr(i int) *int { return &i }
+
 // MockWebServer simulates the web server integration
 type MockWebServer struct {
 	usageTracker *UsageTracker
@@ -187,14 +191,21 @@ func TestWebIntegration(t *testing.T) {
 			httpStatus = 500
 		}
 		
-		tracker.RecordRequestUpdate(req.requestID, req.endpoint, req.group, status, 0, httpStatus)
+		opts := UpdateOptions{
+			EndpointName: stringPtr(req.endpoint),
+			GroupName:    stringPtr(req.group),
+			Status:       stringPtr(status),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(httpStatus),
+		}
+		tracker.RecordRequestUpdate(req.requestID, opts)
 		
 		tokens := &TokenUsage{
 			InputTokens:  req.inputTokens,
 			OutputTokens: req.outputTokens,
 		}
 		
-		tracker.RecordRequestComplete(req.requestID, req.model, tokens, 300*time.Millisecond)
+		tracker.RecordRequestSuccess(req.requestID, req.model, tokens, 300*time.Millisecond)
 	}
 	
 	// Wait for processing
@@ -451,14 +462,21 @@ func TestConcurrentWebRequests(t *testing.T) {
 		tracker.RecordRequestStart(requestID, "127.0.0.1", "concurrent-web-agent", "POST", "/v1/messages", false)
 		
 		// Add request update to ensure complete records
-		tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "success", 0, 200)
+		opts := UpdateOptions{
+			EndpointName: stringPtr("test-endpoint"),
+			GroupName:    stringPtr("test-group"),
+			Status:       stringPtr("success"),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(200),
+		}
+		tracker.RecordRequestUpdate(requestID, opts)
 		
 		tokens := &TokenUsage{
 			InputTokens:  100 + int64(i*10),
 			OutputTokens: 50 + int64(i*5),
 		}
 		
-		tracker.RecordRequestComplete(requestID, "test-model", tokens, 200*time.Millisecond)
+		tracker.RecordRequestSuccess(requestID, "test-model", tokens, 200*time.Millisecond)
 	}
 	
 	// Force flush and wait for processing

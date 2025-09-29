@@ -603,8 +603,14 @@ func (m *Manager) notifyGroupHealthStats(groupName string) {
 // healthCheckLoop runs the health check routine
 func (m *Manager) healthCheckLoop() {
 	defer m.wg.Done()
-	
-	ticker := time.NewTicker(m.config.Health.CheckInterval)
+
+	// 设置默认检查间隔，避免panic
+	checkInterval := m.config.Health.CheckInterval
+	if checkInterval <= 0 {
+		checkInterval = 30 * time.Second  // 默认30秒检查一次
+	}
+
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
 	// Initial health check

@@ -38,7 +38,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// 先创建初始记录
-		initialRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		initialRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		initialRLM.SetEndpoint("test-endpoint", "test-group")
 		initialRLM.SetModel("claude-3-5-haiku-20241022")
 		initialRLM.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -54,7 +54,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 			go func(index int) {
 				defer wg.Done()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index), "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -86,7 +86,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 		requestID := generateAdvancedTestRequestID("unique-constraint")
 
 		// 创建初始记录
-		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -130,7 +130,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 		requestID := generateAdvancedTestRequestID("transaction-atomic")
 
 		// 模拟事务中断情况
-		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -190,7 +190,7 @@ func testBusinessLogicProtection(t *testing.T) {
 		}
 
 		requestID := generateAdvancedTestRequestID("state-machine")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -232,7 +232,7 @@ func testBusinessLogicProtection(t *testing.T) {
 		}
 
 		requestID := generateAdvancedTestRequestID("retry-logic")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -283,7 +283,7 @@ func testBusinessLogicProtection(t *testing.T) {
 		}
 
 		requestID := generateAdvancedTestRequestID("token-validation")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -369,7 +369,7 @@ func testRaceConditionBillingConsistency(t *testing.T) {
 		managers := make([]*proxy.RequestLifecycleManager, numManagers)
 
 		for i := 0; i < numManagers; i++ {
-			managers[i] = proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+			managers[i] = proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 			managers[i].SetEndpoint(fmt.Sprintf("endpoint-%d", i), "test-group")
 			managers[i].SetModel("claude-3-5-haiku-20241022")
 		}
@@ -422,7 +422,7 @@ func testRaceConditionBillingConsistency(t *testing.T) {
 		}
 
 		requestID := generateAdvancedTestRequestID("read-write-consistency")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -481,7 +481,7 @@ func testFailureRetryBillingAccuracy(t *testing.T) {
 		}
 
 		requestID := generateAdvancedTestRequestID("partial-stream")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -522,7 +522,7 @@ func testFailureRetryBillingAccuracy(t *testing.T) {
 		}
 
 		requestID := generateAdvancedTestRequestID("retry-success")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -579,7 +579,7 @@ func testCrossSessionBillingProtection(t *testing.T) {
 		requestID := generateAdvancedTestRequestID("cross-instance")
 
 		// 第一个实例处理请求
-		rlm1 := proxy.NewRequestLifecycleManager(tracker1, nil, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker1, nil, requestID, nil)
 		rlm1.SetEndpoint("instance-1", "test-group")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -593,7 +593,7 @@ func testCrossSessionBillingProtection(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// 第二个实例尝试处理相同请求（异常情况）
-		rlm2 := proxy.NewRequestLifecycleManager(tracker2, nil, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker2, nil, requestID, nil)
 		rlm2.SetEndpoint("instance-2", "test-group")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -637,7 +637,7 @@ func testExtremeConcurrencyBillingCorrectness(t *testing.T) {
 				defer allWg.Done()
 
 				requestID := generateAdvancedTestRequestID(fmt.Sprintf("extreme-concurrency-%d", requestIndex))
-				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 				rlm.SetEndpoint("test-endpoint", "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 				rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)

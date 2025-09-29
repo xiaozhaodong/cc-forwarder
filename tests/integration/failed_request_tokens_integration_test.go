@@ -35,7 +35,7 @@ func TestFailedRequestTokensIntegration(t *testing.T) {
 	monitoringMiddleware := middleware.NewMonitoringMiddleware(nil)
 
 	// 3. 创建RequestLifecycleManager
-	rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware, "req-integration-test")
+	rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware, "req-integration-test", nil)
 
 	// 4. 设置请求信息
 	rlm.SetEndpoint("integration-endpoint", "integration-group")
@@ -111,7 +111,7 @@ func TestFailedRequestTokensEdgeCases(t *testing.T) {
 	defer tracker.Close()
 
 	monitoringMiddleware := middleware.NewMonitoringMiddleware(nil)
-	rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware, "req-edge-case")
+	rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware, "req-edge-case", nil)
 
 	// 测试用例1: 空Token不会被处理
 	rlm.RecordTokensForFailedRequest(nil, "nil_tokens")
@@ -183,7 +183,7 @@ func TestFailedRequestTokensConcurrency(t *testing.T) {
 	for i := 0; i < numManagers; i++ {
 		go func(managerID int) {
 			rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware,
-				"req-concurrent-"+string(rune('A'+managerID)))
+				"req-concurrent-"+string(rune('A'+managerID)), nil)
 
 			rlm.SetEndpoint("concurrent-endpoint-"+string(rune('0'+managerID)), "concurrent-group")
 

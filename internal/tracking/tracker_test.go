@@ -83,14 +83,21 @@ func TestAsyncEventProcessing(t *testing.T) {
 		tracker.RecordRequestStart(requestID, "127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 		
 		// Update event
-		tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "processing", 0, 0)
+		opts := UpdateOptions{
+			EndpointName: stringPtr("test-endpoint"),
+			GroupName:    stringPtr("test-group"),
+			Status:       stringPtr("processing"),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(0),
+		}
+		tracker.RecordRequestUpdate(requestID, opts)
 		
 		// Complete event
 		tokens := &TokenUsage{
 			InputTokens:  100 + int64(i*10),
 			OutputTokens: 50 + int64(i*5),
 		}
-		tracker.RecordRequestComplete(requestID, "test-model", tokens, 500*time.Millisecond)
+		tracker.RecordRequestSuccess(requestID, "test-model", tokens, 500*time.Millisecond)
 	}
 	
 	// Wait for async processing to complete
@@ -283,7 +290,7 @@ func TestConcurrentAccess(t *testing.T) {
 					InputTokens:  100,
 					OutputTokens: 50,
 				}
-				tracker.RecordRequestComplete(requestID, "concurrent-model", tokens, 100*time.Millisecond)
+				tracker.RecordRequestSuccess(requestID, "concurrent-model", tokens, 100*time.Millisecond)
 			}
 		}(i)
 	}
@@ -370,7 +377,14 @@ func TestPricingUpdate(t *testing.T) {
 			tracker.RecordRequestStart(requestID, "127.0.0.1", "pricing-agent", "POST", "/v1/messages", false)
 			
 			// Add request update to ensure complete records
-			tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "success", 0, 200)
+			opts := UpdateOptions{
+				EndpointName: stringPtr("test-endpoint"),
+				GroupName:    stringPtr("test-group"),
+				Status:       stringPtr("success"),
+				RetryCount:   intPtr(0),
+				HttpStatus:   intPtr(200),
+			}
+			tracker.RecordRequestUpdate(requestID, opts)
 			
 			tokens := &TokenUsage{
 				InputTokens:  100,
@@ -382,7 +396,7 @@ func TestPricingUpdate(t *testing.T) {
 				modelName = "new-model"
 			}
 			
-			tracker.RecordRequestComplete(requestID, modelName, tokens, 100*time.Millisecond)
+			tracker.RecordRequestSuccess(requestID, modelName, tokens, 100*time.Millisecond)
 			
 			time.Sleep(10 * time.Millisecond)
 		}

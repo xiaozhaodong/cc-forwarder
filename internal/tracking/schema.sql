@@ -24,10 +24,17 @@ CREATE TABLE IF NOT EXISTS request_logs (
     model_name TEXT,                        -- Claude模型名称
     is_streaming BOOLEAN DEFAULT FALSE,     -- 是否为流式请求
     
-    -- 状态信息
-    status TEXT NOT NULL DEFAULT 'pending', -- pending/success/error/suspended/timeout
+    -- 状态信息 (v3.5.0更新: 生命周期状态与错误原因分离 - 2025-09-28)
+    status TEXT NOT NULL DEFAULT 'pending', -- 生命周期状态: pending/forwarding/processing/retry/suspended/completed/failed/cancelled
     http_status_code INTEGER,               -- HTTP状态码
     retry_count INTEGER DEFAULT 0,          -- 重试次数
+
+    -- 失败信息 (状态机重构新增字段 v3.5.0 - 2025-09-28)
+    failure_reason TEXT,                    -- 当前失败原因类型: rate_limited/server_error/network_error/timeout/empty_response/invalid_response
+    last_failure_reason TEXT,               -- 最后一次失败的详细错误信息
+
+    -- 取消信息 (状态机重构新增字段 v3.5.0 - 2025-09-28)
+    cancel_reason TEXT,                     -- 取消原因 (取消时间使用end_time字段)
     
     -- Token统计
     input_tokens INTEGER DEFAULT 0,        -- 输入token数
@@ -54,6 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_status ON request_logs(status);
 CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model_name);
 CREATE INDEX IF NOT EXISTS idx_request_logs_endpoint ON request_logs(endpoint_name);
 CREATE INDEX IF NOT EXISTS idx_request_logs_group ON request_logs(group_name);
+CREATE INDEX IF NOT EXISTS idx_request_logs_failure_reason ON request_logs(failure_reason);
 
 -- 使用统计汇总表 (可选，用于快速查询)
 CREATE TABLE IF NOT EXISTS usage_summary (

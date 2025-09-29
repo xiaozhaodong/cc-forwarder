@@ -26,10 +26,17 @@ CREATE TABLE IF NOT EXISTS request_logs (
     model_name VARCHAR(255) COMMENT 'Claude模型名称',
     is_streaming BOOLEAN DEFAULT FALSE COMMENT '是否为流式请求',
 
-    -- 状态信息
-    status VARCHAR(50) NOT NULL DEFAULT 'pending' COMMENT 'pending/completed/error/suspended/timeout',
+    -- 状态信息 (v3.5.0更新: 生命周期状态与错误原因分离 - 2025-09-28)
+    status VARCHAR(50) NOT NULL DEFAULT 'pending' COMMENT '生命周期状态: pending/forwarding/processing/retry/suspended/completed/failed/cancelled',
     http_status_code INT COMMENT 'HTTP状态码',
     retry_count INT DEFAULT 0 COMMENT '重试次数',
+
+    -- 失败信息 (状态机重构新增字段 v3.5.0 - 2025-09-28)
+    failure_reason VARCHAR(50) COMMENT '当前失败原因类型: rate_limited/server_error/network_error/timeout/empty_response/invalid_response',
+    last_failure_reason TEXT COMMENT '最后一次失败的详细错误信息',
+
+    -- 取消信息 (状态机重构新增字段 v3.5.0 - 2025-09-28)
+    cancel_reason VARCHAR(255) COMMENT '取消原因(取消时间使用end_time字段)',
 
     -- Token统计
     input_tokens BIGINT DEFAULT 0 COMMENT '输入token数',
@@ -55,6 +62,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     INDEX idx_model_name (model_name),
     INDEX idx_endpoint_name (endpoint_name),
     INDEX idx_group_name (group_name),
+    INDEX idx_failure_reason (failure_reason),
     INDEX idx_created_at (created_at)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='请求日志记录表';

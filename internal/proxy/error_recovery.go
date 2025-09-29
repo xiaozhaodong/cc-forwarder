@@ -268,8 +268,14 @@ func (erm *ErrorRecoveryManager) ExecuteRetry(ctx context.Context, errorCtx *Err
 
 	// 记录重试状态
 	if erm.usageTracker != nil && errorCtx.RequestID != "" {
-		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, errorCtx.EndpointName,
-			errorCtx.GroupName, "retry", errorCtx.AttemptCount, 0)
+		opts := tracking.UpdateOptions{
+			EndpointName: &errorCtx.EndpointName,
+			GroupName:    &errorCtx.GroupName,
+			Status:       stringPtr("retry"),
+			RetryCount:   &errorCtx.AttemptCount,
+			HttpStatus:   intPtr(0),
+		}
+		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)
 	}
 
 	slog.Info(fmt.Sprintf("🔄 [执行重试] [%s] 第 %d 次重试, 端点: %s",
@@ -296,8 +302,14 @@ func (erm *ErrorRecoveryManager) HandleFinalFailure(errorCtx *ErrorContext) {
 			status = "server_error"
 		}
 
-		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, errorCtx.EndpointName,
-			errorCtx.GroupName, status, errorCtx.AttemptCount, 0)
+		opts := tracking.UpdateOptions{
+			EndpointName: &errorCtx.EndpointName,
+			GroupName:    &errorCtx.GroupName,
+			Status:       &status,
+			RetryCount:   &errorCtx.AttemptCount,
+			HttpStatus:   intPtr(0),
+		}
+		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)
 	}
 
 	slog.Error(fmt.Sprintf("💀 [最终失败] [%s] 错误类型: %s, 尝试次数: %d, 端点: %s, 原始错误: %v",
@@ -323,7 +335,10 @@ func (erm *ErrorRecoveryManager) RecoverFromPartialData(requestID string, partia
 		// 可以在这里添加部分Token解析逻辑
 		if erm.usageTracker != nil {
 			// 记录部分数据恢复状态
-			erm.usageTracker.RecordRequestUpdate(requestID, "", "", "partial_recovery", 0, 0)
+			opts := tracking.UpdateOptions{
+				Status: stringPtr("partial_recovery"),
+			}
+			erm.usageTracker.RecordRequestUpdate(requestID, opts)
 		}
 	} else {
 		slog.Info(fmt.Sprintf("📝 [部分数据恢复] [%s] 保存部分响应数据, 长度: %d字节, 处理时间: %v",
@@ -510,4 +525,14 @@ func (erm *ErrorRecoveryManager) SetRetryPolicy(maxRetries int, baseDelay, maxDe
 		"base_delay", baseDelay,
 		"max_delay", maxDelay,
 		"backoff_factor", backoffFactor)
+}
+
+// 辅助函数：创建string指针
+func stringPtr(s string) *string {
+	return &s
+}
+
+// 辅助函数：创建int指针
+func intPtr(i int) *int {
+	return &i
 }

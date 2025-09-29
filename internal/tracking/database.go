@@ -186,8 +186,12 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		return ut.buildStartQuery(event)
 	case "update":
 		return ut.buildUpdateQuery(event)
-	case "update_with_model": // 新增：带模型信息的更新
-		return ut.buildUpdateWithModelQuery(event)
+	case "flexible_update": // 新增：统一的可选字段更新
+		return ut.buildFlexibleUpdateQuery(event)
+	case "success": // 新增：成功完成，替代"complete"
+		return ut.buildSuccessQuery(event)
+	case "final_failure": // 新增：失败/取消完成
+		return ut.buildFinalFailureQuery(event)
 	case "complete":
 		// 对于complete事件，直接使用传入的持续时间，不需要查询数据库
 		data, ok := event.Data.(RequestCompleteData)
@@ -366,32 +370,204 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 	return query, args, nil
 }
 
-// buildUpdateWithModelQuery 构建包含模型信息的更新查询
-func (ut *UsageTracker) buildUpdateWithModelQuery(event RequestEvent) (string, []interface{}, error) {
-	data, ok := event.Data.(RequestUpdateDataWithModel)
+// buildFlexibleUpdateQuery 构建统一的可选字段更新查询
+// 支持可选字段更新，只更新非nil的字段
+func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []interface{}, error) {
+	opts, ok := event.Data.(UpdateOptions)
 	if !ok {
-		return "", nil, fmt.Errorf("invalid update_with_model event data type")
+		return "", nil, fmt.Errorf("invalid flexible_update event data type")
 	}
 
-	// 同时更新状态和模型信息
+	// 构建动态UPDATE语句
+	var setParts []string
+	var args []interface{}
+
+	// 根据UpdateOptions中的非nil字段构建SET子句
+	if opts.EndpointName != nil {
+		setParts = append(setParts, "endpoint_name = ?")
+		args = append(args, *opts.EndpointName)
+	}
+	if opts.GroupName != nil {
+		setParts = append(setParts, "group_name = ?")
+		args = append(args, *opts.GroupName)
+	}
+	if opts.Status != nil {
+		setParts = append(setParts, "status = ?")
+		args = append(args, *opts.Status)
+	}
+	if opts.RetryCount != nil {
+		setParts = append(setParts, "retry_count = ?")
+		args = append(args, *opts.RetryCount)
+	}
+	if opts.HttpStatus != nil {
+		setParts = append(setParts, "http_status_code = ?")
+		args = append(args, *opts.HttpStatus)
+	}
+	if opts.ModelName != nil {
+		setParts = append(setParts, "model_name = ?")
+		args = append(args, *opts.ModelName)
+	}
+	if opts.EndTime != nil {
+		setParts = append(setParts, "end_time = ?")
+		args = append(args, *opts.EndTime)
+	}
+	if opts.Duration != nil {
+		setParts = append(setParts, "duration_ms = ?")
+		args = append(args, opts.Duration.Milliseconds())
+	}
+	if opts.FailureReason != nil {
+		setParts = append(setParts, "failure_reason = ?")
+		args = append(args, *opts.FailureReason)
+	}
+
+	// 如果没有字段需要更新，返回错误
+	if len(setParts) == 0 {
+		return "", nil, fmt.Errorf("no fields to update in flexible_update event")
+	}
+
+	// 总是更新updated_at字段
+	setParts = append(setParts, fmt.Sprintf("updated_at = %s", ut.adapter.BuildDateTimeNow()))
+
+	// 构建完整的UPDATE语句
+	query := fmt.Sprintf("UPDATE request_logs SET %s WHERE request_id = ?",
+		strings.Join(setParts, ", "))
+
+	// 添加WHERE条件的参数
+	args = append(args, event.RequestID)
+
+	return query, args, nil
+}
+
+// buildSuccessQuery 构建成功完成的查询
+// 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token和成本信息
+func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(RequestCompleteData)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid success event data type")
+	}
+
+	// 计算成本
+	tokens := &TokenUsage{
+		InputTokens:         data.InputTokens,
+		OutputTokens:        data.OutputTokens,
+		CacheCreationTokens: data.CacheCreationTokens,
+		CacheReadTokens:     data.CacheReadTokens,
+	}
+
+	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+
 	query := fmt.Sprintf(`UPDATE request_logs SET
-		endpoint_name = ?,
-		group_name = ?,
-		status = ?,
-		retry_count = ?,
-		http_status_code = ?,
-		model_name = ?, -- 关键：同时更新模型信息
+		end_time = ?,
+		duration_ms = ?,
+		model_name = ?,
+		input_tokens = ?,
+		output_tokens = ?,
+		cache_creation_tokens = ?,
+		cache_read_tokens = ?,
+		input_cost_usd = ?,
+		output_cost_usd = ?,
+		cache_creation_cost_usd = ?,
+		cache_read_cost_usd = ?,
+		total_cost_usd = ?,
+		http_status_code = CASE WHEN http_status_code IS NULL OR http_status_code = 0 THEN 200 ELSE http_status_code END,
+		status = 'completed',
 		updated_at = %s
 	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 	args := []interface{}{
-		data.EndpointName,
-		data.GroupName,
-		data.Status,
-		data.RetryCount,
-		data.HTTPStatus,
-		data.ModelName, // 模型信息
+		event.Timestamp,
+		data.Duration.Milliseconds(),
+		data.ModelName,
+		data.InputTokens,
+		data.OutputTokens,
+		data.CacheCreationTokens,
+		data.CacheReadTokens,
+		inputCost,
+		outputCost,
+		cacheCost,
+		readCost,
+		totalCost,
 		event.RequestID,
+	}
+
+	return query, args, nil
+}
+
+// buildFinalFailureQuery 构建失败/取消完成的查询
+// 一次性更新所有失败/取消相关字段：status, end_time, duration_ms, failure_reason/cancel_reason, 可选Token
+func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(map[string]interface{})
+	if !ok {
+		return "", nil, fmt.Errorf("invalid final_failure event data type")
+	}
+
+	status, _ := data["status"].(string)
+	reason, _ := data["reason"].(string)
+	errorDetail, _ := data["error_detail"].(string)
+	duration, _ := data["duration"].(time.Duration)
+	httpStatus, _ := data["http_status"].(int)
+	inputTokens, _ := data["input_tokens"].(int64)
+	outputTokens, _ := data["output_tokens"].(int64)
+	cacheCreationTokens, _ := data["cache_creation_tokens"].(int64)
+	cacheReadTokens, _ := data["cache_read_tokens"].(int64)
+
+	// 根据状态设置相应的reason字段
+	var query string
+	var args []interface{}
+
+	if status == "cancelled" {
+		query = fmt.Sprintf(`UPDATE request_logs SET
+			end_time = ?,
+			duration_ms = ?,
+			status = 'cancelled',
+			cancel_reason = ?,
+			http_status_code = ?,
+			input_tokens = ?,
+			output_tokens = ?,
+			cache_creation_tokens = ?,
+			cache_read_tokens = ?,
+			updated_at = %s
+		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+
+		args = []interface{}{
+			event.Timestamp,
+			duration.Milliseconds(),
+			reason, // cancel_reason
+			httpStatus, // http_status_code
+			inputTokens,
+			outputTokens,
+			cacheCreationTokens,
+			cacheReadTokens,
+			event.RequestID,
+		}
+	} else {
+		// status == "failed"
+		query = fmt.Sprintf(`UPDATE request_logs SET
+			end_time = ?,
+			duration_ms = ?,
+			status = 'failed',
+			failure_reason = ?,
+			last_failure_reason = ?,
+			http_status_code = ?,
+			input_tokens = ?,
+			output_tokens = ?,
+			cache_creation_tokens = ?,
+			cache_read_tokens = ?,
+			updated_at = %s
+		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+
+		args = []interface{}{
+			event.Timestamp,
+			duration.Milliseconds(),
+			reason,      // failure_reason
+			errorDetail, // last_failure_reason
+			httpStatus,  // http_status_code
+			inputTokens,
+			outputTokens,
+			cacheCreationTokens,
+			cacheReadTokens,
+			event.RequestID,
+		}
 	}
 
 	return query, args, nil

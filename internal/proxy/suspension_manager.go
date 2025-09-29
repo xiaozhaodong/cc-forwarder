@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/proxy/handlers" // 🎯 [挂起取消区分] 新增handlers包导入
 )
 
 // SuspensionManager 管理请求挂起逻辑
@@ -347,6 +348,125 @@ func (sm *SuspensionManager) WaitForEndpointRecovery(ctx context.Context, connID
 				slog.InfoContext(ctx, fmt.Sprintf("❌ [请求异常] 连接 %s 原始请求上下文异常: %v，结束挂起", connID, ctxErr))
 			}
 			return false
+		}
+	}
+}
+
+// WaitForEndpointRecoveryWithResult 🎯 [挂起取消区分] 带结果的端点恢复等待方法
+// 功能与WaitForEndpointRecovery相同，但返回详细的结果类型以区分成功、超时、取消
+// 这是对现有方法的增强版本，保持向后兼容性
+func (sm *SuspensionManager) WaitForEndpointRecoveryWithResult(ctx context.Context, connID, failedEndpoint string) handlers.SuspensionResult {
+	// 检查配置和管理器是否存在
+	if sm.config == nil {
+		slog.InfoContext(ctx, "🔍 [端点恢复等待] 配置为空，无法挂起请求")
+		return handlers.SuspensionTimeout
+	}
+	if sm.groupManager == nil {
+		slog.InfoContext(ctx, "🔍 [端点恢复等待] 组管理器为空，无法挂起请求")
+		return handlers.SuspensionTimeout
+	}
+	if sm.endpointManager == nil {
+		slog.InfoContext(ctx, "🔍 [端点恢复等待] 端点管理器为空，无法挂起请求")
+		return handlers.SuspensionTimeout
+	}
+
+	// 增加挂起请求计数
+	sm.suspendedRequestsMutex.Lock()
+	sm.suspendedRequestsCount++
+	currentCount := sm.suspendedRequestsCount
+	sm.suspendedRequestsMutex.Unlock()
+
+	// 确保在退出时减少计数
+	defer func() {
+		sm.suspendedRequestsMutex.Lock()
+		sm.suspendedRequestsCount--
+		newCount := sm.suspendedRequestsCount
+		sm.suspendedRequestsMutex.Unlock()
+		slog.InfoContext(ctx, fmt.Sprintf("⬇️ [挂起结束] 连接 %s 请求挂起结束，当前挂起数: %d", connID, newCount))
+	}()
+
+	slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点恢复挂起] 连接 %s 请求已挂起，等待端点 %s 恢复或组切换 (当前挂起数: %d)",
+		connID, failedEndpoint, currentCount))
+
+	// 创建超时context
+	timeout := sm.config.RequestSuspend.Timeout
+	if timeout <= 0 {
+		timeout = 300 * time.Second // 默认5分钟
+	}
+
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, timeout)
+	defer timeoutCancel()
+
+	slog.InfoContext(ctx, fmt.Sprintf("⏰ [挂起超时] 连接 %s 挂起超时设置: %v，等待端点 %s 恢复或组切换...",
+		connID, timeout, failedEndpoint))
+
+	// 订阅端点恢复信号（如果有恢复信号管理器）
+	var endpointRecoveryCh chan string
+	if sm.recoverySignalManager != nil && failedEndpoint != "" {
+		endpointRecoveryCh = sm.recoverySignalManager.Subscribe(failedEndpoint)
+		defer func() {
+			if endpointRecoveryCh != nil {
+				sm.recoverySignalManager.Unsubscribe(failedEndpoint, endpointRecoveryCh)
+			}
+		}()
+	}
+
+	// 订阅组切换通知
+	groupChangeNotify := sm.groupManager.SubscribeToGroupChanges()
+	defer func() {
+		// 确保清理订阅，防止内存泄漏
+		sm.groupManager.UnsubscribeFromGroupChanges(groupChangeNotify)
+		slog.DebugContext(ctx, fmt.Sprintf("🔌 [订阅清理] 连接 %s 组切换通知订阅已清理", connID))
+	}()
+
+	// 等待恢复信号：端点恢复 > 组切换 > 超时 > 取消
+	for {
+		select {
+		case recoveredEndpoint := <-endpointRecoveryCh:
+			// 🚀 [优先级1] 端点恢复信号 - 立即重试原端点
+			slog.InfoContext(ctx, fmt.Sprintf("🎯 [端点自愈] 连接 %s 端点 %s 已恢复，立即重试原端点",
+				connID, recoveredEndpoint))
+			return handlers.SuspensionSuccess
+
+		case newGroupName := <-groupChangeNotify:
+			// 🔄 [优先级2] 组切换通知
+			slog.InfoContext(ctx, fmt.Sprintf("📡 [组切换通知] 连接 %s 收到组切换通知: %s，验证新组可用性",
+				connID, newGroupName))
+
+			// 验证新激活的组是否有健康端点
+			newEndpoints := sm.endpointManager.GetHealthyEndpoints()
+			if len(newEndpoints) > 0 {
+				slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个健康端点，恢复请求处理",
+					connID, newGroupName, len(newEndpoints)))
+				return handlers.SuspensionSuccess
+			} else {
+				slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无健康端点，继续等待",
+					connID, newGroupName))
+				// 继续等待其他恢复信号
+			}
+
+		case <-timeoutCtx.Done():
+			// ⏰ [优先级3] 挂起超时
+			if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+				slog.WarnContext(ctx, fmt.Sprintf("⏰ [挂起超时] 连接 %s 挂起等待超时 (%v)，停止等待", connID, timeout))
+			} else {
+				slog.InfoContext(ctx, fmt.Sprintf("🔄 [上下文取消] 连接 %s 挂起期间超时上下文被取消", connID))
+			}
+			return handlers.SuspensionTimeout
+
+		case <-ctx.Done():
+			// ❌ [优先级4] 原始请求被取消
+			switch ctxErr := ctx.Err(); {
+			case errors.Is(ctxErr, context.Canceled):
+				slog.InfoContext(ctx, fmt.Sprintf("❌ [请求取消] 连接 %s 原始请求被客户端取消，结束挂起", connID))
+				return handlers.SuspensionCancelled
+			case errors.Is(ctxErr, context.DeadlineExceeded):
+				slog.InfoContext(ctx, fmt.Sprintf("⏰ [请求超时] 连接 %s 原始请求上下文超时，结束挂起", connID))
+				return handlers.SuspensionTimeout
+			default:
+				slog.InfoContext(ctx, fmt.Sprintf("❌ [请求异常] 连接 %s 原始请求上下文异常: %v，结束挂起", connID, ctxErr))
+				return handlers.SuspensionCancelled
+			}
 		}
 	}
 }

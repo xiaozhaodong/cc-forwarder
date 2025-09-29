@@ -103,18 +103,24 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 			selectedEndpoint = ep
 		}
 
+		// 🔧 [HTTP状态码修复] 优先从上下文读取最终状态码，解决流式请求中WriteHeader时机问题
+		finalStatusCode := rw.statusCode
+		if ctxStatusCode, ok := r.Context().Value("final_status_code").(int); ok && ctxStatusCode != 0 {
+			finalStatusCode = ctxStatusCode
+		}
+
 		// Record response in metrics
 		if lm.monitoringMiddleware != nil && connID != "" {
-			lm.monitoringMiddleware.RecordResponse(connID, rw.statusCode, duration, rw.bytes, selectedEndpoint)
+			lm.monitoringMiddleware.RecordResponse(connID, finalStatusCode, duration, rw.bytes, selectedEndpoint)
 		}
 
 		// Log response details (completion logging handled by lifecycle manager)
-		statusEmoji := getStatusEmoji(rw.statusCode)
-		lm.logger.Debug(fmt.Sprintf("%s [请求详情] [%s] %s %s → %d (%s)", statusEmoji, connID, r.Method, r.URL.Path, rw.statusCode, formatDuration(duration)),
+		statusEmoji := getStatusEmoji(finalStatusCode)
+		lm.logger.Debug(fmt.Sprintf("%s [请求详情] [%s] %s %s → %d (%s)", statusEmoji, connID, r.Method, r.URL.Path, finalStatusCode, formatDuration(duration)),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"endpoint", selectedEndpoint,
-			"status_code", rw.statusCode,
+			"status_code", finalStatusCode,
 			"bytes_written", formatBytes(rw.bytes),
 			"duration", formatDuration(duration),
 			"client_ip", clientIP,
@@ -128,25 +134,25 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 				"path", r.URL.Path,
 				"endpoint", selectedEndpoint,
 				"duration", formatDuration(duration),
-				"status_code", rw.statusCode,
+				"status_code", finalStatusCode,
 				"conn_id", connID,
 			)
 		}
 
 		// Log errors
-		if rw.statusCode >= 400 {
+		if finalStatusCode >= 400 {
 			level := slog.LevelWarn
 			emoji := "⚠️"
-			if rw.statusCode >= 500 {
+			if finalStatusCode >= 500 {
 				level = slog.LevelError
 				emoji = "❌"
 			}
-			
+
 			lm.logger.Log(r.Context(), level, fmt.Sprintf("%s Error details", emoji),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"endpoint", selectedEndpoint,
-				"status_code", rw.statusCode,
+				"status_code", finalStatusCode,
 				"duration", formatDuration(duration),
 				"conn_id", connID,
 			)

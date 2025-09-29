@@ -49,7 +49,7 @@ type GroupStat struct {
 
 // RequestEvent 表示请求事件
 type RequestEvent struct {
-	Type      string      `json:"type"`      // "start", "update", "update_with_model", "complete", "failed_request_tokens"
+	Type      string      `json:"type"`      // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens"
 	RequestID string      `json:"request_id"`
 	Timestamp time.Time   `json:"timestamp"`
 	Data      interface{} `json:"data"` // 根据Type不同而变化
@@ -66,21 +66,14 @@ type RequestStartData struct {
 
 // RequestUpdateData 请求更新事件数据
 type RequestUpdateData struct {
-	EndpointName string `json:"endpoint_name"`
-	GroupName    string `json:"group_name"`
-	Status       string `json:"status"`
-	RetryCount   int    `json:"retry_count"`
-	HTTPStatus   int    `json:"http_status"`
-}
-
-// RequestUpdateDataWithModel 包含模型信息的状态更新数据
-type RequestUpdateDataWithModel struct {
-	EndpointName string `json:"endpoint_name"`
-	GroupName    string `json:"group_name"`
-	Status       string `json:"status"`
-	RetryCount   int    `json:"retry_count"`
-	HTTPStatus   int    `json:"http_status"`
-	ModelName    string `json:"model_name"` // 新增：模型信息
+	EndpointName  string `json:"endpoint_name"`
+	GroupName     string `json:"group_name"`
+	Status        string `json:"status"`
+	RetryCount    int    `json:"retry_count"`
+	HTTPStatus    int    `json:"http_status"`
+	// 🚀 [状态机重构] Phase 2: 新增失败原因和取消原因字段
+	FailureReason string `json:"failure_reason,omitempty"`
+	CancelReason  string `json:"cancel_reason,omitempty"`
 }
 
 // RequestCompleteData 请求完成事件数据
@@ -139,6 +132,20 @@ type WriteRequest struct {
 	EventType string  // 用于调试和监控
 }
 
+// UpdateOptions 统一的请求更新选项
+// 支持可选字段更新，只更新非nil的字段
+type UpdateOptions struct {
+	EndpointName  *string        // 端点名称
+	GroupName     *string        // 组名称
+	Status        *string        // 状态
+	RetryCount    *int           // 重试次数
+	HttpStatus    *int           // HTTP状态码
+	ModelName     *string        // 模型名称
+	EndTime       *time.Time     // 结束时间
+	Duration      *time.Duration // 持续时间
+	FailureReason *string        // 失败原因（用于中间过程记录）
+}
+
 // UsageTracker 使用跟踪器
 type UsageTracker struct {
 	// 原有字段（兼容性）
@@ -184,6 +191,9 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 	}
 	if config.MaxRetry <= 0 {
 		config.MaxRetry = 3
+	}
+	if config.CleanupInterval <= 0 {
+		config.CleanupInterval = 24 * time.Hour  // 默认24小时清理一次
 	}
 
 	// 构建数据库配置
@@ -437,65 +447,32 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, metho
 	}
 }
 
-// RecordRequestUpdate 记录请求状态更新
-func (ut *UsageTracker) RecordRequestUpdate(requestID, endpoint, group, status string, retryCount, httpStatus int) {
+// RecordRequestUpdate 统一的请求更新方法
+// 支持可选字段更新，只更新非nil的字段，适用于所有中间过程状态变更
+func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
 
 	event := RequestEvent{
-		Type:      "update",
+		Type:      "flexible_update",
 		RequestID: requestID,
 		Timestamp: ut.now(),
-		Data: RequestUpdateData{
-			EndpointName: endpoint,
-			GroupName:    group,
-			Status:       status,
-			RetryCount:   retryCount,
-			HTTPStatus:   httpStatus,
-		},
+		Data:      opts,
 	}
 
 	select {
 	case ut.eventChan <- event:
 		// 成功发送事件
 	default:
-		slog.Warn("Usage tracking event buffer full, dropping update event", 
+		slog.Warn("Usage tracking event buffer full, dropping flexible_update event",
 			"request_id", requestID)
 	}
 }
 
-// RecordRequestUpdateWithModel 记录包含模型信息的状态更新
-func (ut *UsageTracker) RecordRequestUpdateWithModel(requestID, endpoint, group, status string, retryCount, httpStatus int, modelName string) {
-	if ut.config == nil || !ut.config.Enabled {
-		return
-	}
-
-	event := RequestEvent{
-		Type:      "update_with_model",
-		RequestID: requestID,
-		Timestamp: ut.now(),
-		Data: RequestUpdateDataWithModel{
-			EndpointName: endpoint,
-			GroupName:    group,
-			Status:       status,
-			RetryCount:   retryCount,
-			HTTPStatus:   httpStatus,
-			ModelName:    modelName, // 包含模型信息
-		},
-	}
-
-	select {
-	case ut.eventChan <- event:
-		// 成功发送事件
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping update_with_model event", 
-			"request_id", requestID)
-	}
-}
-
-// RecordRequestComplete 记录请求完成
-func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, tokens *TokenUsage, duration time.Duration) {
+// RecordRequestSuccess 记录请求成功完成
+// 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token和成本信息
+func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens *TokenUsage, duration time.Duration) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
@@ -511,7 +488,7 @@ func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, token
 	// 如果 tokens 为 nil，所有 token 字段都是 0，但 duration 仍然会被记录
 
 	event := RequestEvent{
-		Type:      "complete",
+		Type:      "success",
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
@@ -528,7 +505,49 @@ func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, token
 	case ut.eventChan <- event:
 		// 成功发送事件
 	default:
-		slog.Warn("Usage tracking event buffer full, dropping complete event",
+		slog.Warn("Usage tracking event buffer full, dropping success event",
+			"request_id", requestID)
+	}
+}
+
+// RecordRequestFinalFailure 记录请求最终失败或取消
+// 一次性更新所有失败/取消相关字段：status, end_time, duration_ms, failure_reason/cancel_reason, http_status_code, 可选Token
+func (ut *UsageTracker) RecordRequestFinalFailure(requestID, status, reason, errorDetail string, duration time.Duration, httpStatus int, tokens *TokenUsage) {
+	if ut.config == nil || !ut.config.Enabled {
+		return
+	}
+
+	// 处理Token信息（失败/取消时可能有也可能没有）
+	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	if tokens != nil {
+		inputTokens = tokens.InputTokens
+		outputTokens = tokens.OutputTokens
+		cacheCreationTokens = tokens.CacheCreationTokens
+		cacheReadTokens = tokens.CacheReadTokens
+	}
+
+	event := RequestEvent{
+		Type:      "final_failure",
+		RequestID: requestID,
+		Timestamp: ut.now(),
+		Data: map[string]interface{}{
+			"status":               status,    // "failed" or "cancelled"
+			"reason":               reason,    // failure_reason or cancel_reason
+			"error_detail":         errorDetail,
+			"duration":             duration,
+			"http_status":          httpStatus, // HTTP状态码
+			"input_tokens":         inputTokens,
+			"output_tokens":        outputTokens,
+			"cache_creation_tokens": cacheCreationTokens,
+			"cache_read_tokens":    cacheReadTokens,
+		},
+	}
+
+	select {
+	case ut.eventChan <- event:
+		// 成功发送事件
+	default:
+		slog.Warn("Usage tracking event buffer full, dropping final_failure event",
 			"request_id", requestID)
 	}
 }
