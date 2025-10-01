@@ -249,7 +249,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 					// 🚀 [HTTP状态码修复] 流式API错误应该映射为207 Multi-Status
 					statusCode := GetStatusCodeFromError(err, resp)
-					if status == "stream_error" {
+					if status == "error" || status == "stream_error" {
 						statusCode = http.StatusMultiStatus // 207: HTTP连接成功，但API业务层面有错误
 					} else if status == "cancelled" {
 						statusCode = 499 // 客户端取消
