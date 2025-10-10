@@ -441,6 +441,29 @@ func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) str
 // ServeHTTP implements the http.Handler interface
 // 统一请求分发逻辑 - 整合流式处理、错误恢复和生命周期管理
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 🔢 [count_tokens拦截] 特殊处理count_tokens端点
+	if r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled {
+		ctx := r.Context()
+		connID, _ := r.Context().Value("conn_id").(string)
+
+		// 读取请求体
+		var bodyBytes []byte
+		if r.Body != nil {
+			var err error
+			bodyBytes, err = io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+				return
+			}
+			r.Body.Close()
+		}
+
+		// 使用CountTokensHandler处理
+		countTokensHandler := handlers.NewCountTokensHandler(h.config, h.endpointManager, h.forwarder)
+		countTokensHandler.Handle(ctx, w, r, bodyBytes, connID)
+		return
+	}
+
 	// 创建请求上下文
 	ctx := r.Context()
 	

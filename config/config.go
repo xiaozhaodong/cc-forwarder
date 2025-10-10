@@ -14,22 +14,23 @@ import (
 )
 
 type Config struct {
-	Server       ServerConfig     `yaml:"server"`
-	Strategy     StrategyConfig   `yaml:"strategy"`
-	Retry        RetryConfig      `yaml:"retry"`
-	Health       HealthConfig     `yaml:"health"`
-	Logging      LoggingConfig    `yaml:"logging"`
-	Streaming    StreamingConfig  `yaml:"streaming"`
-	Group        GroupConfig      `yaml:"group"`        // Group configuration
-	RequestSuspend RequestSuspendConfig `yaml:"request_suspend"` // Request suspension configuration
-	UsageTracking UsageTrackingConfig `yaml:"usage_tracking"` // Usage tracking configuration
-	Proxy        ProxyConfig      `yaml:"proxy"`
-	Auth         AuthConfig       `yaml:"auth"`
-	TUI          TUIConfig        `yaml:"tui"`           // TUI configuration
-	Web          WebConfig        `yaml:"web"`           // Web interface configuration
-	GlobalTimeout time.Duration   `yaml:"global_timeout"` // Global timeout for non-streaming requests
-	Timezone     string           `yaml:"timezone"`      // Global timezone setting for all components
-	Endpoints    []EndpointConfig `yaml:"endpoints"`
+	Server         ServerConfig         `yaml:"server"`
+	Strategy       StrategyConfig       `yaml:"strategy"`
+	Retry          RetryConfig          `yaml:"retry"`
+	Health         HealthConfig         `yaml:"health"`
+	Logging        LoggingConfig        `yaml:"logging"`
+	Streaming      StreamingConfig      `yaml:"streaming"`
+	Group          GroupConfig          `yaml:"group"`                   // Group configuration
+	RequestSuspend RequestSuspendConfig `yaml:"request_suspend"`         // Request suspension configuration
+	UsageTracking  UsageTrackingConfig  `yaml:"usage_tracking"`          // Usage tracking configuration
+	TokenCounting  TokenCountingConfig  `yaml:"token_counting"`          // Token counting configuration
+	Proxy          ProxyConfig          `yaml:"proxy"`
+	Auth           AuthConfig           `yaml:"auth"`
+	TUI            TUIConfig            `yaml:"tui"`                     // TUI configuration
+	Web            WebConfig            `yaml:"web"`                     // Web interface configuration
+	GlobalTimeout  time.Duration        `yaml:"global_timeout"`          // Global timeout for non-streaming requests
+	Timezone       string               `yaml:"timezone"`                // Global timezone setting for all components
+	Endpoints      []EndpointConfig     `yaml:"endpoints"`
 
 	// Runtime priority override (not serialized to YAML)
 	PrimaryEndpoint string `yaml:"-"` // Primary endpoint name from command line
@@ -177,16 +178,23 @@ type WebConfig struct {
 	Port    int    `yaml:"port"`    // Web interface port, default: 8088
 }
 
+// TokenCountingConfig Token计数配置
+type TokenCountingConfig struct {
+	Enabled         bool    `yaml:"enabled"`          // 启用count_tokens支持
+	EstimationRatio float64 `yaml:"estimation_ratio"` // Token估算比例 (1 token ≈ N 字符)
+}
+
 type EndpointConfig struct {
-	Name          string            `yaml:"name"`
-	URL           string            `yaml:"url"`
-	Priority      int               `yaml:"priority"`
-	Group         string            `yaml:"group,omitempty"`
-	GroupPriority int               `yaml:"group-priority,omitempty"`
-	Token         string            `yaml:"token,omitempty"`
-	ApiKey        string            `yaml:"api-key,omitempty"`
-	Timeout       time.Duration     `yaml:"timeout"`
-	Headers       map[string]string `yaml:"headers,omitempty"`
+	Name                string            `yaml:"name"`
+	URL                 string            `yaml:"url"`
+	Priority            int               `yaml:"priority"`
+	Group               string            `yaml:"group,omitempty"`
+	GroupPriority       int               `yaml:"group-priority,omitempty"`
+	Token               string            `yaml:"token,omitempty"`
+	ApiKey              string            `yaml:"api-key,omitempty"`
+	Timeout             time.Duration     `yaml:"timeout"`
+	Headers             map[string]string `yaml:"headers,omitempty"`
+	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
 }
 
 // LoadConfig loads configuration from file
@@ -379,6 +387,12 @@ func (c *Config) setDefaults() {
 	}
 	// Web enabled defaults to false if not explicitly set in YAML
 	// Note: We don't set a default here since the zero value (false) is what we want
+
+	// Set Token Counting defaults
+	if c.TokenCounting.EstimationRatio == 0 {
+		c.TokenCounting.EstimationRatio = 4.0 // Default: 1 token ≈ 4 characters
+	}
+	// TokenCounting.Enabled defaults to false (zero value) for backward compatibility
 
 	// Set default timeouts for endpoints and handle parameter inheritance (except tokens)
 	var defaultEndpoint *EndpointConfig

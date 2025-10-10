@@ -88,6 +88,11 @@ web:
   host: "0.0.0.0"          # Web界面监听所有接口，默认: localhost
   port: 8088                 # Web界面端口，默认: 8088
 
+# Token计数配置
+token_counting:
+  enabled: true              # 是否启用count_tokens端点支持，默认: false
+  estimation_ratio: 4.0      # Token估算比例 (1 token ≈ 4 字符)，默认: 4.0
+
 # 使用跟踪配置
 # =================================================================
 # 📊 使用情况追踪系统 (Usage Tracking)
@@ -262,6 +267,7 @@ endpoints:
     timeout: "300s"
     token: "sk-your-openai-api-key"        # 🔑 此密钥会被同组其他端点共享
     api-key: "your-api-key-value"          # 🔑 此API密钥会被同组其他端点共享
+    supports_count_tokens: true            # ✅ 此端点支持count_tokens (如Anthropic官方API)
     headers:
       User-Agent: "Claude-Request-Forwarder/1.0"
       X-Custom-Header: "custom-value"
@@ -271,6 +277,7 @@ endpoints:
     url: "https://api.anthropic.com"
     priority: 2                            # 组内优先级 2
     timeout: "300s"
+    supports_count_tokens: false           # ❌ 此端点不支持count_tokens (如某些代理)
     # 🔄 自动继承: group: "main", group-priority: 1
     # 🔑 自动使用 main 组的密钥: token 和 api-key 会动态解析为 primary 端点的值
     # 📋 headers 继承自 primary 端点
