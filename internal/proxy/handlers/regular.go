@@ -30,7 +30,7 @@ type RegularHandler struct {
 	retryManagerFactory      RetryManagerFactory
 	suspensionManagerFactory SuspensionManagerFactory
 	// 🔧 [修复] 共享SuspensionManager实例，确保全局挂起限制生效
-	sharedSuspensionManager  SuspensionManager
+	sharedSuspensionManager SuspensionManager
 }
 
 // NewRegularHandler 创建新的RegularHandler实例
@@ -61,7 +61,7 @@ func NewRegularHandler(
 		suspensionManagerFactory: suspensionManagerFactory,
 		// 🔧 [Critical修复] 使用传入的共享SuspensionManager实例
 		// 确保常规请求与流式请求共享同一个全局挂起计数器
-		sharedSuspensionManager:  sharedSuspensionManager,
+		sharedSuspensionManager: sharedSuspensionManager,
 	}
 }
 
@@ -135,6 +135,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 			// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点
 			*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", endpoint.Config.Name))
 
+		attemptLoop:
 			for attempt := 1; attempt <= retryMgr.GetMaxAttempts(); attempt++ {
 				// 检查取消
 				select {
@@ -212,7 +213,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 							slog.Info(fmt.Sprintf("🎯 [恢复成功] [%s] 端点 %s 已恢复或组已切换，重新获取端点列表",
 								connID, endpoint.Config.Name))
 							groupSwitchNeeded = true
-							break // 跳出端点循环
+							break
 						case SuspensionCancelled:
 							// 🎯 [挂起取消区分] 用户在挂起期间取消请求，应该记录为取消而非失败
 							slog.Info(fmt.Sprintf("🚫 [挂起期间取消] [%s] 用户在挂起期间取消请求", connID))
@@ -227,6 +228,10 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 							lifecycleManager.UpdateStatus("error", globalAttemptCount, http.StatusBadGateway)
 							http.Error(w, "Request suspended but recovery timeout", http.StatusBadGateway)
 							return
+						}
+
+						if groupSwitchNeeded {
+							break attemptLoop
 						}
 					}
 				}
@@ -279,6 +284,68 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 		// 所有端点都失败了，终止处理
 		break
+	}
+
+	// 🔧 [统一挂起策略] 所有端点都失败后，检查是否应该挂起请求（与流式模式保持一致）
+	// 注意：客户端取消错误已在上面统一处理，这里不会执行到
+
+	// 🔧 [修复] 使用共享的SuspensionManager实例，确保全局挂起限制生效
+	suspensionMgr := rh.sharedSuspensionManager
+
+	// 检查是否应该挂起请求
+	if suspensionMgr.ShouldSuspend(ctx) {
+		currentEndpoints := rh.endpointManager.GetHealthyEndpoints()
+		if cfg := rh.endpointManager.GetConfig(); cfg != nil && cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled {
+			currentEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+		}
+
+		// 🚀 [状态机重构] Phase 4: 挂起时更新状态（移除重复的失败原因记录）
+		lifecycleManager.UpdateStatus("suspended", -1, 0)
+
+		// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
+		actualAttemptCount := lifecycleManager.GetAttemptCount()
+		slog.Info(fmt.Sprintf("⏸️ [常规挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d, 当前所有组均不可用",
+			connID, actualAttemptCount, len(currentEndpoints)))
+
+		// 🚀 [端点自愈] 等待端点恢复，能区分成功/超时/取消
+		// 注意：常规模式没有lastFailedEndpoint概念，传空字符串
+		result := suspensionMgr.WaitForEndpointRecoveryWithResult(ctx, connID, "")
+		switch result {
+		case SuspensionSuccess:
+			slog.Info(fmt.Sprintf("🚀 [挂起恢复] [%s] 端点已恢复或组切换完成，重新获取端点", connID))
+
+			// 重新获取健康端点
+			var newEndpoints []*endpoint.Endpoint
+			if rh.endpointManager.GetConfig().Strategy.Type == "fastest" && rh.endpointManager.GetConfig().Strategy.FastTestEnabled {
+				newEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+			} else {
+				newEndpoints = rh.endpointManager.GetHealthyEndpoints()
+			}
+
+			if len(newEndpoints) > 0 {
+				slog.Info(fmt.Sprintf("🔄 [重新开始] [%s] 获取到 %d 个新端点，重新开始常规处理", connID, len(newEndpoints)))
+
+				// 🔧 [生命周期修复] 恢复时必须更新生命周期管理器的端点信息
+				// 设置第一个新端点的信息到生命周期管理器
+				firstEndpoint := newEndpoints[0]
+				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstEndpoint.Config.Group)
+
+				// 重新获取健康端点并重新尝试（递归调用）
+				rh.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
+				return
+			}
+		case SuspensionCancelled:
+			// 🎯 [挂起取消区分] 用户在挂起期间取消请求，应该记录为取消而非失败
+			slog.Info(fmt.Sprintf("🚫 [挂起期间取消] [%s] 用户在挂起期间取消请求", connID))
+			// 🔧 [状态码修复] 设置取消状态码到上下文用于日志记录
+			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
+			lifecycleManager.CancelRequest("suspended then cancelled", nil)
+			http.Error(w, "Request cancelled during suspension", 499)
+			return
+		case SuspensionTimeout:
+			slog.Warn(fmt.Sprintf("⏰ [挂起超时] [%s] 挂起等待超时", connID))
+			// 继续执行下面的失败处理逻辑
+		}
 	}
 
 	// 🚀 [状态机重构] Phase 4: 最终失败处理
