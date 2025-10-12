@@ -240,6 +240,80 @@
     margin-bottom: 16px;
 }
 
+/* 筛选器行布局 - 三行布局样式 */
+.filter-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 8px; /* 减小间距避免重叠 */
+}
+
+.filter-row.time-range-row {
+    /* 时间范围独占第一行 */
+    margin-bottom: 10px;
+}
+
+.filter-row.other-filters-row {
+    /* 筛选条件在第二行 */
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.filter-row.actions-row {
+    /* 操作按钮在第三行 */
+    justify-content: flex-end; /* 确保按钮靠右 */
+    margin-bottom: 0;
+}
+
+.filter-row.actions-row .filter-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* 内联样式的筛选组 - 标签和选择框/输入框在同一行 */
+.filter-group.inline-group {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.filter-group.inline-group label {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.filter-group.inline-group select {
+    min-width: 180px;
+}
+
+/* 时间范围特殊处理 */
+.filter-group.time-range-group {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-group.time-range-group label {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.filter-group.time-range-group .datetime-inputs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-group.time-range-group .datetime-field input {
+    width: 200px;
+}
+
 /* 筛选器组 - 匹配现有的filter-group样式 */
 .filter-group {
     display: flex;
@@ -374,6 +448,23 @@
     color: #1e293b;
 }
 
+/* 操作提示样式 - 自然融入记录数量提示 */
+.table-tips {
+    display: inline;
+    margin-left: 12px;
+}
+
+.tip-separator {
+    color: #cbd5e1;
+    margin: 0 8px;
+}
+
+.tip-text {
+    font-size: 12px;
+    color: #94a3b8;
+    font-weight: 400;
+}
+
 .table-actions {
     display: flex;
     align-items: center;
@@ -472,10 +563,93 @@
     min-width: 60px;
 }
 
-/* 模型名称样式 */
+/* 模型名称样式 - 保留原有样式作为兼容 */
 .requests-table .model-name {
     font-weight: 500;
     color: #1e40af;
+}
+
+/* 新的模型徽章样式 */
+.model-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    min-width: 80px;
+    text-align: center;
+}
+
+/* Claude Sonnet 4 系列 - 温暖橙色 */
+.model-badge.model-sonnet-4 {
+    background: #fff7ed;
+    color: #c2410c;
+    border-color: #fed7aa;
+}
+
+.model-badge.model-sonnet-4:hover {
+    background: #ffedd5;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(194, 65, 12, 0.15);
+}
+
+/* Claude 3.5 Haiku 系列 - 清新绿色 */
+.model-badge.model-haiku {
+    background: #f0fdf4;
+    color: #166534;
+    border-color: #bbf7d0;
+}
+
+.model-badge.model-haiku:hover {
+    background: #dcfce7;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(22, 101, 52, 0.15);
+}
+
+/* Claude 3.5 Sonnet 系列 - 优雅蓝色 */
+.model-badge.model-sonnet-3-5 {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border-color: #dbeafe;
+}
+
+.model-badge.model-sonnet-3-5:hover {
+    background: #dbeafe;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(29, 78, 216, 0.15);
+}
+
+/* Claude Opus 系列 - 高贵紫色 */
+.model-badge.model-opus {
+    background: #fdf4ff;
+    color: #7c2d12;
+    border-color: #e9d5ff;
+}
+
+.model-badge.model-opus:hover {
+    background: #f3e8ff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(124, 45, 18, 0.15);
+}
+
+/* 其他/未知模型 - 中性灰色 */
+.model-badge.model-unknown {
+    background: #f8fafc;
+    color: #475569;
+    border-color: #e2e8f0;
+}
+
+.model-badge.model-unknown:hover {
+    background: #f1f5f9;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(71, 85, 105, 0.15);
 }
 
 /* 端点名称样式 */
@@ -484,10 +658,81 @@
     color: #059669;
 }
 
+
 /* 组名样式 */
 .requests-table .group-name {
     color: #7c3aed;
     font-size: 0.9em;
+}
+
+/* =================================================================
+   复制功能样式 - 优雅的复制提示
+   ================================================================= */
+
+/* 可复制单元格 - 只改变鼠标样式，不改变背景 */
+.requests-table td.copyable {
+    cursor: pointer;
+}
+
+/* 复制成功提示样式 - 类似截图的绿色对勾效果 */
+.copy-toast {
+    pointer-events: none;
+    animation: fadeInOut 2s ease-out forwards;
+}
+
+.copy-toast-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+    border: 1px solid #e5e7eb;
+}
+
+.copy-toast-icon {
+    flex-shrink: 0;
+    animation: scaleIn 0.3s ease-out;
+}
+
+.copy-toast-text {
+    font-size: 13px;
+    color: #374151;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* 动画效果 */
+@keyframes fadeInOut {
+    0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(10px);
+    }
+    20% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+    80% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+    100% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-10px);
+    }
+}
+
+@keyframes scaleIn {
+    0% {
+        transform: scale(0);
+    }
+    50% {
+        transform: scale(1.2);
+    }
+    100% {
+        transform: scale(1);
+    }
 }
 
 /* 成本值金色显示 */
@@ -651,6 +896,12 @@
 .status-badge.status-auth_error,
 .status-badge.status-rate_limited,
 .status-badge.status-stream_error {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+}
+
+/* v3.5.0状态机重构新增 - failed状态支持 */
+.status-badge.status-failed {
     background: linear-gradient(135deg, #ef4444, #dc2626);
     color: white;
 }
@@ -822,6 +1073,19 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+}
+
+/* v3.5.0状态机重构 - 全宽度错误信息显示 */
+.detail-item.detail-full-width {
+    grid-column: 1 / -1; /* 占满整行 */
+}
+
+/* 失败原因和取消原因的统一样式 - 与其他detail-value保持一致 */
+.detail-value.failure-reason,
+.detail-value.cancel-reason {
+    font-weight: 500;
+    color: #1f2937; /* 与其他detail-value相同的颜色 */
+    /* 移除特殊背景和边框，保持统一风格 */
 }
 
 .detail-label {

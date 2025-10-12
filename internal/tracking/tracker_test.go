@@ -8,12 +8,14 @@ import (
 
 func TestTrackerLifecycle(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     50,
-		BatchSize:      5,
-		FlushInterval:  100 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      50,
+		BatchSize:       5,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour, // 添加清理间隔
+		RetentionDays:   30,             // 添加保留天数
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -51,12 +53,14 @@ func TestTrackerLifecycle(t *testing.T) {
 
 func TestAsyncEventProcessing(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     50,
-		BatchSize:      3,
-		FlushInterval:  200 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      50,
+		BatchSize:       3,
+		FlushInterval:   200 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"test-model": {
 				Input:  1.00,
@@ -79,14 +83,21 @@ func TestAsyncEventProcessing(t *testing.T) {
 		tracker.RecordRequestStart(requestID, "127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 		
 		// Update event
-		tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "processing", 0, 0)
+		opts := UpdateOptions{
+			EndpointName: stringPtr("test-endpoint"),
+			GroupName:    stringPtr("test-group"),
+			Status:       stringPtr("processing"),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(0),
+		}
+		tracker.RecordRequestUpdate(requestID, opts)
 		
 		// Complete event
 		tokens := &TokenUsage{
 			InputTokens:  100 + int64(i*10),
 			OutputTokens: 50 + int64(i*5),
 		}
-		tracker.RecordRequestComplete(requestID, "test-model", tokens, 500*time.Millisecond)
+		tracker.RecordRequestSuccess(requestID, "test-model", tokens, 500*time.Millisecond)
 	}
 	
 	// Wait for async processing to complete
@@ -110,12 +121,14 @@ func TestAsyncEventProcessing(t *testing.T) {
 
 func TestBatchProcessing(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      5,
-		FlushInterval:  10 * time.Second, // Long interval to test batch size trigger
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       5,
+		FlushInterval:   10 * time.Second, // Long interval to test batch size trigger
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -148,12 +161,14 @@ func TestBatchProcessing(t *testing.T) {
 
 func TestForceFlush(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  1 * time.Hour, // Very long interval
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   1 * time.Hour, // Very long interval
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -199,12 +214,14 @@ func TestForceFlush(t *testing.T) {
 
 func TestEventChannelOverflow(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     5, // Very small buffer
-		BatchSize:      10,
-		FlushInterval:  1 * time.Hour, // Long interval to prevent automatic flushing
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      5, // Very small buffer
+		BatchSize:       10,
+		FlushInterval:   1 * time.Hour, // Long interval to prevent automatic flushing
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -233,12 +250,14 @@ func TestEventChannelOverflow(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  100 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"concurrent-model": {
 				Input:  1.00,
@@ -271,7 +290,7 @@ func TestConcurrentAccess(t *testing.T) {
 					InputTokens:  100,
 					OutputTokens: 50,
 				}
-				tracker.RecordRequestComplete(requestID, "concurrent-model", tokens, 100*time.Millisecond)
+				tracker.RecordRequestSuccess(requestID, "concurrent-model", tokens, 100*time.Millisecond)
 			}
 		}(i)
 	}
@@ -299,12 +318,14 @@ func TestConcurrentAccess(t *testing.T) {
 
 func TestPricingUpdate(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      5,    // Small batch size to trigger processing
-		FlushInterval:  100 * time.Millisecond, // Fast flush
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       5,    // Small batch size to trigger processing
+		FlushInterval:   100 * time.Millisecond, // Fast flush
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"old-model": {
 				Input:  1.00,
@@ -356,7 +377,14 @@ func TestPricingUpdate(t *testing.T) {
 			tracker.RecordRequestStart(requestID, "127.0.0.1", "pricing-agent", "POST", "/v1/messages", false)
 			
 			// Add request update to ensure complete records
-			tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "success", 0, 200)
+			opts := UpdateOptions{
+				EndpointName: stringPtr("test-endpoint"),
+				GroupName:    stringPtr("test-group"),
+				Status:       stringPtr("success"),
+				RetryCount:   intPtr(0),
+				HttpStatus:   intPtr(200),
+			}
+			tracker.RecordRequestUpdate(requestID, opts)
 			
 			tokens := &TokenUsage{
 				InputTokens:  100,
@@ -368,7 +396,7 @@ func TestPricingUpdate(t *testing.T) {
 				modelName = "new-model"
 			}
 			
-			tracker.RecordRequestComplete(requestID, modelName, tokens, 100*time.Millisecond)
+			tracker.RecordRequestSuccess(requestID, modelName, tokens, 100*time.Millisecond)
 			
 			time.Sleep(10 * time.Millisecond)
 		}

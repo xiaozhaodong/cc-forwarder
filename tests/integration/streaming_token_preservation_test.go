@@ -126,6 +126,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		suite.tracker,
 		suite.monitoringMiddleware,
 		requestID,
+		nil, // eventBus
 	)
 
 	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group")
@@ -297,6 +298,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		suite.tracker,
 		suite.monitoringMiddleware,
 		requestID,
+		nil, // eventBus
 	)
 
 	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group")
@@ -404,6 +406,7 @@ data: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limit e
 		suite.tracker,
 		suite.monitoringMiddleware,
 		requestID,
+		nil, // eventBus
 	)
 
 	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group")
@@ -526,6 +529,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		suite.tracker,
 		suite.monitoringMiddleware,
 		requestID,
+		nil, // eventBus
 	)
 
 	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group")
@@ -632,6 +636,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		suite.tracker,
 		suite.monitoringMiddleware,
 		requestID,
+		nil, // eventBus
 	)
 
 	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group")
@@ -748,6 +753,7 @@ func TestStreamingFailureStatusIntegrity(t *testing.T) {
 				suite.tracker,
 				suite.monitoringMiddleware,
 				s.requestID,
+				nil, // eventBus
 			)
 
 			lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group")

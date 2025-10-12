@@ -12,25 +12,26 @@
  * - 筛选器选项配置
  */
 
-// 请求状态配置
+// 请求状态配置 (v3.5.0状态机重构 - 状态与错误分离)
 export const REQUEST_STATUS = {
-    PENDING: 'pending',
-    FORWARDING: 'forwarding',
-    PROCESSING: 'processing',
-    COMPLETED: 'completed',
-    ERROR: 'error',
-    RETRY: 'retry',
-    CANCELLED: 'cancelled',
-    TIMEOUT: 'timeout',
-    SUSPENDED: 'suspended',
-    NETWORK_ERROR: 'network_error',
-    AUTH_ERROR: 'auth_error',
-    RATE_LIMITED: 'rate_limited',
-    STREAM_ERROR: 'stream_error'
+    // 核心生命周期状态 (7个核心状态)
+    PENDING: 'pending',       // 等待中
+    FORWARDING: 'forwarding', // 转发中
+    PROCESSING: 'processing', // 处理中
+    RETRY: 'retry',          // 重试中
+    SUSPENDED: 'suspended',   // 挂起
+    COMPLETED: 'completed',   // 完成
+    FAILED: 'failed',        // 失败
+
+    // 向后兼容状态 (映射到新状态机)
+    ERROR: 'error',          // 向后兼容: 映射到failed
+    CANCELLED: 'cancelled',   // 特殊状态: 用户取消
+    TIMEOUT: 'timeout'       // 特殊状态: 超时
 };
 
-// 状态显示配置
+// 状态显示配置 (v3.5.0状态机重构兼容)
 export const STATUS_CONFIG = {
+    // === 核心生命周期状态配置 ===
     [REQUEST_STATUS.PENDING]: {
         label: '等待中',
         type: 'pending',
@@ -49,24 +50,38 @@ export const STATUS_CONFIG = {
         icon: '⚙️',
         color: '#f97316'
     },
+    [REQUEST_STATUS.RETRY]: {
+        label: '重试中',
+        type: 'retry',
+        icon: '🔄',
+        color: '#f59e0b'
+    },
+    [REQUEST_STATUS.SUSPENDED]: {
+        label: '挂起',
+        type: 'suspended',
+        icon: '⏸️',
+        color: '#6b7280'
+    },
     [REQUEST_STATUS.COMPLETED]: {
         label: '已完成',
         type: 'success',
         icon: '✅',
         color: '#10b981'
     },
+    [REQUEST_STATUS.FAILED]: {
+        label: '失败',
+        type: 'error',
+        icon: '✖️',
+        color: '#ef4444'
+    },
+
+    // === 向后兼容状态配置 ===
     [REQUEST_STATUS.ERROR]: {
         label: '失败',
         type: 'error',
         icon: '✖️',
         color: '#ef4444',
         detailLabel: '请求错误'
-    },
-    [REQUEST_STATUS.RETRY]: {
-        label: '重试中',
-        type: 'retry',
-        icon: '🔄',
-        color: '#f59e0b'
     },
     [REQUEST_STATUS.CANCELLED]: {
         label: '已取消',
@@ -79,40 +94,6 @@ export const STATUS_CONFIG = {
         type: 'timeout',
         icon: '⏰',
         color: '#6b7280'
-    },
-    [REQUEST_STATUS.SUSPENDED]: {
-        label: '挂起',
-        type: 'suspended',
-        icon: '⏸️',
-        color: '#6b7280'
-    },
-    [REQUEST_STATUS.NETWORK_ERROR]: {
-        label: '失败',
-        type: 'error',
-        icon: '✖️',
-        color: '#ef4444',
-        detailLabel: '网络错误'
-    },
-    [REQUEST_STATUS.AUTH_ERROR]: {
-        label: '失败',
-        type: 'error',
-        icon: '✖️',
-        color: '#ef4444',
-        detailLabel: '认证错误'
-    },
-    [REQUEST_STATUS.RATE_LIMITED]: {
-        label: '失败',
-        type: 'error',
-        icon: '✖️',
-        color: '#ef4444',
-        detailLabel: '限流错误'
-    },
-    [REQUEST_STATUS.STREAM_ERROR]: {
-        label: '失败',
-        type: 'error',
-        icon: '✖️',
-        color: '#ef4444',
-        detailLabel: '流式错误'
     }
 };
 
@@ -138,17 +119,23 @@ export const METHOD_COLORS = {
     [HTTP_METHODS.OPTIONS]: '#06b6d4'
 };
 
-// 筛选器状态选项
+// 筛选器状态选项 (v3.5.0状态机重构兼容)
 export const FILTER_STATUS_OPTIONS = [
     { value: '', label: '全部状态' },
-    { value: 'completed', label: '已完成' },
-    { value: 'error', label: '失败' },
+
+    // === 核心生命周期状态 ===
     { value: 'pending', label: '等待中' },
+    { value: 'forwarding', label: '转发中' },
     { value: 'processing', label: '处理中' },
     { value: 'retry', label: '重试中' },
+    { value: 'suspended', label: '挂起' },
+    { value: 'completed', label: '已完成' },
+    { value: 'failed', label: '失败' },
+
+    // === 向后兼容状态 ===
+    { value: 'error', label: '失败(兼容)' },
     { value: 'cancelled', label: '已取消' },
-    { value: 'timeout', label: '超时' },
-    { value: 'suspended', label: '挂起' }
+    { value: 'timeout', label: '超时' }
 ];
 
 // 分页配置

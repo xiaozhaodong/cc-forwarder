@@ -67,6 +67,7 @@ func TestStreamingTokenPreservationCore(t *testing.T) {
 			tracker,
 			monitoringMiddleware,
 			requestID,
+			nil, // eventBus
 		)
 
 		lifecycleManager.SetEndpoint("test-endpoint", "test-group")
@@ -157,6 +158,7 @@ data: {"type":"message_delta","usage":{"input_tokens":257,"output_tokens":25}}
 			tracker,
 			monitoringMiddleware,
 			requestID,
+			nil, // eventBus
 		)
 
 		lifecycleManager.SetEndpoint("test-endpoint", "test-group")

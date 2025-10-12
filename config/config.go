@@ -14,22 +14,24 @@ import (
 )
 
 type Config struct {
-	Server       ServerConfig     `yaml:"server"`
-	Strategy     StrategyConfig   `yaml:"strategy"`
-	Retry        RetryConfig      `yaml:"retry"`
-	Health       HealthConfig     `yaml:"health"`
-	Logging      LoggingConfig    `yaml:"logging"`
-	Streaming    StreamingConfig  `yaml:"streaming"`
-	Group        GroupConfig      `yaml:"group"`        // Group configuration
-	RequestSuspend RequestSuspendConfig `yaml:"request_suspend"` // Request suspension configuration
-	UsageTracking UsageTrackingConfig `yaml:"usage_tracking"` // Usage tracking configuration
-	Proxy        ProxyConfig      `yaml:"proxy"`
-	Auth         AuthConfig       `yaml:"auth"`
-	TUI          TUIConfig        `yaml:"tui"`           // TUI configuration
-	Web          WebConfig        `yaml:"web"`           // Web interface configuration
-	GlobalTimeout time.Duration   `yaml:"global_timeout"` // Global timeout for non-streaming requests
-	Endpoints    []EndpointConfig `yaml:"endpoints"`
-	
+	Server         ServerConfig         `yaml:"server"`
+	Strategy       StrategyConfig       `yaml:"strategy"`
+	Retry          RetryConfig          `yaml:"retry"`
+	Health         HealthConfig         `yaml:"health"`
+	Logging        LoggingConfig        `yaml:"logging"`
+	Streaming      StreamingConfig      `yaml:"streaming"`
+	Group          GroupConfig          `yaml:"group"`                   // Group configuration
+	RequestSuspend RequestSuspendConfig `yaml:"request_suspend"`         // Request suspension configuration
+	UsageTracking  UsageTrackingConfig  `yaml:"usage_tracking"`          // Usage tracking configuration
+	TokenCounting  TokenCountingConfig  `yaml:"token_counting"`          // Token counting configuration
+	Proxy          ProxyConfig          `yaml:"proxy"`
+	Auth           AuthConfig           `yaml:"auth"`
+	TUI            TUIConfig            `yaml:"tui"`                     // TUI configuration
+	Web            WebConfig            `yaml:"web"`                     // Web interface configuration
+	GlobalTimeout  time.Duration        `yaml:"global_timeout"`          // Global timeout for non-streaming requests
+	Timezone       string               `yaml:"timezone"`                // Global timezone setting for all components
+	Endpoints      []EndpointConfig     `yaml:"endpoints"`
+
 	// Runtime priority override (not serialized to YAML)
 	PrimaryEndpoint string `yaml:"-"` // Primary endpoint name from command line
 }
@@ -61,14 +63,23 @@ type HealthConfig struct {
 }
 
 type LoggingConfig struct {
-	Level              string `yaml:"level"`
-	Format             string `yaml:"format"`               // "json" or "text"
-	FileEnabled        bool   `yaml:"file_enabled"`         // Enable file logging
-	FilePath           string `yaml:"file_path"`            // Log file path
-	MaxFileSize        string `yaml:"max_file_size"`        // Max file size (e.g., "100MB")
-	MaxFiles           int    `yaml:"max_files"`            // Max number of rotated files to keep
-	CompressRotated    bool   `yaml:"compress_rotated"`     // Compress rotated log files
-	DisableResponseLimit bool `yaml:"disable_response_limit"` // Disable response content output limit when file logging is enabled
+	Level              string           `yaml:"level"`
+	Format             string           `yaml:"format"`               // "json" or "text"
+	FileEnabled        bool             `yaml:"file_enabled"`         // Enable file logging
+	FilePath           string           `yaml:"file_path"`            // Log file path
+	MaxFileSize        string           `yaml:"max_file_size"`        // Max file size (e.g., "100MB")
+	MaxFiles           int              `yaml:"max_files"`            // Max number of rotated files to keep
+	CompressRotated    bool             `yaml:"compress_rotated"`     // Compress rotated log files
+	DisableResponseLimit bool           `yaml:"disable_response_limit"` // Disable response content output limit when file logging is enabled
+	TokenDebug         TokenDebugConfig `yaml:"token_debug"`          // Token debug configuration
+}
+
+// TokenDebugConfig Token调试配置
+type TokenDebugConfig struct {
+	Enabled         bool   `yaml:"enabled"`           // 是否启用Token调试功能，默认: true
+	SavePath        string `yaml:"save_path"`         // 调试文件保存目录，默认: logs
+	MaxFiles        int    `yaml:"max_files"`         // 最大保留调试文件数量，默认: 50 (0=不限制)
+	AutoCleanupDays int    `yaml:"auto_cleanup_days"` // 自动清理N天前的调试文件，默认: 7 (0=不清理)
 }
 
 type StreamingConfig struct {
@@ -98,7 +109,13 @@ type ModelPricing struct {
 
 type UsageTrackingConfig struct {
 	Enabled         bool                     `yaml:"enabled"`          // Enable usage tracking, default: false
+
+	// 向后兼容：保留原有的 database_path 配置
 	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/usage.db
+
+	// 新增：数据库配置（可选，优先级高于 database_path）
+	Database        *DatabaseBackendConfig   `yaml:"database,omitempty"` // Database configuration (optional)
+
 	BufferSize      int                      `yaml:"buffer_size"`      // Event buffer size, default: 1000
 	BatchSize       int                      `yaml:"batch_size"`       // Batch write size, default: 100
 	FlushInterval   time.Duration            `yaml:"flush_interval"`   // Force flush interval, default: 30s
@@ -107,6 +124,31 @@ type UsageTrackingConfig struct {
 	CleanupInterval time.Duration            `yaml:"cleanup_interval"` // Cleanup task execution interval, default: 24h
 	ModelPricing    map[string]ModelPricing  `yaml:"model_pricing"`    // Model pricing configuration
 	DefaultPricing  ModelPricing             `yaml:"default_pricing"`  // Default pricing for unknown models
+}
+
+// DatabaseBackendConfig 数据库后端配置
+type DatabaseBackendConfig struct {
+	Type string `yaml:"type"` // "sqlite" | "mysql"
+
+	// SQLite配置
+	Path string `yaml:"path,omitempty"` // SQLite文件路径
+
+	// MySQL配置
+	Host     string `yaml:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
+	Database string `yaml:"database,omitempty"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+
+	// 连接池配置
+	MaxOpenConns    int           `yaml:"max_open_conns,omitempty"`
+	MaxIdleConns    int           `yaml:"max_idle_conns,omitempty"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime,omitempty"`
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time,omitempty"`
+
+	// MySQL特定配置
+	Charset  string `yaml:"charset,omitempty"`
+	Timezone string `yaml:"timezone,omitempty"`
 }
 
 type ProxyConfig struct {
@@ -136,16 +178,23 @@ type WebConfig struct {
 	Port    int    `yaml:"port"`    // Web interface port, default: 8088
 }
 
+// TokenCountingConfig Token计数配置
+type TokenCountingConfig struct {
+	Enabled         bool    `yaml:"enabled"`          // 启用count_tokens支持
+	EstimationRatio float64 `yaml:"estimation_ratio"` // Token估算比例 (1 token ≈ N 字符)
+}
+
 type EndpointConfig struct {
-	Name          string            `yaml:"name"`
-	URL           string            `yaml:"url"`
-	Priority      int               `yaml:"priority"`
-	Group         string            `yaml:"group,omitempty"`
-	GroupPriority int               `yaml:"group-priority,omitempty"`
-	Token         string            `yaml:"token,omitempty"`
-	ApiKey        string            `yaml:"api-key,omitempty"`
-	Timeout       time.Duration     `yaml:"timeout"`
-	Headers       map[string]string `yaml:"headers,omitempty"`
+	Name                string            `yaml:"name"`
+	URL                 string            `yaml:"url"`
+	Priority            int               `yaml:"priority"`
+	Group               string            `yaml:"group,omitempty"`
+	GroupPriority       int               `yaml:"group-priority,omitempty"`
+	Token               string            `yaml:"token,omitempty"`
+	ApiKey              string            `yaml:"api-key,omitempty"`
+	Timeout             time.Duration     `yaml:"timeout"`
+	Headers             map[string]string `yaml:"headers,omitempty"`
+	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
 }
 
 // LoadConfig loads configuration from file
@@ -237,6 +286,19 @@ func (c *Config) setDefaults() {
 	if c.Logging.FileEnabled && c.Logging.MaxFiles == 0 {
 		c.Logging.MaxFiles = 10
 	}
+
+	// Set token debug defaults
+	// Default: enabled in development, consider disabling in production
+	if c.Logging.TokenDebug.SavePath == "" {
+		c.Logging.TokenDebug.SavePath = "logs"
+	}
+	if c.Logging.TokenDebug.MaxFiles == 0 {
+		c.Logging.TokenDebug.MaxFiles = 50
+	}
+	if c.Logging.TokenDebug.AutoCleanupDays == 0 {
+		c.Logging.TokenDebug.AutoCleanupDays = 7
+	}
+	// Note: TokenDebug.Enabled has no default - defaults to false (zero value)
 	if c.Streaming.HeartbeatInterval == 0 {
 		c.Streaming.HeartbeatInterval = 30 * time.Second
 	}
@@ -250,6 +312,11 @@ func (c *Config) setDefaults() {
 	// Set global timeout default
 	if c.GlobalTimeout == 0 {
 		c.GlobalTimeout = 300 * time.Second // Default 5 minutes for non-streaming requests
+	}
+
+	// Set global timezone default
+	if c.Timezone == "" {
+		c.Timezone = "Asia/Shanghai" // Default timezone for all components
 	}
 
 	// Set group defaults
@@ -320,6 +387,12 @@ func (c *Config) setDefaults() {
 	}
 	// Web enabled defaults to false if not explicitly set in YAML
 	// Note: We don't set a default here since the zero value (false) is what we want
+
+	// Set Token Counting defaults
+	if c.TokenCounting.EstimationRatio == 0 {
+		c.TokenCounting.EstimationRatio = 4.0 // Default: 1 token ≈ 4 characters
+	}
+	// TokenCounting.Enabled defaults to false (zero value) for backward compatibility
 
 	// Set default timeouts for endpoints and handle parameter inheritance (except tokens)
 	var defaultEndpoint *EndpointConfig
@@ -756,6 +829,12 @@ func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
 		cw.logger.Info("📊 使用跟踪数据保留天数变更",
 			"old_retention", oldConfig.UsageTracking.RetentionDays,
 			"new_retention", newConfig.UsageTracking.RetentionDays)
+	}
+
+	if oldConfig.Timezone != newConfig.Timezone {
+		cw.logger.Info("🌍 全局时区配置变更",
+			"old_timezone", oldConfig.Timezone,
+			"new_timezone", newConfig.Timezone)
 	}
 }
 

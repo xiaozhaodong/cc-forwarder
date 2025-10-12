@@ -23,6 +23,7 @@ import (
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 	"cc-forwarder/internal/tui"
+	"cc-forwarder/internal/utils"
 	"cc-forwarder/internal/web"
 )
 
@@ -109,6 +110,12 @@ func main() {
 	logger = setupLogger(cfg.Logging, nil)
 	slog.SetDefault(logger)
 
+	// 🔧 Initialize debug configuration
+	utils.SetDebugConfig(cfg)
+	if cfg.Logging.TokenDebug.Enabled {
+		logger.Info("🔍 Token调试功能已启用", "save_path", cfg.Logging.TokenDebug.SavePath)
+	}
+
 	if tuiEnabled {
 		logger.Info("🖥️ TUI模式已启用，启动图形化监控界面")
 	} else {
@@ -163,6 +170,7 @@ func main() {
 	trackingConfig := &tracking.Config{
 		Enabled:         cfg.UsageTracking.Enabled,
 		DatabasePath:    cfg.UsageTracking.DatabasePath,
+		Database:        cfg.UsageTracking.Database, // 直接使用新配置
 		BufferSize:      cfg.UsageTracking.BufferSize,
 		BatchSize:       cfg.UsageTracking.BatchSize,
 		FlushInterval:   cfg.UsageTracking.FlushInterval,
@@ -173,7 +181,7 @@ func main() {
 		DefaultPricing:  convertModelPricingSingle(cfg.UsageTracking.DefaultPricing),
 	}
 
-	usageTracker, err := tracking.NewUsageTracker(trackingConfig)
+	usageTracker, err := tracking.NewUsageTracker(trackingConfig, cfg.Timezone)
 	if err != nil {
 		logger.Error(fmt.Sprintf("❌ 使用跟踪器初始化失败: %v", err))
 		os.Exit(1)

@@ -1,0 +1,42 @@
+# count_tokens 功能测试配置
+# 创建时间: 2025-10-10 11:20:14
+
+server:
+  host: "127.0.0.1"
+  port: 8087
+
+# 启用Token计数功能
+token_counting:
+  enabled: true              # 启用count_tokens支持
+  estimation_ratio: 4.0      # 1 token ≈ 4 字符
+
+endpoints:
+  # 支持count_tokens的端点（会尝试转发）
+  - name: "anthropic-official"
+    url: "https://api.anthropic.com"
+    group: "main"
+    priority: 1
+    timeout: "30s"
+    token: "sk-ant-your-api-key-here"
+    supports_count_tokens: true   # ✅ 标记支持，会转发到此端点
+
+  # 不支持count_tokens的端点（会使用估算）
+  - name: "cloudflare-proxy"
+    url: "https://gateway.ai.cloudflare.com/v1/xxx"
+    group: "backup"
+    priority: 2
+    timeout: "30s"
+    token: "sk-your-token"
+    supports_count_tokens: false  # ❌ 不支持，会使用本地估算
+
+logging:
+  level: "info"
+
+tui:
+  enabled: false
+
+web:
+  enabled: false
+
+usage_tracking:
+  enabled: false

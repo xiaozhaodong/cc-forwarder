@@ -150,6 +150,30 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		return errorCtx
 	}
 
+	// 流处理错误分类 - 高优先级，必须在HTTP错误检查之前
+	// 使用精确匹配，避免误判普通网络错误（如"upstream connect error"）
+	if strings.HasPrefix(errStr, "stream_status:") ||
+		strings.Contains(errStr, "streaming not supported") ||
+		strings.Contains(errStr, "stream_error") ||
+		strings.Contains(errStr, "sse") ||
+		strings.Contains(errStr, "event-stream") ||
+		strings.Contains(errStr, "stream parsing") {
+
+		if strings.Contains(errStr, "streaming not supported") {
+			// 特殊处理：这不是流处理本身的错误，而是环境不支持
+			errorCtx.ErrorType = ErrorTypeUnknown
+			errorCtx.RetryableAfter = 0 // 不可重试
+			slog.Warn(fmt.Sprintf("🌊 [环境不支持] [%s] 端点: %s, 尝试: %d, 错误: %v",
+				requestID, endpoint, attempt, err))
+		} else {
+			errorCtx.ErrorType = ErrorTypeStream
+			errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
+			slog.Warn(fmt.Sprintf("🌊 [流处理错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
+				requestID, endpoint, attempt, err))
+		}
+		return errorCtx
+	}
+
 	// HTTP错误分类（非5xx，非429，非400）- 现在在限流和服务器错误检查之后，避免过早捕获特殊错误
 	if (strings.Contains(errStr, "http") || strings.Contains(errStr, "status") ||
 		strings.Contains(errStr, "endpoint returned error")) &&
@@ -159,24 +183,6 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		errorCtx.ErrorType = ErrorTypeHTTP
 		// 非5xx HTTP错误通常不可重试
 		slog.Error(fmt.Sprintf("🔗 [HTTP错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
-			requestID, endpoint, attempt, err))
-		return errorCtx
-	}
-
-	// 流处理错误分类 - 更精确的分类
-	if strings.Contains(errStr, "streaming not supported") {
-		// 特殊处理：这不是流处理本身的错误，而是环境不支持
-		errorCtx.ErrorType = ErrorTypeUnknown
-		errorCtx.RetryableAfter = 0 // 不可重试
-		slog.Warn(fmt.Sprintf("🌊 [环境不支持] [%s] 端点: %s, 尝试: %d, 错误: %v",
-			requestID, endpoint, attempt, err))
-		return errorCtx
-	}
-
-	if strings.Contains(errStr, "stream") || strings.Contains(errStr, "sse") || strings.Contains(errStr, "parsing") {
-		errorCtx.ErrorType = ErrorTypeStream
-		errorCtx.RetryableAfter = erm.calculateBackoffDelay(attempt)
-		slog.Warn(fmt.Sprintf("🌊 [流处理错误分类] [%s] 端点: %s, 尝试: %d, 错误: %v",
 			requestID, endpoint, attempt, err))
 		return errorCtx
 	}
@@ -268,8 +274,14 @@ func (erm *ErrorRecoveryManager) ExecuteRetry(ctx context.Context, errorCtx *Err
 
 	// 记录重试状态
 	if erm.usageTracker != nil && errorCtx.RequestID != "" {
-		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, errorCtx.EndpointName,
-			errorCtx.GroupName, "retry", errorCtx.AttemptCount, 0)
+		opts := tracking.UpdateOptions{
+			EndpointName: &errorCtx.EndpointName,
+			GroupName:    &errorCtx.GroupName,
+			Status:       stringPtr("retry"),
+			RetryCount:   &errorCtx.AttemptCount,
+			HttpStatus:   intPtr(0),
+		}
+		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)
 	}
 
 	slog.Info(fmt.Sprintf("🔄 [执行重试] [%s] 第 %d 次重试, 端点: %s",
@@ -296,8 +308,14 @@ func (erm *ErrorRecoveryManager) HandleFinalFailure(errorCtx *ErrorContext) {
 			status = "server_error"
 		}
 
-		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, errorCtx.EndpointName,
-			errorCtx.GroupName, status, errorCtx.AttemptCount, 0)
+		opts := tracking.UpdateOptions{
+			EndpointName: &errorCtx.EndpointName,
+			GroupName:    &errorCtx.GroupName,
+			Status:       &status,
+			RetryCount:   &errorCtx.AttemptCount,
+			HttpStatus:   intPtr(0),
+		}
+		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)
 	}
 
 	slog.Error(fmt.Sprintf("💀 [最终失败] [%s] 错误类型: %s, 尝试次数: %d, 端点: %s, 原始错误: %v",
@@ -323,7 +341,10 @@ func (erm *ErrorRecoveryManager) RecoverFromPartialData(requestID string, partia
 		// 可以在这里添加部分Token解析逻辑
 		if erm.usageTracker != nil {
 			// 记录部分数据恢复状态
-			erm.usageTracker.RecordRequestUpdate(requestID, "", "", "partial_recovery", 0, 0)
+			opts := tracking.UpdateOptions{
+				Status: stringPtr("partial_recovery"),
+			}
+			erm.usageTracker.RecordRequestUpdate(requestID, opts)
 		}
 	} else {
 		slog.Info(fmt.Sprintf("📝 [部分数据恢复] [%s] 保存部分响应数据, 长度: %d字节, 处理时间: %v",
@@ -365,6 +386,8 @@ func (erm *ErrorRecoveryManager) isNetworkError(err error) bool {
 		"connection reset", "connection refused", "connection closed",
 		"network is unreachable", "no route to host", "broken pipe",
 		"eof", "unexpected eof",
+		"upstream connect", "connect error", // 补充常见的upstream错误
+		"stream reset", // 补充网络流重置错误
 	}
 
 	for _, netErr := range networkErrors {
@@ -510,4 +533,14 @@ func (erm *ErrorRecoveryManager) SetRetryPolicy(maxRetries int, baseDelay, maxDe
 		"base_delay", baseDelay,
 		"max_delay", maxDelay,
 		"backoff_factor", backoffFactor)
+}
+
+// 辅助函数：创建string指针
+func stringPtr(s string) *string {
+	return &s
+}
+
+// 辅助函数：创建int指针
+func intPtr(i int) *int {
+	return &i
 }

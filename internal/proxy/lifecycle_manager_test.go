@@ -178,7 +178,7 @@ func TestRequestLifecycleManager_AnalyzeResponseType(t *testing.T) {
 // TestRequestLifecycleManager_AttemptCounter 测试尝试计数器的核心功能（语义修复）
 func TestRequestLifecycleManager_AttemptCounter(t *testing.T) {
 	requestID := "test-attempt-808"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 验证初始状态：attemptCounter应该为0
 	initialCount := rlm.GetAttemptCount()
@@ -216,7 +216,7 @@ func TestRequestLifecycleManager_AttemptCounter(t *testing.T) {
 // TestRequestLifecycleManager_UpdateStatusWithAttemptCounter 测试UpdateStatus与尝试计数器的集成
 func TestRequestLifecycleManager_UpdateStatusWithAttemptCounter(t *testing.T) {
 	requestID := "test-update-attempt-909"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 设置端点信息
 	rlm.SetEndpoint("test-endpoint", "test-group")
@@ -247,7 +247,7 @@ func TestRequestLifecycleManager_UpdateStatusWithAttemptCounter(t *testing.T) {
 // TestRequestLifecycleManager_AttemptCounterThreadSafety 测试尝试计数器的线程安全性
 func TestRequestLifecycleManager_AttemptCounterThreadSafety(t *testing.T) {
 	requestID := "test-threadsafe-1010"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	const numGoroutines = 100
 	const incrementsPerGoroutine = 10
@@ -278,7 +278,7 @@ func TestRequestLifecycleManager_AttemptCounterThreadSafety(t *testing.T) {
 // TestRequestLifecycleManager_UpdateStatusSemanticFix 测试语义修复的完整流程
 func TestRequestLifecycleManager_UpdateStatusSemanticFix(t *testing.T) {
 	requestID := "test-semantic-1111"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	rlm.SetEndpoint("endpoint1", "group1")
 
@@ -310,7 +310,7 @@ func TestRequestLifecycleManager_UpdateStatusSemanticFix(t *testing.T) {
 // TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount 测试尝试计数器与retryCount的独立性
 func TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount(t *testing.T) {
 	requestID := "test-independent-1212"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID)
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 增加尝试计数器
 	rlm.IncrementAttempt()

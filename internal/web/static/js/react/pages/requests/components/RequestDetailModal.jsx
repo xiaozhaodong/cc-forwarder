@@ -64,11 +64,11 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
                             </div>
                             <div className="detail-item">
                                 <label>开始时间:</label>
-                                <span className="detail-value">{formatTimestamp(request.timestamp)}</span>
+                                <span className="detail-value">{formatTimestamp(request.start_time || request.startTime || request.timestamp)}</span>
                             </div>
                             <div className="detail-item">
-                                <label>更新时间:</label>
-                                <span className="detail-value">{formatTimestamp(request.updated_at || request.updatedAt)}</span>
+                                <label>结束时间:</label>
+                                <span className="detail-value">{formatTimestamp(request.end_time || request.endTime)}</span>
                             </div>
                         </div>
                     </div>
@@ -98,6 +98,10 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
                             <div className="detail-item">
                                 <label>用户代理:</label>
                                 <span className="detail-value user-agent">{request.user_agent || request.userAgent || '-'}</span>
+                            </div>
+                            <div className="detail-item">
+                                <label>HTTP状态码:</label>
+                                <span className="detail-value">{request.http_status_code || request.httpStatusCode || '-'}</span>
                             </div>
                             <div className="detail-item">
                                 <label>重试次数:</label>
@@ -156,12 +160,38 @@ const RequestDetailModal = ({ request, isOpen, onClose }) => {
                         </div>
                     </div>
 
-                    {/* 错误信息 */}
-                    {(request.error || request.error_message || request.errorMessage) && (
-                        <div className="detail-section error-section">
+                    {/* 错误信息 (v3.5.0状态机重构 - 基于状态和新字段显示) */}
+                    {(['failed', 'error', 'cancelled', 'timeout'].includes(request.status) ||
+                      request.failure_reason || request.cancel_reason ||
+                      request.error || request.error_message || request.errorMessage) && (
+                        <div className="detail-section">
                             <h3>❌ 错误信息</h3>
-                            <div className="error-message">
-                                {request.error || request.error_message || request.errorMessage}
+                            <div className="detail-grid">
+                                {/* 失败原因 (新字段) */}
+                                {request.failure_reason && (
+                                    <div className="detail-item">
+                                        <label>失败原因:</label>
+                                        <span className="detail-value failure-reason">{request.failure_reason}</span>
+                                    </div>
+                                )}
+
+                                {/* 取消原因 (新字段) */}
+                                {request.cancel_reason && (
+                                    <div className="detail-item">
+                                        <label>取消原因:</label>
+                                        <span className="detail-value cancel-reason">{request.cancel_reason}</span>
+                                    </div>
+                                )}
+
+                                {/* 详细错误信息 (兼容新旧字段) */}
+                                {(request.last_failure_reason || request.error || request.error_message || request.errorMessage) && (
+                                    <div className="detail-item detail-full-width">
+                                        <label>详细信息:</label>
+                                        <div className="detail-value">
+                                            {request.last_failure_reason || request.error || request.error_message || request.errorMessage}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

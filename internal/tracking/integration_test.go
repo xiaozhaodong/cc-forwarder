@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// Helper functions for pointer creation
+func stringPtr(s string) *string { return &s }
+func intPtr(i int) *int { return &i }
+
 // MockWebServer simulates the web server integration
 type MockWebServer struct {
 	usageTracker *UsageTracker
@@ -123,12 +127,14 @@ func (m *MockWebServer) handleHealthCheck(w http.ResponseWriter, r *http.Request
 func TestWebIntegration(t *testing.T) {
 	// Create usage tracker
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -185,14 +191,21 @@ func TestWebIntegration(t *testing.T) {
 			httpStatus = 500
 		}
 		
-		tracker.RecordRequestUpdate(req.requestID, req.endpoint, req.group, status, 0, httpStatus)
+		opts := UpdateOptions{
+			EndpointName: stringPtr(req.endpoint),
+			GroupName:    stringPtr(req.group),
+			Status:       stringPtr(status),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(httpStatus),
+		}
+		tracker.RecordRequestUpdate(req.requestID, opts)
 		
 		tokens := &TokenUsage{
 			InputTokens:  req.inputTokens,
 			OutputTokens: req.outputTokens,
 		}
 		
-		tracker.RecordRequestComplete(req.requestID, req.model, tokens, 300*time.Millisecond)
+		tracker.RecordRequestSuccess(req.requestID, req.model, tokens, 300*time.Millisecond)
 	}
 	
 	// Wait for processing
@@ -319,7 +332,9 @@ func TestWebIntegration(t *testing.T) {
 func TestWebIntegrationDisabled(t *testing.T) {
 	// Test web integration when usage tracking is disabled
 	config := &Config{
-		Enabled: false,
+		Enabled:         false,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 	}
 	
 	tracker, err := NewUsageTracker(config)
@@ -412,12 +427,14 @@ func TestWebIntegrationErrors(t *testing.T) {
 
 func TestConcurrentWebRequests(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"test-model": {
 				Input:  1.00,
@@ -445,14 +462,21 @@ func TestConcurrentWebRequests(t *testing.T) {
 		tracker.RecordRequestStart(requestID, "127.0.0.1", "concurrent-web-agent", "POST", "/v1/messages", false)
 		
 		// Add request update to ensure complete records
-		tracker.RecordRequestUpdate(requestID, "test-endpoint", "test-group", "success", 0, 200)
+		opts := UpdateOptions{
+			EndpointName: stringPtr("test-endpoint"),
+			GroupName:    stringPtr("test-group"),
+			Status:       stringPtr("success"),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(200),
+		}
+		tracker.RecordRequestUpdate(requestID, opts)
 		
 		tokens := &TokenUsage{
 			InputTokens:  100 + int64(i*10),
 			OutputTokens: 50 + int64(i*5),
 		}
 		
-		tracker.RecordRequestComplete(requestID, "test-model", tokens, 200*time.Millisecond)
+		tracker.RecordRequestSuccess(requestID, "test-model", tokens, 200*time.Millisecond)
 	}
 	
 	// Force flush and wait for processing

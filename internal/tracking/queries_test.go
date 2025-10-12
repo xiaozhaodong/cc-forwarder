@@ -8,12 +8,14 @@ import (
 
 func TestQueryOperations(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
 				Input:         1.00,
@@ -64,14 +66,21 @@ func TestQueryOperations(t *testing.T) {
 			httpStatus = 500
 		}
 		
-		tracker.RecordRequestUpdate(data.requestID, data.endpoint, data.group, status, 0, httpStatus)
+		opts := UpdateOptions{
+			EndpointName: stringPtr(data.endpoint),
+			GroupName:    stringPtr(data.group),
+			Status:       stringPtr(status),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(httpStatus),
+		}
+		tracker.RecordRequestUpdate(data.requestID, opts)
 		
 		tokens := &TokenUsage{
 			InputTokens:  data.inputTokens,
 			OutputTokens: data.outputTokens,
 		}
 		
-		tracker.RecordRequestComplete(data.requestID, data.model, tokens, 500*time.Millisecond)
+		tracker.RecordRequestSuccess(data.requestID, data.model, tokens, 500*time.Millisecond)
 	}
 	
 	// Wait for processing
@@ -246,12 +255,14 @@ func TestQueryOperations(t *testing.T) {
 
 func TestExportOperations(t *testing.T) {
 	config := &Config{
-		Enabled:        true,
-		DatabasePath:   ":memory:",
-		BufferSize:     100,
-		BatchSize:      10,
-		FlushInterval:  50 * time.Millisecond,
-		MaxRetry:       3,
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"test-model": {
 				Input:  1.00,
@@ -272,14 +283,21 @@ func TestExportOperations(t *testing.T) {
 		
 		tracker.RecordRequestStart(requestID, "127.0.0.1", "export-agent", "POST", "/v1/messages", false)
 		
-		tracker.RecordRequestUpdate(requestID, "export-endpoint", "export-group", "success", 0, 200)
+		opts := UpdateOptions{
+			EndpointName: stringPtr("export-endpoint"),
+			GroupName:    stringPtr("export-group"),
+			Status:       stringPtr("success"),
+			RetryCount:   intPtr(0),
+			HttpStatus:   intPtr(200),
+		}
+		tracker.RecordRequestUpdate(requestID, opts)
 		
 		tokens := &TokenUsage{
 			InputTokens:  100 + int64(i*10),
 			OutputTokens: 50 + int64(i*5),
 		}
 		
-		tracker.RecordRequestComplete(requestID, "test-model", tokens, time.Duration(500+i*100)*time.Millisecond)
+		tracker.RecordRequestSuccess(requestID, "test-model", tokens, time.Duration(500+i*100)*time.Millisecond)
 	}
 	
 	// Wait for processing

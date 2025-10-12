@@ -30,7 +30,7 @@ type RegularHandler struct {
 	retryManagerFactory      RetryManagerFactory
 	suspensionManagerFactory SuspensionManagerFactory
 	// 🔧 [修复] 共享SuspensionManager实例，确保全局挂起限制生效
-	sharedSuspensionManager  SuspensionManager
+	sharedSuspensionManager SuspensionManager
 }
 
 // NewRegularHandler 创建新的RegularHandler实例
@@ -61,7 +61,7 @@ func NewRegularHandler(
 		suspensionManagerFactory: suspensionManagerFactory,
 		// 🔧 [Critical修复] 使用传入的共享SuspensionManager实例
 		// 确保常规请求与流式请求共享同一个全局挂起计数器
-		sharedSuspensionManager:  sharedSuspensionManager,
+		sharedSuspensionManager: sharedSuspensionManager,
 	}
 }
 
@@ -132,12 +132,20 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 			lifecycleManager.SetEndpoint(endpoint.Config.Name, endpoint.Config.Group)
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
+			// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点
+			*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", endpoint.Config.Name))
+
+		attemptLoop:
 			for attempt := 1; attempt <= retryMgr.GetMaxAttempts(); attempt++ {
 				// 检查取消
 				select {
 				case <-ctx.Done():
-					currentAttemptCount := lifecycleManager.GetAttemptCount()
-					lifecycleManager.UpdateStatus("cancelled", currentAttemptCount, 0)
+					lifecycleManager.CancelRequest("client disconnected", nil)
+
+					// 🔧 [HTTP状态码修复] 设置最终状态码到请求上下文，而不是WriteHeader
+					statusCode := getDefaultStatusCodeForFinalStatus("cancelled") // 返回499
+					*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
+					http.Error(w, "Client closed request", statusCode)
 					return
 				default:
 				}
@@ -154,7 +162,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 						connID, endpoint.Config.Name, attempt))
 
 					lifecycleManager.UpdateStatus("processing", globalAttemptCount, resp.StatusCode)
-					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name)
+					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name, r)
 					return
 				}
 
@@ -180,7 +188,8 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				// 🔧 使用增强的RetryManager进行统一决策
 				errorCtx := errorRecovery.ClassifyError(err, connID, endpoint.Config.Name, endpoint.Config.Group, attempt-1)
 
-				// 🚀 [改进版方案1] 预设错误上下文，避免 HandleError 中重复分类
+				// 🚀 [状态机重构] Phase 4: 分离状态转换与失败原因记录
+				// 预设错误上下文（避免重复分类），由HandleError统一记录失败原因
 				lifecycleManager.PrepareErrorContext(&errorCtx)
 				lifecycleManager.HandleError(err)
 
@@ -192,21 +201,37 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				// 处理挂起决策
 				if decision.SuspendRequest {
 					if rh.sharedSuspensionManager.ShouldSuspend(ctx) {
+						// 🚀 [状态机重构] Phase 4: 挂起时更新状态
 						lifecycleManager.UpdateStatus("suspended", globalAttemptCount, 0)
-						slog.Info(fmt.Sprintf("⏸️ [请求挂起] [%s] 原因: %s",
-							connID, decision.Reason))
+						slog.Info(fmt.Sprintf("⏸️ [请求挂起] [%s] 原因: %s，失败端点: %s",
+							connID, decision.Reason, endpoint.Config.Name))
 
-						if rh.sharedSuspensionManager.WaitForGroupSwitch(ctx, connID) {
-							slog.Info(fmt.Sprintf("📡 [组切换成功] [%s] 重新获取端点列表",
-								connID))
+						// 🚀 [端点自愈] 使用新的端点恢复等待方法，能区分成功/超时/取消
+						result := rh.sharedSuspensionManager.WaitForEndpointRecoveryWithResult(ctx, connID, endpoint.Config.Name)
+						switch result {
+						case SuspensionSuccess:
+							slog.Info(fmt.Sprintf("🎯 [恢复成功] [%s] 端点 %s 已恢复或组已切换，重新获取端点列表",
+								connID, endpoint.Config.Name))
 							groupSwitchNeeded = true
-							break // 跳出端点循环
-						} else {
-							slog.Warn(fmt.Sprintf("⏰ [挂起失败] [%s] 等待组切换超时或被取消",
-								connID))
-							lifecycleManager.UpdateStatus("error", globalAttemptCount, http.StatusBadGateway)
-							http.Error(w, "Request suspended but group switch failed", http.StatusBadGateway)
+							break
+						case SuspensionCancelled:
+							// 🎯 [挂起取消区分] 用户在挂起期间取消请求，应该记录为取消而非失败
+							slog.Info(fmt.Sprintf("🚫 [挂起期间取消] [%s] 用户在挂起期间取消请求", connID))
+							// 🔧 [状态码修复] 设置取消状态码到上下文用于日志记录
+							*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
+							lifecycleManager.CancelRequest("suspended then cancelled", nil)
+							http.Error(w, "Request cancelled during suspension", 499)
 							return
+						case SuspensionTimeout:
+							// 挂起等待超时，记录为失败
+							slog.Warn(fmt.Sprintf("⏰ [挂起超时] [%s] 等待端点恢复或组切换超时", connID))
+							lifecycleManager.UpdateStatus("error", globalAttemptCount, http.StatusBadGateway)
+							http.Error(w, "Request suspended but recovery timeout", http.StatusBadGateway)
+							return
+						}
+
+						if groupSwitchNeeded {
+							break attemptLoop
 						}
 					}
 				}
@@ -215,25 +240,34 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 					if decision.SwitchEndpoint {
 						break // 尝试下一个端点
 					} else {
-						// 🔧 [修复] 终止重试时获取真实状态码，避免http.Error panic
+						// 🚀 [状态机重构] Phase 4: 最终失败处理
+						// 获取失败原因
+						failureReason := lifecycleManager.MapErrorTypeToFailureReason(errorCtx.ErrorType)
+
+						// 获取真实状态码，避免http.Error panic
 						statusCode := GetStatusCodeFromError(err, resp)
 
-						// 🚨 [关键修复] 避免statusCode=0导致http.Error panic
-						// Go标准库要求状态码在100-999之间，0会触发panic
+						// 避免statusCode=0导致http.Error panic
 						if statusCode == 0 {
 							statusCode = getDefaultStatusCodeForFinalStatus(decision.FinalStatus)
 						}
 
-						currentAttemptCount := globalAttemptCount
-						lifecycleManager.UpdateStatus(decision.FinalStatus, currentAttemptCount, statusCode)
+						// 使用新的FailRequest方法标记最终失败（修复：添加HTTP状态码）
+						lifecycleManager.FailRequest(failureReason, err.Error(), statusCode)
 						http.Error(w, decision.Reason, statusCode)
 						return
 					}
 				}
 
-				// 使用统一延迟
-				if attempt < retryMgr.GetMaxAttempts() && decision.Delay > 0 {
-					time.Sleep(decision.Delay)
+				// 🚀 [状态机重构] Phase 4: 重试状态管理
+				if decision.RetrySameEndpoint && attempt < retryMgr.GetMaxAttempts() {
+					// 更新为重试状态
+					lifecycleManager.UpdateStatus("retry", globalAttemptCount, 0)
+
+					// 使用统一延迟
+					if decision.Delay > 0 {
+						time.Sleep(decision.Delay)
+					}
 				}
 			}
 
@@ -252,9 +286,71 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		break
 	}
 
-	// 最终失败处理
-	currentAttemptCount := lifecycleManager.GetAttemptCount()
-	lifecycleManager.UpdateStatus("error", currentAttemptCount, http.StatusBadGateway)
+	// 🔧 [统一挂起策略] 所有端点都失败后，检查是否应该挂起请求（与流式模式保持一致）
+	// 注意：客户端取消错误已在上面统一处理，这里不会执行到
+
+	// 🔧 [修复] 使用共享的SuspensionManager实例，确保全局挂起限制生效
+	suspensionMgr := rh.sharedSuspensionManager
+
+	// 检查是否应该挂起请求
+	if suspensionMgr.ShouldSuspend(ctx) {
+		currentEndpoints := rh.endpointManager.GetHealthyEndpoints()
+		if cfg := rh.endpointManager.GetConfig(); cfg != nil && cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled {
+			currentEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+		}
+
+		// 🚀 [状态机重构] Phase 4: 挂起时更新状态（移除重复的失败原因记录）
+		lifecycleManager.UpdateStatus("suspended", -1, 0)
+
+		// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
+		actualAttemptCount := lifecycleManager.GetAttemptCount()
+		slog.Info(fmt.Sprintf("⏸️ [常规挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d, 当前所有组均不可用",
+			connID, actualAttemptCount, len(currentEndpoints)))
+
+		// 🚀 [端点自愈] 等待端点恢复，能区分成功/超时/取消
+		// 注意：常规模式没有lastFailedEndpoint概念，传空字符串
+		result := suspensionMgr.WaitForEndpointRecoveryWithResult(ctx, connID, "")
+		switch result {
+		case SuspensionSuccess:
+			slog.Info(fmt.Sprintf("🚀 [挂起恢复] [%s] 端点已恢复或组切换完成，重新获取端点", connID))
+
+			// 重新获取健康端点
+			var newEndpoints []*endpoint.Endpoint
+			if rh.endpointManager.GetConfig().Strategy.Type == "fastest" && rh.endpointManager.GetConfig().Strategy.FastTestEnabled {
+				newEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+			} else {
+				newEndpoints = rh.endpointManager.GetHealthyEndpoints()
+			}
+
+			if len(newEndpoints) > 0 {
+				slog.Info(fmt.Sprintf("🔄 [重新开始] [%s] 获取到 %d 个新端点，重新开始常规处理", connID, len(newEndpoints)))
+
+				// 🔧 [生命周期修复] 恢复时必须更新生命周期管理器的端点信息
+				// 设置第一个新端点的信息到生命周期管理器
+				firstEndpoint := newEndpoints[0]
+				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstEndpoint.Config.Group)
+
+				// 重新获取健康端点并重新尝试（递归调用）
+				rh.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
+				return
+			}
+		case SuspensionCancelled:
+			// 🎯 [挂起取消区分] 用户在挂起期间取消请求，应该记录为取消而非失败
+			slog.Info(fmt.Sprintf("🚫 [挂起期间取消] [%s] 用户在挂起期间取消请求", connID))
+			// 🔧 [状态码修复] 设置取消状态码到上下文用于日志记录
+			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
+			lifecycleManager.CancelRequest("suspended then cancelled", nil)
+			http.Error(w, "Request cancelled during suspension", 499)
+			return
+		case SuspensionTimeout:
+			slog.Warn(fmt.Sprintf("⏰ [挂起超时] [%s] 挂起等待超时", connID))
+			// 继续执行下面的失败处理逻辑
+		}
+	}
+
+	// 🚀 [状态机重构] Phase 4: 最终失败处理
+	// 所有端点都失败了，使用FailRequest方法标记最终失败（修复：添加HTTP状态码）
+	lifecycleManager.FailRequest("endpoint_exhausted", "All endpoints failed", http.StatusBadGateway)
 	http.Error(w, "All endpoints failed", http.StatusBadGateway)
 }
 
@@ -290,7 +386,7 @@ func (rh *RegularHandler) executeRequest(ctx context.Context, r *http.Request, b
 }
 
 // processSuccessResponse 处理成功响应
-func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string) {
+func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string, r *http.Request) {
 	defer resp.Body.Close()
 
 	// 复制响应头（排除Content-Encoding用于gzip处理）
@@ -319,6 +415,14 @@ func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.Res
 	// ✅ 同步Token解析：简化逻辑，避免协程控制问题
 	connID := lifecycleManager.GetRequestID()
 	slog.Debug(fmt.Sprintf("🔄 [Token解析] [%s] 开始Token解析", connID))
+
+	// 🔍 [路径过滤] 跳过count_tokens端点的Token解析
+	if r.URL.Path == "/v1/messages/count_tokens" {
+		slog.Debug(fmt.Sprintf("🔍 [路径过滤] [%s] 跳过count_tokens端点的Token解析", connID))
+		// count_tokens端点不需要Token解析，直接完成请求
+		lifecycleManager.CompleteRequest(nil)
+		return
+	}
 
 	// 对于常规请求，同步解析Token信息（如果存在）
 	tokenUsage, modelName := rh.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
@@ -356,6 +460,9 @@ func (rh *RegularHandler) HandleRegularRequest(ctx context.Context, w http.Respo
 	operation := func(ep *endpoint.Endpoint, connectionID string) (*http.Response, error) {
 		// Store the selected endpoint name for logging
 		selectedEndpointName = ep.Config.Name
+
+		// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支的日志都能正确记录端点
+		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 
 		// TODO: Update connection endpoint in monitoring (if we have a monitoring middleware)
 
@@ -396,11 +503,6 @@ func (rh *RegularHandler) HandleRegularRequest(ctx context.Context, w http.Respo
 
 	// Execute with retry logic - 使用retryHandler
 	finalResp, lastErr := rh.retryHandler.ExecuteWithContext(ctx, operation, connID)
-
-	// Store selected endpoint info in request context for logging
-	if selectedEndpointName != "" {
-		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", selectedEndpointName))
-	}
 
 	if lastErr != nil {
 		// Check if the error is due to no healthy endpoints

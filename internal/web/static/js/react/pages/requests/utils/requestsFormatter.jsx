@@ -66,10 +66,13 @@ export const formatDuration = (duration) => {
 export const formatTimestamp = (timestamp) => {
     if (!timestamp) return 'N/A';
 
+    // 后端返回RFC3339格式：2025-09-25T10:07:54.994712+08:00
+    // 直接使用浏览器的Date解析，它会正确处理时区信息
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) return 'Invalid Date';
 
-    // 直接显示绝对时间格式：2025/9/20 23:12:43
+    // 显示本地时间格式：2025/9/25 10:07:54
+    // 使用toLocaleString确保显示用户本地时区的时间
     const year = date.getFullYear();
     const month = date.getMonth() + 1;  // 不补零，按原版格式
     const day = date.getDate();         // 不补零，按原版格式
@@ -156,7 +159,7 @@ export const formatRequestStatus = (status) => {
 // 格式化端点名称
 export const formatEndpoint = (endpoint, group) => {
     if (!endpoint || endpoint === 'unknown') {
-        return 'Unknown';
+        return '-';
     }
 
     let formatted = endpoint;
@@ -222,10 +225,40 @@ export const formatRequestId = (requestId) => {
 
 // 格式化模型名称
 export const formatModelName = (modelName) => {
-    if (!modelName || modelName === 'unknown') return 'Unknown';
+    if (!modelName || modelName === 'unknown') return '-';
 
     // 直接返回原始模型名称，不进行映射转换
     return modelName;
+};
+
+// 获取模型颜色类名
+export const getModelColorClass = (modelName) => {
+    if (!modelName || modelName === 'unknown') return 'model-unknown';
+
+    const lowerName = modelName.toLowerCase();
+
+    // Claude Sonnet 4 系列 - 橙色
+    if (lowerName.includes('sonnet-4') || lowerName.includes('claude-sonnet-4')) {
+        return 'model-sonnet-4';
+    }
+
+    // Claude 3.5 Haiku 系列 - 绿色
+    if (lowerName.includes('3-5-haiku') || lowerName.includes('haiku')) {
+        return 'model-haiku';
+    }
+
+    // Claude 3.5 Sonnet 系列 - 蓝色
+    if (lowerName.includes('3-5-sonnet') || (lowerName.includes('sonnet') && lowerName.includes('3.5'))) {
+        return 'model-sonnet-3-5';
+    }
+
+    // Claude Opus 系列 - 紫色
+    if (lowerName.includes('opus')) {
+        return 'model-opus';
+    }
+
+    // 其他未知模型 - 灰色
+    return 'model-unknown';
 };
 
 // 格式化流式请求图标

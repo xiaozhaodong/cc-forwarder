@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/proxy/response"
 	"cc-forwarder/internal/tracking"
+	"cc-forwarder/internal/utils"
 )
 
 // 缓冲区大小常量
@@ -19,6 +21,7 @@ const (
 	StreamBufferSize     = 8192 // 8KB主缓冲区
 	LineBufferInitSize   = 1024 // 1KB行缓冲区初始大小
 	BackgroundBufferSize = 4096 // 4KB后台解析缓冲区
+	DebugLineLimit       = 100  // 调试模式下最多保存100行SSE数据
 )
 
 // StreamProcessor 流式处理器核心结构体
@@ -53,13 +56,16 @@ type StreamProcessor struct {
 
 	// 完成状态跟踪
 	completionRecorded bool // 是否已经记录完成状态，防止重复记录
+
+	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
+	debugLines []string // SSE行数据收集，最多保存DebugLineLimit行
 }
 
 // NewStreamProcessor 创建新的流式处理器实例
 func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTracker,
 	w http.ResponseWriter, flusher http.Flusher, requestID, endpoint string) *StreamProcessor {
 
-	return &StreamProcessor{
+	sp := &StreamProcessor{
 		tokenParser:    tokenParser,
 		usageTracker:   usageTracker,
 		responseWriter: w,
@@ -70,8 +76,11 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 		startTime:      time.Now(),
 		lineBuffer:     make([]byte, 0, LineBufferInitSize),
 		partialData:    make([]byte, 0, BackgroundBufferSize),
-		maxParseErrors: 10, // 最多允许10个解析错误
+		maxParseErrors: 10,                                // 最多允许10个解析错误
+		debugLines:     make([]string, 0, DebugLineLimit), // 🔍 [调试] 初始化调试缓冲区
 	}
+
+	return sp
 }
 
 // ProcessStream 实现边接收边转发的8KB缓冲区流式处理
@@ -80,9 +89,23 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 	defer resp.Body.Close()
 	defer sp.waitForBackgroundParsing() // 确保所有后台解析完成
 
-	// 初始化8KB缓冲区
+	// 🔧 [解压缩修复] 创建响应处理器并获取解压缩的流式读取器
+	processor := response.NewProcessor()
+	decompressedReader, err := processor.DecompressStreamReader(resp)
+	if err != nil {
+		return nil, fmt.Errorf("🗜️ [解压缩失败] [%s] 端点: %s, 错误: %w", sp.requestID, sp.endpoint, err)
+	}
+	defer decompressedReader.Close() // 确保解压缩读取器被关闭
+
+	// 记录解压缩状态
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	if contentEncoding != "" {
+		slog.Info(fmt.Sprintf("🗜️ [流式解压] [%s] 端点: %s, 编码: %s", sp.requestID, sp.endpoint, contentEncoding))
+	}
+
+	// 初始化8KB缓冲区，使用解压缩后的读取器
 	buffer := make([]byte, StreamBufferSize)
-	reader := bufio.NewReader(resp.Body)
+	reader := bufio.NewReader(decompressedReader)
 
 	// 记录流处理开始
 	slog.Info(fmt.Sprintf("🌊 [流式处理] [%s] 开始流式处理，端点: %s", sp.requestID, sp.endpoint))
@@ -194,6 +217,11 @@ func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
 // processSSELine 处理单个SSE行
 // 修改版本：仅进行 Token 解析，不再直接记录到 usageTracker
 func (sp *StreamProcessor) processSSELine(line string) {
+	// 🔍 [调试数据收集] 轻量级收集SSE行数据（无性能影响）
+	if len(sp.debugLines) < DebugLineLimit {
+		sp.debugLines = append(sp.debugLines, line)
+	}
+
 	// ✅ 使用V2架构进行解析
 	result := sp.tokenParser.ParseSSELineV2(line)
 
@@ -244,6 +272,27 @@ func (sp *StreamProcessor) ensureRequestCompletion() {
 	// 3. 不再有任何组件直接调用 usageTracker
 
 	slog.Debug(fmt.Sprintf("⚠️ [已弃用] [%s] ensureRequestCompletion已弃用，请使用getFinalTokenUsage", sp.requestID))
+}
+
+// attemptUsageRecovery 异步尝试从debug文件恢复完整的usage信息
+// 🔧 [Fallback修复] 等待debug文件写入完成后，尝试提取完整的token使用统计并更新数据库
+func (sp *StreamProcessor) attemptUsageRecovery() {
+	// 等待一段时间确保debug文件写入完成
+	time.Sleep(2 * time.Second)
+
+	modelName := sp.tokenParser.GetModelName()
+	if modelName == "" {
+		modelName = "unknown"
+	}
+
+	// 尝试从debug文件恢复usage信息
+	err := utils.RecoverAndUpdateUsage(sp.requestID, modelName, sp.usageTracker)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("🔧 [Recovery失败] [%s] 从debug文件恢复usage失败: %v", sp.requestID, err))
+		return
+	}
+
+	slog.Info(fmt.Sprintf("🔧 [Recovery成功] [%s] 成功从debug文件恢复完整的usage信息", sp.requestID))
 }
 
 // classifyStreamError 智能状态分类方法
@@ -595,6 +644,27 @@ func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 	// 尝试从TokenParser获取最终使用统计
 	finalUsage := sp.tokenParser.GetFinalUsage()
 
+	// 🔍 [Fallback检测] 检查是否使用了fallback机制
+	if sp.tokenParser.IsFallbackUsed() {
+		slog.Warn(fmt.Sprintf("🚨 [Fallback检测] [%s] 使用了message_start fallback机制，保存完整调试数据", sp.requestID))
+
+		// 🔧 [Fallback修复] fallback时使用完整的响应数据，不受100行限制
+		if len(sp.partialData) > 0 {
+			// 将完整的原始数据按行分割
+			fullLines := strings.Split(string(sp.partialData), "\n")
+			slog.Info(fmt.Sprintf("🔧 [完整数据] [%s] 使用%d字节完整数据替代100行限制数据", sp.requestID, len(sp.partialData)))
+
+			// 使用完整数据保存debug文件
+			utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, fullLines, sp.bytesProcessed)
+		} else {
+			// 兜底：如果没有完整数据，使用现有的debug数据
+			utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+		}
+
+		// 🔧 [Fallback修复] 异步尝试从debug文件恢复完整的usage信息
+		go sp.attemptUsageRecovery()
+	}
+
 	if finalUsage != nil {
 		// ✅ 检查是否有真实的Token使用
 		hasRealTokens := finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0 ||
@@ -612,11 +682,19 @@ func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 		} else {
 			// 有finalUsage结构但无实际token，返回nil
 			slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应包含空Token信息", sp.requestID))
+
+			// 🔍 [调试] 异步保存流式调试数据用于分析Token解析失败
+			utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+
 			return nil
 		}
 	} else {
 		// 没有token信息，返回nil
 		slog.Info(fmt.Sprintf("🎯 [无Token完成] [%s] 流式响应不包含token信息", sp.requestID))
+
+		// 🔍 [调试] 异步保存流式调试数据用于分析Token解析失败
+		utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+
 		return nil
 	}
 }

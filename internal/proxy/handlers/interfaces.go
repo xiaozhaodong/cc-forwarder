@@ -10,6 +10,30 @@ import (
 	"cc-forwarder/internal/tracking"
 )
 
+// SuspensionResult 挂起等待结果类型
+// 用于区分WaitForEndpointRecovery的不同结果状态
+type SuspensionResult int
+
+const (
+	SuspensionSuccess   SuspensionResult = iota // 成功恢复
+	SuspensionTimeout                           // 等待超时
+	SuspensionCancelled                         // 用户取消
+)
+
+// String 返回SuspensionResult的字符串表示
+func (sr SuspensionResult) String() string {
+	switch sr {
+	case SuspensionSuccess:
+		return "success"
+	case SuspensionTimeout:
+		return "timeout"
+	case SuspensionCancelled:
+		return "cancelled"
+	default:
+		return "unknown"
+	}
+}
+
 // RequestLifecycleManager 请求生命周期管理器接口
 // 修改版本：添加CompleteRequest和HandleNonTokenResponse方法以支持生命周期管理器架构
 type RequestLifecycleManager interface {
@@ -29,6 +53,10 @@ type RequestLifecycleManager interface {
 	// 🔢 [语义修复] 新增尝试计数管理方法
 	IncrementAttempt() int      // 线程安全地增加尝试计数，返回当前计数
 	GetAttemptCount() int       // 线程安全地获取当前尝试次数
+	// 🚀 [状态机重构] Phase 4: 新增状态管理方法
+	MapErrorTypeToFailureReason(errorType ErrorType) string // 映射ErrorType到failure_reason
+	FailRequest(failureReason, errorDetail string, httpStatus int) // 标记请求为最终失败
+	CancelRequest(cancelReason string, tokens *tracking.TokenUsage) // 标记请求被取消
 }
 
 // ErrorRecoveryManager 错误恢复管理器接口
@@ -171,6 +199,9 @@ type RetryManager interface {
 type SuspensionManager interface {
 	ShouldSuspend(ctx context.Context) bool
 	WaitForGroupSwitch(ctx context.Context, connID string) bool
+	WaitForEndpointRecovery(ctx context.Context, connID, failedEndpoint string) bool // 🚀 [端点自愈] 新增端点恢复等待方法
+	// 🎯 [挂起取消区分] 新增带结果的端点恢复等待方法，能区分成功/超时/取消
+	WaitForEndpointRecoveryWithResult(ctx context.Context, connID, failedEndpoint string) SuspensionResult
 	GetSuspendedRequestsCount() int
 }
 

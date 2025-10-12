@@ -40,7 +40,7 @@ func testRetryLoopDuplicateBillingProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("retry-protection")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -97,7 +97,7 @@ func testRetryLoopDuplicateBillingProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("retry-billing")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -150,7 +150,7 @@ func testCompletionVsFailureProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("fail-then-success")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -210,7 +210,7 @@ func testCompletionVsFailureProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("state-transition")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -255,7 +255,7 @@ func testConcurrentTokenRecordingProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("concurrent-tokens")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -316,7 +316,7 @@ func testConcurrentTokenRecordingProtection(t *testing.T) {
 		// 创建多个生命周期管理器实例（模拟异常情况）
 		managers := make([]*proxy.RequestLifecycleManager, 3)
 		for i := range managers {
-			managers[i] = proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+			managers[i] = proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 			managers[i].SetEndpoint("test-endpoint", "test-group")
 			managers[i].SetModel("claude-3-5-haiku-20241022")
 		}
@@ -369,7 +369,7 @@ func testDatabaseLevelDuplicationProtection(t *testing.T) {
 		requestID := generateTestRequestID("db-duplicate")
 
 		// 创建第一个记录
-		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm1.SetEndpoint("test-endpoint-1", "test-group")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -383,7 +383,7 @@ func testDatabaseLevelDuplicationProtection(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// 尝试创建第二个相同request_id的记录
-		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm2.SetEndpoint("test-endpoint-2", "test-group")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -428,7 +428,7 @@ func testDatabaseLevelDuplicationProtection(t *testing.T) {
 			go func(index int) {
 				defer wg.Done()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 				rlm.SetEndpoint("test-endpoint", "test-group")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -468,7 +468,7 @@ func testCrossComponentDuplicationProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("cross-component")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -518,7 +518,7 @@ func testCrossComponentDuplicationProtection(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			requestIDs[i] = generateTestRequestID(fmt.Sprintf("stats-accuracy-%d", i))
 
-			rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestIDs[i])
+			rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestIDs[i], nil)
 			rlm.SetEndpoint("test-endpoint", "test-group")
 			rlm.SetModel("claude-3-5-haiku-20241022")
 			rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -572,7 +572,7 @@ func testExceptionRecoveryProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("network-recovery")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -622,7 +622,7 @@ func testExceptionRecoveryProtection(t *testing.T) {
 		requestID := generateTestRequestID("crash-recovery")
 
 		// 模拟系统崩溃前的状态
-		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm1.SetEndpoint("test-endpoint", "test-group")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -636,7 +636,7 @@ func testExceptionRecoveryProtection(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// 模拟系统重启后的处理（创建新的管理器实例）
-		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm2.SetEndpoint("test-endpoint", "test-group")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -670,7 +670,7 @@ func testTimeWindowDuplicationProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("time-window")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -711,7 +711,7 @@ func testTimeWindowDuplicationProtection(t *testing.T) {
 		}
 
 		requestID := generateTestRequestID("timestamp-dedup")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("test-endpoint", "test-group")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 

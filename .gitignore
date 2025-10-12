@@ -34,6 +34,11 @@ go.work
 ehthumbs.db
 Thumbs.db
 
+# Database files
+*.db
+internal/tracking/data/
+data/
+
 # Logs
 *.log
 
@@ -55,3 +60,4 @@ config/config.yaml
 docs/TECHNICAL_ARCHITECTURE.md
 docs/REFACTOR_PLAN.md
 cc-forwarder
+/logs

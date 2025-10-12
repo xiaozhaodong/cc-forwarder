@@ -38,7 +38,7 @@ func testStreamingInterruptionRetryScenario(t *testing.T) {
 		}
 
 		requestID := generateRealWorldRequestID("eof-retry")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("instcopilot-sg", "main")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -110,7 +110,7 @@ func testStreamingInterruptionRetryScenario(t *testing.T) {
 		}
 
 		requestID := generateRealWorldRequestID("partial-success")
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("claude-api", "backup")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -182,7 +182,7 @@ func testNetworkInstabilityScenario(t *testing.T) {
 				defer wg.Done()
 
 				// 使用相同的requestID模拟重复提交
-				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 				rlm.SetEndpoint("timeout-endpoint", "main")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -236,7 +236,7 @@ func testNetworkInstabilityScenario(t *testing.T) {
 		requestID := generateRealWorldRequestID("connection-reconnect")
 
 		// 第一次连接（部分处理后断开）
-		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm1.SetEndpoint("unstable-endpoint", "main")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -251,7 +251,7 @@ func testNetworkInstabilityScenario(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// 重连后（完整处理）
-		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm2.SetEndpoint("stable-endpoint", "main")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -300,7 +300,7 @@ func testClientDuplicateSubmissionProtection(t *testing.T) {
 			go func(submission int) {
 				defer wg.Done()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 				rlm.SetEndpoint("api-endpoint", "main")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -357,7 +357,7 @@ func testClientDuplicateSubmissionProtection(t *testing.T) {
 		requestID := generateRealWorldRequestID("client-retry")
 
 		// 模拟客户端重试逻辑：先失败，然后重试成功
-		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm.SetEndpoint("retry-endpoint", "main")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "client-app/1.0", "POST", "/v1/messages", false)
@@ -413,7 +413,7 @@ func testServiceRestartRecoveryScenario(t *testing.T) {
 
 		requestID := generateRealWorldRequestID("service-restart")
 
-		rlm1 := proxy.NewRequestLifecycleManager(tracker1, middleware1, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker1, middleware1, requestID, nil)
 		rlm1.SetEndpoint("main-endpoint", "primary")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "client-app/1.0", "POST", "/v1/messages", false)
@@ -437,7 +437,7 @@ func testServiceRestartRecoveryScenario(t *testing.T) {
 		}
 
 		// 重启后，相同请求ID的处理
-		rlm2 := proxy.NewRequestLifecycleManager(tracker2, middleware2, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker2, middleware2, requestID, nil)
 		rlm2.SetEndpoint("backup-endpoint", "secondary")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -485,7 +485,7 @@ func testServiceRestartRecoveryScenario(t *testing.T) {
 		requestID := generateRealWorldRequestID("crash-recovery")
 
 		// 模拟系统崩溃前的状态
-		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm1 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm1.SetEndpoint("crash-endpoint", "main")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "client-app/1.0", "POST", "/v1/messages", true)
@@ -500,7 +500,7 @@ func testServiceRestartRecoveryScenario(t *testing.T) {
 		time.Sleep(150 * time.Millisecond)
 
 		// 模拟系统恢复后的处理（相同请求ID）
-		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+		rlm2 := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 		rlm2.SetEndpoint("recovery-endpoint", "backup")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
@@ -551,7 +551,7 @@ func testLoadBalancerRetryScenario(t *testing.T) {
 			go func(index int, ep string) {
 				defer wg.Done()
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 				rlm.SetEndpoint(ep, "main")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
@@ -631,7 +631,7 @@ func testDistributedSystemConsistencyScenario(t *testing.T) {
 				tracker := trackers[instance]
 				middleware := middlewares[instance]
 
-				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID)
+				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
 				rlm.SetEndpoint(fmt.Sprintf("instance-%d", instance), "distributed")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 

@@ -386,7 +386,7 @@ func TestHTTP404ErrorHandling(t *testing.T) {
 	retryManager := proxy.NewRetryManager(cfg, errorRecovery, endpointMgr)
 
 	// 创建生命周期管理器
-	lifecycleManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "test-404-req")
+	lifecycleManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "test-404-req", nil)
 
 	// 模拟404错误
 	err404 := fmt.Errorf("HTTP 404: Not Found")
@@ -427,9 +427,9 @@ func TestStatusUpdatePathUnification(t *testing.T) {
 
 	// 创建多个生命周期管理器模拟不同请求
 	managers := []*proxy.RequestLifecycleManager{
-		proxy.NewRequestLifecycleManager(usageTracker, nil, "req-unified-1"),
-		proxy.NewRequestLifecycleManager(usageTracker, nil, "req-unified-2"),
-		proxy.NewRequestLifecycleManager(usageTracker, nil, "req-unified-3"),
+		proxy.NewRequestLifecycleManager(usageTracker, nil, "req-unified-1", nil),
+		proxy.NewRequestLifecycleManager(usageTracker, nil, "req-unified-2", nil),
+		proxy.NewRequestLifecycleManager(usageTracker, nil, "req-unified-3", nil),
 	}
 
 	testStatuses := []string{"pending", "forwarding", "processing", "completed"}
@@ -460,8 +460,8 @@ func TestStreamingAndRegularRequestConsistency(t *testing.T) {
 	usageTracker, _ := tracking.NewUsageTracker(nil)
 
 	// 创建流式和常规请求的生命周期管理器
-	streamingManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "req-streaming")
-	regularManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "req-regular")
+	streamingManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "req-streaming", nil)
+	regularManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "req-regular", nil)
 
 	// 模拟相同的处理流程
 	commonEndpoint := "test-endpoint"
@@ -565,7 +565,7 @@ func TestIntegrationErrorRecoveryFlow(t *testing.T) {
 
 	errorRecovery := proxy.NewErrorRecoveryManager(usageTracker)
 	retryManager := proxy.NewRetryManager(cfg, errorRecovery, endpointMgr)
-	lifecycleManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "integration-error-test")
+	lifecycleManager := proxy.NewRequestLifecycleManager(usageTracker, nil, "integration-error-test", nil)
 
 	// 模拟完整的错误恢复流程
 	requestID := "integration-error-flow"

@@ -7,11 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"cc-forwarder/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -50,7 +49,7 @@ type GroupStat struct {
 
 // RequestEvent 表示请求事件
 type RequestEvent struct {
-	Type      string      `json:"type"`      // "start", "update", "update_with_model", "complete", "failed_request_tokens"
+	Type      string      `json:"type"`      // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens", "token_recovery"
 	RequestID string      `json:"request_id"`
 	Timestamp time.Time   `json:"timestamp"`
 	Data      interface{} `json:"data"` // 根据Type不同而变化
@@ -67,21 +66,14 @@ type RequestStartData struct {
 
 // RequestUpdateData 请求更新事件数据
 type RequestUpdateData struct {
-	EndpointName string `json:"endpoint_name"`
-	GroupName    string `json:"group_name"`
-	Status       string `json:"status"`
-	RetryCount   int    `json:"retry_count"`
-	HTTPStatus   int    `json:"http_status"`
-}
-
-// RequestUpdateDataWithModel 包含模型信息的状态更新数据
-type RequestUpdateDataWithModel struct {
-	EndpointName string `json:"endpoint_name"`
-	GroupName    string `json:"group_name"`
-	Status       string `json:"status"`
-	RetryCount   int    `json:"retry_count"`
-	HTTPStatus   int    `json:"http_status"`
-	ModelName    string `json:"model_name"` // 新增：模型信息
+	EndpointName  string `json:"endpoint_name"`
+	GroupName     string `json:"group_name"`
+	Status        string `json:"status"`
+	RetryCount    int    `json:"retry_count"`
+	HTTPStatus    int    `json:"http_status"`
+	// 🚀 [状态机重构] Phase 2: 新增失败原因和取消原因字段
+	FailureReason string `json:"failure_reason,omitempty"`
+	CancelReason  string `json:"cancel_reason,omitempty"`
 }
 
 // RequestCompleteData 请求完成事件数据
@@ -114,7 +106,13 @@ type ModelPricing struct {
 // Config 使用跟踪配置
 type Config struct {
 	Enabled         bool                     `yaml:"enabled"`
+
+	// 向后兼容：保留原有的 database_path 配置
 	DatabasePath    string                   `yaml:"database_path"`
+
+	// 新增：数据库配置（优先级高于 DatabasePath）
+	Database        *config.DatabaseBackendConfig  `yaml:"database,omitempty"`
+
 	BufferSize      int                      `yaml:"buffer_size"`
 	BatchSize       int                      `yaml:"batch_size"`
 	FlushInterval   time.Duration            `yaml:"flush_interval"`
@@ -134,6 +132,20 @@ type WriteRequest struct {
 	EventType string  // 用于调试和监控
 }
 
+// UpdateOptions 统一的请求更新选项
+// 支持可选字段更新，只更新非nil的字段
+type UpdateOptions struct {
+	EndpointName  *string        // 端点名称
+	GroupName     *string        // 组名称
+	Status        *string        // 状态
+	RetryCount    *int           // 重试次数
+	HttpStatus    *int           // HTTP状态码
+	ModelName     *string        // 模型名称
+	EndTime       *time.Time     // 结束时间
+	Duration      *time.Duration // 持续时间
+	FailureReason *string        // 失败原因（用于中间过程记录）
+}
+
 // UsageTracker 使用跟踪器
 type UsageTracker struct {
 	// 原有字段（兼容性）
@@ -146,8 +158,14 @@ type UsageTracker struct {
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	errorHandler *ErrorHandler
-	
-	// 新增：读写分离组件
+
+	// 时区支持
+	location     *time.Location  // 配置的时区
+
+	// 新增：数据库适配器
+	adapter    DatabaseAdapter   // 数据库适配器接口
+
+	// 新增：读写分离组件（从适配器获取）
 	readDB     *sql.DB           // 读连接池 (多连接)
 	writeDB    *sql.DB           // 写连接 (单连接)
 	writeQueue chan WriteRequest // 写操作队列
@@ -156,7 +174,7 @@ type UsageTracker struct {
 }
 
 // NewUsageTracker 创建新的使用跟踪器
-func NewUsageTracker(config *Config) (*UsageTracker, error) {
+func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, error) {
 	if config == nil || !config.Enabled {
 		return &UsageTracker{config: config}, nil
 	}
@@ -174,64 +192,53 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 	if config.MaxRetry <= 0 {
 		config.MaxRetry = 3
 	}
-
-	// 确保数据库目录存在
-	if config.DatabasePath != ":memory:" && config.DatabasePath != "" {
-		dbDir := filepath.Dir(config.DatabasePath)
-		if err := os.MkdirAll(dbDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create database directory: %w", err)
-		}
+	if config.CleanupInterval <= 0 {
+		config.CleanupInterval = 24 * time.Hour  // 默认24小时清理一次
 	}
 
-	// 针对:memory:数据库的特殊处理
-	var readDB, writeDB *sql.DB
-	var err error
-	
-	if config.DatabasePath == ":memory:" {
-		// 内存数据库：使用同一个连接（但配置为读写分离模式）
-		db, err := sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000")
-		if err != nil {
-			return nil, fmt.Errorf("failed to open memory database: %w", err)
-		}
-		
-		// 使用同一个连接，但逻辑上分离读写
-		readDB = db
-		writeDB = db
-		
-		// 配置连接池参数
-		db.SetMaxOpenConns(8)    // 内存数据库可以支持更多连接
-		db.SetMaxIdleConns(4)
-		db.SetConnMaxLifetime(2 * time.Hour)
-	} else {
-		// 文件数据库：真正的读写分离
-		// 打开读数据库连接 - 读性能优化配置 (支持多并发查询)
-		readDB, err = sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000")
-		if err != nil {
-			return nil, fmt.Errorf("failed to open read database: %w", err)
-		}
-
-		// 打开写数据库连接 - 写稳定性优化配置 (单连接避免锁竞争)
-		writeDB, err = sql.Open("sqlite", config.DatabasePath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000")
-		if err != nil {
-			readDB.Close()
-			return nil, fmt.Errorf("failed to open write database: %w", err)
-		}
-
-		// 配置读连接池参数 - 支持高并发查询
-		readDB.SetMaxOpenConns(8)    // 8个读连接，支持高并发查询
-		readDB.SetMaxIdleConns(4)    // 保持4个空闲连接
-		readDB.SetConnMaxLifetime(2 * time.Hour)
-
-		// 配置写连接参数 - 单连接避免锁竞争
-		writeDB.SetMaxOpenConns(1)   // 关键：只有1个写连接
-		writeDB.SetMaxIdleConns(1)   // 保持连接活跃
-		writeDB.SetConnMaxLifetime(4 * time.Hour)
+	// 构建数据库配置
+	tz := ""
+	if len(globalTimezone) > 0 {
+		tz = globalTimezone[0]
+	}
+	dbConfig, err := buildDatabaseConfig(config, tz)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build database config: %w", err)
 	}
 
-	// 保持原有db字段兼容性（用于向后兼容和初始化）
+	// 创建数据库适配器
+	adapter, err := NewDatabaseAdapter(dbConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database adapter: %w", err)
+	}
+
+	// 打开数据库连接
+	if err := adapter.Open(); err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// 获取读写连接（从适配器）
+	readDB := adapter.GetReadDB()
+	writeDB := adapter.GetWriteDB()
+
+	// 保持原有db字段兼容性（指向readDB）
 	db := readDB
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// 初始化时区
+	timezone := dbConfig.Timezone
+	if timezone == "" {
+		timezone = "Asia/Shanghai" // 默认时区
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		slog.Warn("加载时区失败，使用Asia/Shanghai", "timezone", timezone, "error", err)
+		location, _ = time.LoadLocation("Asia/Shanghai")
+		if location == nil {
+			location = time.FixedZone("CST", 8*3600) // 后备方案：固定+8时区
+		}
+	}
 
 	ut := &UsageTracker{
 		// 原有字段（兼容性）
@@ -241,8 +248,14 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 		pricing:   config.ModelPricing,
 		ctx:       ctx,
 		cancel:    cancel,
-		
-		// 新增：读写分离组件
+
+		// 时区支持
+		location:    location,
+
+		// 新增：数据库适配器
+		adapter: adapter,
+
+		// 读写分离组件（从适配器获取）
 		readDB:     readDB,
 		writeDB:    writeDB,
 		writeQueue: make(chan WriteRequest, config.BufferSize), // 与事件队列容量一致
@@ -251,37 +264,99 @@ func NewUsageTracker(config *Config) (*UsageTracker, error) {
 	// 初始化错误处理器
 	ut.errorHandler = NewErrorHandler(ut, slog.Default())
 
-	// 初始化数据库（使用写连接以确保表创建）
-	if err := ut.initDatabaseWithWriteDB(); err != nil {
+	// 初始化数据库Schema（使用适配器）
+	if err := ut.initDatabaseWithAdapter(); err != nil {
 		cancel()
-		readDB.Close()
-		writeDB.Close()
+		adapter.Close()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	// 启动写操作处理器
-	ut.startWriteProcessor()
+	go ut.processWriteQueue()
 
-	// 启动事件处理协程
+	// 启动异步事件处理器
 	ut.wg.Add(1)
 	go ut.processEvents()
 
-	// 启动定期清理协程
-	if config.RetentionDays > 0 && config.CleanupInterval > 0 {
-		ut.wg.Add(1)
-		go ut.periodicCleanup()
-	}
+	// 启动定期清理任务
+	ut.wg.Add(1)
+	go ut.periodicCleanup()
 
-	// 启动定期备份协程（每6小时备份一次）
+	// 启动定期备份任务
 	ut.wg.Add(1)
 	go ut.periodicBackup()
 
-	slog.Info("Usage tracker initialized", 
-		"database_path", config.DatabasePath,
+	slog.Info("✅ 使用跟踪器初始化完成",
+		"database_type", adapter.GetDatabaseType(),
 		"buffer_size", config.BufferSize,
-		"retention_days", config.RetentionDays)
+		"batch_size", config.BatchSize)
 
 	return ut, nil
+}
+
+// now 返回当前配置时区的时间
+func (ut *UsageTracker) now() time.Time {
+	if ut.location == nil {
+		return time.Now() // 后备方案
+	}
+	return time.Now().In(ut.location)
+}
+
+// buildDatabaseConfig 从Config构建DatabaseConfig
+func buildDatabaseConfig(config *Config, globalTimezone string) (DatabaseConfig, error) {
+	var dbConfig DatabaseConfig
+
+	// 优先使用新的Database配置
+	if config.Database != nil {
+		dbConfig.Type = config.Database.Type
+		dbConfig.DatabasePath = config.Database.Path  // 使用正确的字段名
+		dbConfig.Host = config.Database.Host
+		dbConfig.Port = config.Database.Port
+		dbConfig.Database = config.Database.Database
+		dbConfig.Username = config.Database.Username
+		dbConfig.Password = config.Database.Password
+		dbConfig.MaxOpenConns = config.Database.MaxOpenConns
+		dbConfig.MaxIdleConns = config.Database.MaxIdleConns
+		dbConfig.ConnMaxLifetime = config.Database.ConnMaxLifetime
+		dbConfig.ConnMaxIdleTime = config.Database.ConnMaxIdleTime
+		dbConfig.Charset = config.Database.Charset
+		dbConfig.Timezone = config.Database.Timezone
+	} else {
+		// 向后兼容：使用原有的DatabasePath配置
+		dbConfig.Type = "sqlite" // 默认为SQLite
+		dbConfig.DatabasePath = config.DatabasePath
+		if dbConfig.DatabasePath == "" {
+			dbConfig.DatabasePath = "data/usage.db"
+		}
+	}
+
+	// 时区级联逻辑：优先级 database.timezone > global.timezone > 默认值
+	if dbConfig.Timezone == "" {
+		// 数据库配置没有指定时区，尝试使用全局时区
+		if globalTimezone != "" {
+			dbConfig.Timezone = globalTimezone
+		}
+		// 如果全局时区也没有，setDefaultConfig会设置默认值
+	}
+
+	return dbConfig, nil
+}
+
+// initDatabaseWithAdapter 使用适配器初始化数据库
+func (ut *UsageTracker) initDatabaseWithAdapter() error {
+	if ut.adapter == nil {
+		return fmt.Errorf("database adapter not initialized")
+	}
+
+	// 使用适配器初始化Schema
+	if err := ut.adapter.InitSchema(); err != nil {
+		return fmt.Errorf("failed to initialize database schema: %w", err)
+	}
+
+	slog.Info("数据库Schema初始化完成",
+		"database_type", ut.adapter.GetDatabaseType())
+
+	return nil
 }
 
 // Close 关闭使用跟踪器
@@ -325,33 +400,21 @@ func (ut *UsageTracker) Close() error {
 		ut.writeQueue = nil
 	}
 
-	// 关闭数据库连接
-	var errors []error
-	if ut.readDB != nil {
-		if err := ut.readDB.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close read database: %w", err))
+	// 关闭数据库适配器（会自动处理所有连接）
+	if ut.adapter != nil {
+		if err := ut.adapter.Close(); err != nil {
+			slog.Error("Failed to close database adapter", "error", err)
+			return fmt.Errorf("failed to close database adapter: %w", err)
 		}
-		ut.readDB = nil
-	}
-	
-	if ut.writeDB != nil {
-		if err := ut.writeDB.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close write database: %w", err))
-		}
-		ut.writeDB = nil
-	}
-	
-	// 关闭原有数据库连接（兼容性）
-	if ut.db != nil {
-		// 由于db指向readDB，避免重复关闭
-		ut.db = nil
-	}
-	
-	// 返回第一个错误（如果有）
-	if len(errors) > 0 {
-		return errors[0]
+		ut.adapter = nil
 	}
 
+	// 清理连接引用（这些现在由adapter管理）
+	ut.readDB = nil
+	ut.writeDB = nil
+	ut.db = nil
+
+	slog.Info("✅ 使用跟踪器关闭完成")
 	return nil
 }
 
@@ -364,7 +427,7 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, metho
 	event := RequestEvent{
 		Type:      "start",
 		RequestID: requestID,
-		Timestamp: time.Now(),
+		Timestamp: ut.now(),
 		Data: RequestStartData{
 			ClientIP:    clientIP,
 			UserAgent:   userAgent,
@@ -384,79 +447,56 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, metho
 	}
 }
 
-// RecordRequestUpdate 记录请求状态更新
-func (ut *UsageTracker) RecordRequestUpdate(requestID, endpoint, group, status string, retryCount, httpStatus int) {
+// RecordRequestUpdate 统一的请求更新方法
+// 支持可选字段更新，只更新非nil的字段，适用于所有中间过程状态变更
+func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
 
 	event := RequestEvent{
-		Type:      "update",
+		Type:      "flexible_update",
 		RequestID: requestID,
-		Timestamp: time.Now(),
-		Data: RequestUpdateData{
-			EndpointName: endpoint,
-			GroupName:    group,
-			Status:       status,
-			RetryCount:   retryCount,
-			HTTPStatus:   httpStatus,
-		},
+		Timestamp: ut.now(),
+		Data:      opts,
 	}
 
 	select {
 	case ut.eventChan <- event:
 		// 成功发送事件
 	default:
-		slog.Warn("Usage tracking event buffer full, dropping update event", 
+		slog.Warn("Usage tracking event buffer full, dropping flexible_update event",
 			"request_id", requestID)
 	}
 }
 
-// RecordRequestUpdateWithModel 记录包含模型信息的状态更新
-func (ut *UsageTracker) RecordRequestUpdateWithModel(requestID, endpoint, group, status string, retryCount, httpStatus int, modelName string) {
+// RecordRequestSuccess 记录请求成功完成
+// 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token和成本信息
+func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens *TokenUsage, duration time.Duration) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
 
-	event := RequestEvent{
-		Type:      "update_with_model",
-		RequestID: requestID,
-		Timestamp: time.Now(),
-		Data: RequestUpdateDataWithModel{
-			EndpointName: endpoint,
-			GroupName:    group,
-			Status:       status,
-			RetryCount:   retryCount,
-			HTTPStatus:   httpStatus,
-			ModelName:    modelName, // 包含模型信息
-		},
+	// 🚀 [架构修复] 支持 nil tokens，确保耗时信息总是被记录
+	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	if tokens != nil {
+		inputTokens = tokens.InputTokens
+		outputTokens = tokens.OutputTokens
+		cacheCreationTokens = tokens.CacheCreationTokens
+		cacheReadTokens = tokens.CacheReadTokens
 	}
-
-	select {
-	case ut.eventChan <- event:
-		// 成功发送事件
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping update_with_model event", 
-			"request_id", requestID)
-	}
-}
-
-// RecordRequestComplete 记录请求完成
-func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, tokens *TokenUsage, duration time.Duration) {
-	if ut.config == nil || !ut.config.Enabled || tokens == nil {
-		return
-	}
+	// 如果 tokens 为 nil，所有 token 字段都是 0，但 duration 仍然会被记录
 
 	event := RequestEvent{
-		Type:      "complete",
+		Type:      "success",
 		RequestID: requestID,
-		Timestamp: time.Now(),
+		Timestamp: ut.now(),
 		Data: RequestCompleteData{
 			ModelName:           modelName,
-			InputTokens:         tokens.InputTokens,
-			OutputTokens:        tokens.OutputTokens,
-			CacheCreationTokens: tokens.CacheCreationTokens,
-			CacheReadTokens:     tokens.CacheReadTokens,
+			InputTokens:         inputTokens,
+			OutputTokens:        outputTokens,
+			CacheCreationTokens: cacheCreationTokens,
+			CacheReadTokens:     cacheReadTokens,
 			Duration:            duration,
 		},
 	}
@@ -465,7 +505,49 @@ func (ut *UsageTracker) RecordRequestComplete(requestID, modelName string, token
 	case ut.eventChan <- event:
 		// 成功发送事件
 	default:
-		slog.Warn("Usage tracking event buffer full, dropping complete event",
+		slog.Warn("Usage tracking event buffer full, dropping success event",
+			"request_id", requestID)
+	}
+}
+
+// RecordRequestFinalFailure 记录请求最终失败或取消
+// 一次性更新所有失败/取消相关字段：status, end_time, duration_ms, failure_reason/cancel_reason, http_status_code, 可选Token
+func (ut *UsageTracker) RecordRequestFinalFailure(requestID, status, reason, errorDetail string, duration time.Duration, httpStatus int, tokens *TokenUsage) {
+	if ut.config == nil || !ut.config.Enabled {
+		return
+	}
+
+	// 处理Token信息（失败/取消时可能有也可能没有）
+	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	if tokens != nil {
+		inputTokens = tokens.InputTokens
+		outputTokens = tokens.OutputTokens
+		cacheCreationTokens = tokens.CacheCreationTokens
+		cacheReadTokens = tokens.CacheReadTokens
+	}
+
+	event := RequestEvent{
+		Type:      "final_failure",
+		RequestID: requestID,
+		Timestamp: ut.now(),
+		Data: map[string]interface{}{
+			"status":               status,    // "failed" or "cancelled"
+			"reason":               reason,    // failure_reason or cancel_reason
+			"error_detail":         errorDetail,
+			"duration":             duration,
+			"http_status":          httpStatus, // HTTP状态码
+			"input_tokens":         inputTokens,
+			"output_tokens":        outputTokens,
+			"cache_creation_tokens": cacheCreationTokens,
+			"cache_read_tokens":    cacheReadTokens,
+		},
+	}
+
+	select {
+	case ut.eventChan <- event:
+		// 成功发送事件
+	default:
+		slog.Warn("Usage tracking event buffer full, dropping final_failure event",
 			"request_id", requestID)
 	}
 }
@@ -481,7 +563,7 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 	event := RequestEvent{
 		Type:      "failed_request_tokens", // 新的事件类型
 		RequestID: requestID,
-		Timestamp: time.Now(),
+		Timestamp: ut.now(),
 		Data: RequestCompleteData{
 			ModelName:           modelName,
 			InputTokens:         tokens.InputTokens,
@@ -498,6 +580,39 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 		slog.Debug(fmt.Sprintf("💾 [失败Token事件] [%s] 原因: %s, 模型: %s", requestID, failureReason, modelName))
 	default:
 		slog.Warn("Usage tracking event buffer full, dropping failed request tokens event",
+			"request_id", requestID)
+	}
+}
+
+// RecoverRequestTokens 恢复请求的Token使用统计
+// 🔧 [Fallback修复] 专用于debug文件恢复场景，仅更新Token字段，不触发状态变更
+func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens *TokenUsage) {
+	if ut.config == nil || !ut.config.Enabled || tokens == nil {
+		return
+	}
+
+	// 创建专门的Token恢复事件
+	event := RequestEvent{
+		Type:      "token_recovery", // 专用事件类型
+		RequestID: requestID,
+		Timestamp: ut.now(),
+		Data: RequestCompleteData{
+			ModelName:           modelName,
+			InputTokens:         tokens.InputTokens,
+			OutputTokens:        tokens.OutputTokens,
+			CacheCreationTokens: tokens.CacheCreationTokens,
+			CacheReadTokens:     tokens.CacheReadTokens,
+			// 注意：Duration设为0，不更新时间相关字段
+			Duration: 0,
+		},
+	}
+
+	select {
+	case ut.eventChan <- event:
+		slog.Info(fmt.Sprintf("🔧 [Token恢复事件] [%s] 模型: %s, 输入: %d, 输出: %d",
+			requestID, modelName, tokens.InputTokens, tokens.OutputTokens))
+	default:
+		slog.Warn("Usage tracking event buffer full, dropping token recovery event",
 			"request_id", requestID)
 	}
 }
@@ -592,8 +707,8 @@ func (ut *UsageTracker) ForceFlush() error {
 	// 尝试发送一个特殊事件来触发批处理
 	flushEvent := RequestEvent{
 		Type:      "flush",
-		RequestID: "force-flush-" + time.Now().Format("20060102150405"),
-		Timestamp: time.Now(),
+		RequestID: "force-flush-" + ut.now().Format("20060102150405"),
+		Timestamp: ut.now(),
 		Data:      nil,
 	}
 	
@@ -819,25 +934,23 @@ func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime tim
 	return jsonBytes, nil
 }
 
-// startWriteProcessor 启动写操作队列处理器（简化版，确保稳定性）
-func (ut *UsageTracker) startWriteProcessor() {
+// processWriteQueue 启动写操作队列处理器（简化版，确保稳定性）
+func (ut *UsageTracker) processWriteQueue() {
 	ut.writeWg.Add(1)
-	go func() {
-		defer ut.writeWg.Done()
-		slog.Debug("Write processor started")
-		
-		for {
-			select {
-			case writeReq := <-ut.writeQueue:
-				err := ut.executeWriteSimple(writeReq)
-				writeReq.Response <- err
-				
-			case <-ut.ctx.Done():
-				slog.Debug("Write processor stopped")
-				return
-			}
+	defer ut.writeWg.Done()
+	slog.Debug("Write processor started")
+
+	for {
+		select {
+		case writeReq := <-ut.writeQueue:
+			err := ut.executeWriteSimple(writeReq)
+			writeReq.Response <- err
+
+		case <-ut.ctx.Done():
+			slog.Debug("Write processor stopped")
+			return
 		}
-	}()
+	}
 }
 
 // executeWriteSimple 执行简单写操作（避免复杂的批处理）
