@@ -5,6 +5,114 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.5.0] - 2025-10-12
+
+### 🚀 重大功能 (Major Features)
+
+#### 状态机架构重构
+- **双轨状态管理**: 业务状态与错误状态完全分离
+  - 业务状态: `pending` → `forwarding` → `processing` → `completed`/`failed`/`cancelled`
+  - 错误状态: `retry`, `suspended` 独立管理
+  - 前端可同时显示业务进度和错误原因
+- **统一事件系统**: 新增 `flexible_update`, `success`, `final_failure` 语义化事件类型
+- **数据库Schema增强**:
+  - 新增 `failure_reason` 字段（失败原因类型）
+  - 新增 `last_failure_reason` 字段（最后失败的详细信息）
+  - 新增 `cancel_reason` 字段（取消原因）
+  - 新增 `failure_reason` 索引优化查询性能
+
+#### MySQL数据库支持
+- **数据库适配器模式**: 抽象SQLite和MySQL差异，支持多数据库切换
+- **新增适配器实现**:
+  - `database_adapter.go` (+144行): 适配器接口定义
+  - `mysql_adapter.go` (+602行): MySQL完整实现
+  - `sqlite_adapter.go` (+337行): SQLite实现
+  - `mysql_schema.sql` (+105行): MySQL schema定义
+- **连接池管理**: MySQL连接池配置，读写分离优化
+- **时区支持**: 统一时区处理，支持全局和数据库级别配置
+- **向后兼容**: 保留原有 `database_path` 配置，自动兼容旧配置
+
+#### /v1/messages/count_tokens 端点支持
+- **智能转发策略**: 优先转发到配置了 `supports_count_tokens: true` 的端点
+- **降级估算**: 转发失败时自动降级到本地字符估算
+- **新增配置项**: `supports_count_tokens` 端点配置
+- **新增处理器**: `count_tokens.go` (+188行)
+
+#### 端点自愈机制
+- **快速恢复**: 从5分钟冷却时间优化到0.7秒自动恢复
+- **智能检测**: 监控503/502等服务器错误触发恢复检查
+- **主动探测**: 失败端点自动进行健康检查
+- **新增模块**:
+  - `endpoint_recovery_manager.go` (+119行)
+  - `endpoint_recovery_test.go` (+212行)
+  - `endpoint_self_healing_integration_test.go` (+249行)
+
+### ✨ 功能增强 (Enhancements)
+
+#### 流式Token处理优化
+- **FlushPendingEvent机制**: 解决SSE终止空行缺失导致的Token信息丢失
+- **事件缓冲区管理**: 流结束/取消/中断时自动触发flush
+- **Token智能合并**: 防止缓存信息丢失，避免重复计费
+- **空响应精确判断**: 只在真正无使用量时标记empty_response
+
+#### 响应格式检测优化
+- **JSON误判修复**: 修复JSON响应被误判为SSE的bug
+- **压缩支持**: 完善Gzip/Deflate响应解析
+- **新增测试**:
+  - `format_detection_test.go` (+342行)
+  - `processor_stream_test.go` (+306行)
+  - `processor_unified_test.go` (+128行)
+
+#### Token调试工具
+- **Debug开关**: 可配置的Token调试功能
+- **数据采集**: 保存完整的请求/响应数据用于分析
+- **新增模块**: `internal/utils/debug.go` (+237行)
+
+#### 错误处理增强
+- **400错误码重试**: 归类为限流错误，享受与429相同的重试策略
+- **Cloudflare错误码**: 520-525错误码智能处理与重试策略
+- **错误分类精度**: 完善错误处理优先级，避免误分类
+- **挂起策略统一**: 常规模式和流式模式使用统一的重试挂起策略
+
+#### 前端UI升级
+- **状态机兼容**: 支持双轨状态显示
+- **HTTP状态码**: 新增状态码列显示
+- **交互体验**: 请求列表展开/收起、详情弹窗优化
+- **样式优化**: CSS模块化改进，视觉层级清晰
+
+### 🧪 测试增强 (Testing)
+
+- **新增测试文件**: 16个新测试文件
+  - 状态机测试: `message_start_usage_test.go` (+190行)
+  - 数据库测试: `phase2_test.go` (+147行), `sqlite_regression_test.go` (+358行)
+  - 响应处理测试: 3个新测试文件 (+776行)
+  - 端点自愈测试: 3个新测试文件 (+580行)
+- **测试覆盖增强**: 从25+提升到30+测试文件
+- **测试场景扩展**: 覆盖状态机转换、数据库适配、格式检测、端点恢复等
+
+### 📝 文档更新 (Documentation)
+
+- **CLAUDE.md更新**: 版本升级到v3.5.0，完整功能说明
+- **配置示例**: 新增 `config/mysql_example.yaml`, `config/test_count_tokens.yaml`
+- **架构说明**: 更新组件架构图，标注v3.5新增模块
+
+### 🔧 内部改进 (Internal Changes)
+
+- **代码重构**: `lifecycle_manager.go` 大幅重构（~730行）
+- **模块化**: handlers和response模块持续优化
+- **类型安全**: 引入 `UpdateOptions` 统一更新接口
+- **并发优化**: RWMutex保护，支持高并发访问
+
+### 📊 变更统计 (Statistics)
+
+- **代码变更**: 66个文件修改
+- **代码增量**: +7,245行 / -1,353行
+- **净增代码**: 5,892行高质量代码
+- **新增文件**: 16个
+- **提交数量**: 24个commits
+
+---
+
 ## [3.4.2] - 2025-09-24
 
 ### 🔧 错误处理策略优化 (Error Handling Strategy Enhancement)

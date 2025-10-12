@@ -4,31 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version**: v3.4.2 (2025-09-24)
-**Major Update**: 400错误码重试支持与失败请求统计优化
+**Current Version**: v3.5.0 (2025-10-12)
+**Major Update**: 状态机架构重构 - 业务状态与错误状态分离
 
 ## Project Overview
 
 Claude Request Forwarder is a high-performance Go application that transparently forwards Claude API requests to multiple endpoints with intelligent routing, health checking, and automatic retry/fallback capabilities.
 
-**Key Features v3.4.2**:
-- **400错误码重试支持**: 将400错误码归类为限流错误，享受与429相同的重试策略
-- **失败请求统计优化**: StatsOverview替换挂起请求数为实际失败请求统计
-- **前后端数据一致性**: 统一字段命名和数据源，基于数据库查询的实时统计
-- **错误分类优化**: 完善错误处理优先级，避免误分类问题
-- **Cloudflare 5xx错误码支持**: 将Cloudflare专有的5xx错误码(520-525)归类为服务器错误
-- **智能重试策略**: Cloudflare错误享受与502相同的重试策略和组故障转移
-- **流式Token丢失修复**: 解决SSE终止空行缺失导致的Token信息丢失问题
-- **事件缓冲区刷新**: FlushPendingEvent机制确保完整Token解析
-- **前端架构升级**: React Layout架构迁移，完善UI和交互体验
-- **图表功能增强**: 端点成本分析、布局优化、概览页面融合
-- **端点日志优化**: 修复流式请求尝试次数计数不准确问题
+**Key Features v3.5.0**:
+- **状态机架构重构**: 双轨状态管理（业务状态+错误状态分离），前端可同时显示业务进度和错误原因
+- **MySQL数据库支持**: 适配器模式实现SQLite/MySQL多数据库兼容，支持连接池管理
+- **/v1/messages/count_tokens端点**: 完整支持Token计数端点，智能转发与降级估算
+- **端点自愈机制**: 从5分钟冷却优化到0.7秒快速恢复，智能健康检查
+- **流式Token修复**: FlushPendingEvent机制解决SSE终止空行缺失
+- **Cloudflare错误码**: 520-525错误码智能处理与重试策略
+- **前端UI升级**: 状态显示优化、HTTP状态码展示、交互体验增强
+- **响应格式检测**: 修复JSON误判bug，精确格式识别
+- **Token调试工具**: 可配置开关，支持debug数据采集
+- **400错误码重试**: 归类为限流错误，享受与429相同重试策略
 - **Modular Architecture**: Complete handler.go refactoring with single responsibility principle
 - **Dual Processing**: Streaming v2 and Unified v2 request processing
 - **Intelligent Error Recovery**: Smart error classification and recovery strategies
 - **Complete Lifecycle Tracking**: End-to-end request monitoring and analytics
 - **Advanced Streaming**: Real-time SSE processing with cancellation support
-- **Comprehensive Testing**: 25+ test files with extensive coverage
+- **Comprehensive Testing**: 30+ test files with extensive coverage
 
 ## Quick Start
 
@@ -49,23 +48,37 @@ go test ./...
 ## Core Architecture
 
 ### Main Components
-- **`internal/proxy/`**: Modular request forwarding with v2.1 architecture
+- **`internal/proxy/`**: Modular request forwarding with v3.5 state machine architecture
   - `handler.go`: Core HTTP request coordinator (~430 lines)
-  - **`handlers/`**: Specialized request processing modules ⭐ NEW
-    - `streaming.go`: Streaming request handler (~310 lines) ⭐ NEW
-    - `regular.go`: Regular request handler (~311 lines) ⭐ NEW
-    - `forwarder.go`: HTTP request forwarder (~144 lines) ⭐ NEW
-    - `interfaces.go`: Component interfaces (~115 lines) ⭐ NEW
-  - **`response/`**: Response processing modules ⭐ NEW
-    - `processor.go`: Response processing and decompression (~173 lines) ⭐ NEW
-    - `analyzer.go`: Token analysis and parsing (~346 lines) ⭐ NEW
-    - `utils.go`: Response utility functions (~21 lines) ⭐ NEW
-  - `stream_processor.go`: Advanced streaming processor v2
-  - `error_recovery.go`: Intelligent error handling
-  - `lifecycle_manager.go`: Complete request lifecycle tracking
+  - **`handlers/`**: Specialized request processing modules
+    - `count_tokens.go`: Count Tokens endpoint handler (+188 lines) ⭐ NEW
+    - `streaming.go`: Streaming request handler (~500 lines) ⚡ ENHANCED
+    - `regular.go`: Regular request handler (~480 lines) ⚡ ENHANCED
+    - `forwarder.go`: HTTP request forwarder (~144 lines)
+    - `interfaces.go`: Component interfaces (~115 lines)
+  - **`response/`**: Response processing modules
+    - `processor.go`: Response processing and decompression (~270 lines) ⚡ ENHANCED
+    - `analyzer.go`: Token analysis and parsing (~745 lines) ⚡ ENHANCED
+    - `utils.go`: Response utility functions (~21 lines)
+    - `format_detection_test.go`: Format detection tests (+342 lines) ⭐ NEW
+    - `processor_stream_test.go`: Stream processing tests (+306 lines) ⭐ NEW
+    - `processor_unified_test.go`: Unified processing tests (+128 lines) ⭐ NEW
+  - `stream_processor.go`: Advanced streaming processor v2 with FlushPendingEvent
+  - `error_recovery.go`: Intelligent error handling with Cloudflare support
+  - `lifecycle_manager.go`: State machine lifecycle tracking (~730 lines) ⚡ MAJOR REFACTOR
+  - `endpoint_recovery_manager.go`: Endpoint self-healing (+119 lines) ⭐ NEW
+  - `suspension_manager.go`: Request suspension management (refactored)
+- **`internal/tracking/`**: Usage tracking with database abstraction ⚡ MAJOR REFACTOR
+  - `database_adapter.go`: Database adapter interface (+144 lines) ⭐ NEW
+  - `mysql_adapter.go`: MySQL implementation (+602 lines) ⭐ NEW
+  - `sqlite_adapter.go`: SQLite implementation (+337 lines) ⭐ NEW
+  - `tracker.go`: Event-driven usage tracker (~1000 lines) ⚡ ENHANCED
+  - `database.go`: Database operations (~1200 lines) ⚡ ENHANCED
+  - `queries.go`: Query interface with state machine support ⚡ ENHANCED
 - **`internal/endpoint/`**: Endpoint management and health checking
 - **`internal/web/`**: Web interface with real-time monitoring
-- **`internal/tracking/`**: Usage tracking and analytics
+- **`internal/utils/`**: Utility modules
+  - `debug.go`: Token debugging tools (+237 lines) ⭐ NEW
 - **`config/`**: Configuration management with hot-reloading
 
 ### Request Flow v2.1
@@ -231,6 +244,16 @@ For detailed technical information, see:
 - **API Documentation**: Comprehensive endpoint reference in web interface
 
 ## Recent Updates
+
+**2025-10-12**: Major v3.5.0 状态机架构重构版本 🚀
+- **状态机重构**: 双轨状态管理，业务状态(pending/forwarding/processing/completed/failed/cancelled)与错误状态(retry/suspended)完全分离
+- **MySQL支持**: 数据库适配器模式，支持SQLite和MySQL，连接池管理，时区支持
+- **Count Tokens端点**: 实现/v1/messages/count_tokens完整支持，智能转发+本地降级估算
+- **端点自愈**: 从5分钟冷却优化到0.7秒快速恢复，实时健康检查与自动恢复
+- **新增测试**: 16个新测试文件，覆盖状态机、数据库适配器、响应格式检测、端点自愈等
+- **数据库Schema**: 新增failure_reason、last_failure_reason、cancel_reason字段，支持错误溯源
+- **前端优化**: 状态机兼容性，HTTP状态码显示，请求列表交互体验升级
+- **代码质量**: 净增5,892行高质量代码，66个文件修改，架构更清晰
 
 **2025-09-24**: Major v3.4.2 400错误码重试与统计优化
 - 400错误码重试支持：将400错误码归类为限流错误，享受与429相同的重试策略

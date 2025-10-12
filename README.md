@@ -28,23 +28,32 @@
 - 💰 **Token管理增强**: 失败请求Token保存，重复计费防护机制 **[v3.2.1新增]**
 - 🛡️ **错误处理改进**: 消除重复日志，完善错误分类系统 **[v3.3.2新增]**
 
-## 🎉 v3.4.0 版本亮点
+## 🎉 v3.5.0 版本亮点
 
-### 🔧 关键修复
-- **流式Token丢失修复**: 解决上游缺少SSE终止空行导致Token信息丢失的问题
-  - 实现事件缓冲区强制刷新机制(FlushPendingEvent)
-  - 确保 `empty_response` 只在真正无使用量时出现
-  - 防止有实际Token使用却被误判为空响应的情况
-- **端点日志优化**: 修复流式请求端点失败日志中尝试次数计数不准确问题
+### 🚀 状态机架构重构
+- **双轨状态管理**: 业务状态与错误状态完全分离
+  - 业务状态: pending → forwarding → processing → completed/failed/cancelled
+  - 错误状态: retry, suspended 独立管理
+  - 前端可同时显示业务进度和错误原因
+- **统一事件系统**: 新增 flexible_update, success, final_failure 语义化事件类型
+- **数据库Schema增强**: 新增 failure_reason, last_failure_reason, cancel_reason 字段
 
-### 🎨 前端架构升级
-- **React架构迁移**: 完成Web界面React Layout架构迁移
-- **UI优化**: 完善前端状态处理和交互体验
-- **图表增强**:
-  - 新增端点Token使用成本分析功能
-  - 优化图表页面布局和优先级
-  - 完成概览页面与图表功能融合重构
-- **交互改进**: 简化请求页面时间筛选交互
+### 🗄️ MySQL数据库支持
+- **数据库适配器模式**: 支持SQLite和MySQL切换，连接池管理
+- **完整实现**:
+  - database_adapter.go (+144行): 适配器接口
+  - mysql_adapter.go (+602行): MySQL实现
+  - sqlite_adapter.go (+337行): SQLite实现
+- **时区支持**: 统一时区处理，向后兼容
+
+### 🔢 /v1/messages/count_tokens 端点
+- **智能转发**: 优先转发到支持端点，失败降级到本地估算
+- **新增处理器**: count_tokens.go (+188行)
+
+### ⚡ 端点自愈机制
+- **快速恢复**: 从5分钟优化到0.7秒自动恢复
+- **智能检测**: 监控503/502错误触发恢复检查
+- **新增模块**: endpoint_recovery_manager.go 等3个文件 (+580行)
 
 ## 🎉 v3.1.1 版本亮点
 
