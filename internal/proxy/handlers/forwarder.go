@@ -58,7 +58,14 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 	httpTransport.IdleConnTimeout = 0 // 无空闲超时
 	httpTransport.TLSHandshakeTimeout = 10 * time.Second
 	httpTransport.ExpectContinueTimeout = 1 * time.Second
-	httpTransport.ResponseHeaderTimeout = 15 * time.Second
+
+	// 从配置中读取响应头超时时间，默认60秒
+	responseHeaderTimeout := f.config.Streaming.ResponseHeaderTimeout
+	if responseHeaderTimeout == 0 {
+		responseHeaderTimeout = 60 * time.Second
+	}
+	httpTransport.ResponseHeaderTimeout = responseHeaderTimeout
+
 	httpTransport.DisableCompression = true // 禁用压缩以防缓冲延迟
 	httpTransport.WriteBufferSize = 4096    // 较小的写缓冲区
 	httpTransport.ReadBufferSize = 4096     // 较小的读缓冲区

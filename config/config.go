@@ -83,9 +83,10 @@ type TokenDebugConfig struct {
 }
 
 type StreamingConfig struct {
-	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
-	ReadTimeout       time.Duration `yaml:"read_timeout"`
-	MaxIdleTime       time.Duration `yaml:"max_idle_time"`
+	HeartbeatInterval     time.Duration `yaml:"heartbeat_interval"`
+	ReadTimeout           time.Duration `yaml:"read_timeout"`
+	MaxIdleTime           time.Duration `yaml:"max_idle_time"`
+	ResponseHeaderTimeout time.Duration `yaml:"response_header_timeout"` // 响应头超时时间，默认: 60s
 }
 
 type GroupConfig struct {
@@ -307,6 +308,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.Streaming.MaxIdleTime == 0 {
 		c.Streaming.MaxIdleTime = 120 * time.Second
+	}
+	if c.Streaming.ResponseHeaderTimeout == 0 {
+		c.Streaming.ResponseHeaderTimeout = 60 * time.Second // 默认60秒，适合AI服务
 	}
 
 	// Set global timeout default

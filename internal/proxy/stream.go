@@ -120,7 +120,14 @@ func (h *Handler) streamFromEndpoint(ctx context.Context, w http.ResponseWriter,
 	httpTransport.IdleConnTimeout = 0 // No idle timeout
 	httpTransport.TLSHandshakeTimeout = 10 * time.Second
 	httpTransport.ExpectContinueTimeout = 1 * time.Second
-	httpTransport.ResponseHeaderTimeout = 15 * time.Second // Reduced for faster response
+
+	// 从配置中读取响应头超时时间，默认60秒
+	responseHeaderTimeout := h.config.Streaming.ResponseHeaderTimeout
+	if responseHeaderTimeout == 0 {
+		responseHeaderTimeout = 60 * time.Second
+	}
+	httpTransport.ResponseHeaderTimeout = responseHeaderTimeout
+
 	// Critical: Disable compression to prevent buffering delays
 	httpTransport.DisableCompression = true
 	// Set smaller buffer sizes for lower latency

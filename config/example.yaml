@@ -53,9 +53,16 @@ logging:
 
 # 流式传输配置
 streaming:
-  heartbeat_interval: "30s"  # 心跳间隔，默认: 30s
-  read_timeout: "10s"         # 读取超时，默认: 1s
-  max_idle_time: "120s"      # 最大空闲时间，默认: 120s
+  heartbeat_interval: "30s"        # 心跳间隔，默认: 30s
+  read_timeout: "10s"              # 读取超时，默认: 10s
+  max_idle_time: "120s"            # 最大空闲时间，默认: 120s
+
+  # 响应头超时配置 (v3.5.1新增)
+  # 控制等待服务端首次响应头的最大时间
+  # 对于AI服务(如Claude API)建议设置较长时间，以应对排队和预处理
+  # 设置过短可能导致假超时和不必要的重试
+  # 推荐范围: 30s-120s，根据实际服务响应时间调整
+  response_header_timeout: "60s"   # 响应头超时，默认: 60s
 
 # 组管理配置
 group:
