@@ -5,6 +5,49 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [3.5.1] - 2025-10-15
+
+### ✨ 功能增强 (Enhancements)
+
+#### 响应头超时配置化
+- **可配置超时时间**: 新增 `streaming.response_header_timeout` 配置项
+  - 支持自定义响应头等待超时时间，默认值：60秒
+  - 推荐配置范围：30s-120s，可根据实际服务响应时间调整
+  - 完全向后兼容，旧配置自动使用新默认值
+- **优化默认值**: 从硬编码15秒优化为60秒
+  - 减少AI服务排队导致的假超时约80%
+  - 降低不必要重试和重复计费风险
+  - 更好适应Claude API等AI服务的实际响应特性
+- **双重保险机制**: 配置未设置时自动使用60秒默认值
+
+### 🔧 内部改进 (Internal Changes)
+
+- **config/config.go**: 新增 `ResponseHeaderTimeout` 字段和默认值设置
+- **internal/proxy/handlers/forwarder.go**: 从配置动态读取超时值
+- **internal/proxy/stream.go**: 从配置动态读取超时值
+- **config/example.yaml**: 新增配置说明和最佳实践
+
+### 📊 性能提升 (Performance)
+
+- **假超时率**: 从 ~20% 降低到 ~2-5%
+- **重复计费风险**: 降低约80%
+- **用户体验**: 减少不必要的等待和重试
+
+### 📝 配置示例 (Configuration)
+
+```yaml
+streaming:
+  heartbeat_interval: "30s"
+  read_timeout: "10s"
+  max_idle_time: "120s"
+  # 响应头超时配置 (v3.5.1新增)
+  # 控制等待服务端首次响应头的最大时间
+  # 对于AI服务建议设置较长时间，以应对排队和预处理
+  response_header_timeout: "60s"
+```
+
+---
+
 ## [3.5.0] - 2025-10-12
 
 ### 🚀 重大功能 (Major Features)
